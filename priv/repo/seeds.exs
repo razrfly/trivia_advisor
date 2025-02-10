@@ -9,3 +9,27 @@
 #
 # We recommend using the bang functions (`insert!`, `update!`
 # and so on) as they will fail if something goes wrong.
+
+alias TriviaAdvisor.Scraping.Source
+alias TriviaAdvisor.Repo
+
+sources = [
+  %{
+    title: "question one",
+    website_url: "https://questionone.com"
+  },
+  %{
+    title: "geeks who drink",
+    website_url: "https://www.geekswhodrink.com"
+  },
+  %{
+    title: "inquizition",
+    website_url: "https://inquizition.com"
+  }
+]
+
+Enum.each(sources, fn source_params ->
+  %Source{}
+  |> Source.changeset(source_params)
+  |> Repo.insert!(on_conflict: :nothing)
+end)
