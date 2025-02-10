@@ -60,7 +60,8 @@ defmodule TriviaAdvisor.MixProject do
       {:bandit, "~> 1.5"},
       {:slugify, "~> 1.3"},
       {:httpoison, "~> 2.0"},
-      {:wallaby, "~> 0.30.0", runtime: false}
+      {:wallaby, "~> 0.30.0", runtime: false},
+      {:html_entities, "~> 0.5"},
     ]
   end
 

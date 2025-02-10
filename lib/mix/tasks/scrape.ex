@@ -5,17 +5,18 @@ defmodule Mix.Tasks.Scrape do
   def run(_) do
     # Ensure all dependencies and your app are started
     Application.ensure_all_started(:trivia_advisor)
+    Application.ensure_all_started(:httpoison)
 
     IO.puts "Starting QuestionOne scraper..."
 
     case TriviaAdvisor.Scraping.Scrapers.QuestionOne.run() do
-      {:ok, log} ->
-        IO.puts "Scrape completed successfully!"
-        IO.inspect(log, label: "Scrape Log")
+      {:ok, venues} ->
+        IO.puts "\nScrape completed successfully!"
+        IO.puts "Found #{length(venues)} total venues"
 
       {:error, error} ->
-        IO.puts "Scrape failed!"
-        IO.inspect(error, label: "Error")
+        IO.puts "\nScrape failed!"
+        IO.puts "Error: #{Exception.message(error)}"
     end
   end
 end
