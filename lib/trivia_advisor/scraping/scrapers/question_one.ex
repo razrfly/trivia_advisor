@@ -3,6 +3,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   Scraper for QuestionOne venues and events.
   """
 
+  alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
+  alias TriviaAdvisor.Repo
   require Logger
 
   @base_url "https://questionone.com"
@@ -13,15 +15,49 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   """
   def run do
     try do
+      source = Repo.get_by!(Source, website_url: @base_url)
+      {:ok, log} = create_scrape_log(source)
+
       Logger.info("Starting RSS feed scrape")
       venues = scrape_feed(1, [])
-      Logger.info("Completed scraping #{length(venues)} total venues")
+      venue_count = length(venues)
+      Logger.info("Completed scraping #{venue_count} total venues")
+
+      update_scrape_log(log, %{
+        success: true,
+        event_count: venue_count,
+        metadata: Map.merge(log.metadata, %{
+          total_venues: venue_count,
+          venues: venues,
+          completed_at: DateTime.utc_now()
+        })
+      })
+
       {:ok, venues}
     rescue
       e ->
         Logger.error("Scraper failed: #{Exception.message(e)}")
         {:error, e}
     end
+  end
+
+  defp create_scrape_log(source) do
+    %ScrapeLog{}
+    |> ScrapeLog.changeset(%{
+      source_id: source.id,
+      success: false,
+      metadata: %{
+        started_at: DateTime.utc_now(),
+        scraper_version: "1.0.0"
+      }
+    })
+    |> Repo.insert()
+  end
+
+  defp update_scrape_log(log, attrs) do
+    log
+    |> ScrapeLog.changeset(attrs)
+    |> Repo.update()
   end
 
   defp scrape_feed(page, acc) do
@@ -63,8 +99,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     |> Enum.map(fn item ->
       %{
         title: item |> Floki.find("title") |> Floki.text() |> String.trim() |> HtmlEntities.decode(),
-        url: item |> Floki.find("link") |> Floki.text() |> String.trim() |> clean_url(),
-        pub_date: item |> Floki.find("pubDate") |> Floki.text() |> String.trim()
+        url: item |> Floki.find("link") |> Floki.text() |> String.trim() |> clean_url()
       }
     end)
   end
@@ -76,12 +111,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     |> String.trim()
   end
 
-  defp log_venue(%{title: title, url: url, pub_date: date}) do
+  defp log_venue(%{title: title, url: url}) do
     Logger.info("""
     Found Venue:
       Title: #{title}
       URL: #{url}
-      Published: #{date}
     """)
   end
 end
