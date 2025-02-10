@@ -1,18 +1,14 @@
 # TriviaAdvisor
 
-To start your Phoenix server:
+TriviaAdvisor helps you find and track pub quiz nights and trivia events in your area. Think of it as a "Yelp for pub quizzes" - helping trivia enthusiasts discover new venues and keep track of their favorite quiz nights.
 
-  * Run `mix setup` to install and setup dependencies
-  * Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+## Features
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
-
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
-
-## Learn more
-
-  * Official website: https://www.phoenixframework.org/
-  * Guides: https://hexdocs.pm/phoenix/overview.html
-  * Docs: https://hexdocs.pm/phoenix
-  * Forum: https://elixirforum.com/c/phoenix-forum
-  * Source: https://github.com/phoenixframework/phoenix
+- 🎯 Find trivia nights near you
+- 📅 Track recurring events by venue
+- 🌐 Aggregates data from multiple trivia providers:
+  - Question One
+  - Geeks Who Drink
+  - Inquizition
+- 🗺️ Map integration for easy venue discovery
+- 📱 Mobile-friendly interface
