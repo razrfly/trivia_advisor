@@ -62,7 +62,7 @@ defmodule TriviaAdvisor.MixProject do
       {:httpoison, "~> 2.0"},
       {:wallaby, "~> 0.30.0", runtime: false},
       {:html_entities, "~> 0.5"},
-      {:dotenv_parser, "~> 2.0"}
+      {:dotenv_parser, "~> 2.0"},
     ]
   end
 
