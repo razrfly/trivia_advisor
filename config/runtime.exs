@@ -21,8 +21,10 @@ if System.get_env("PHX_SERVER") do
   config :trivia_advisor, TriviaAdvisorWeb.Endpoint, server: true
 end
 
-## Dotenv Parser
-DotenvParser.load_file(".env")
+# Check if the .env file exists before loading it
+if File.exists?(".env") do
+  DotenvParser.load_file(".env")
+end
 
 config :trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI,
   google_maps_api_key: System.get_env("GOOGLE_MAPS_API_KEY")
