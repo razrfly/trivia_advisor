@@ -158,6 +158,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     address = find_text_with_icon(document, "pin")
     time_text = find_text_with_icon(document, "calendar")
     fee_text = find_text_with_icon(document, "tag")
+    phone = find_text_with_icon(document, "phone")
+
+    # Extract website link
+    website = document
+    |> Floki.find("a[href]:fl-contains('Visit Website')")
+    |> Floki.attribute("href")
+    |> List.first()
 
     # Extract description
     description = document
@@ -178,6 +185,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
       address: address,
       time_text: time_text,
       fee_text: fee_text,
+      phone: phone,
+      website: website,
       description: description,
       hero_image_url: hero_image_url,
       url: url
@@ -213,6 +222,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
       Address: #{inspect(venue.address)}
       Time: #{inspect(venue.time_text)}
       Fee: #{inspect(venue.fee_text)}
+      Phone: #{inspect(venue.phone)}
+      Website: #{inspect(venue.website)}
       Description: #{inspect(String.slice(venue.description || "", 0..100))}
       Hero Image: #{inspect(venue.hero_image_url)}
     """)
