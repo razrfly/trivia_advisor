@@ -40,7 +40,7 @@ defmodule TriviaAdvisor.LocationsFixtures do
     {:ok, city} =
       attrs
       |> Enum.into(%{
-        title: "some title",
+        name: "some name",
         slug: "some-slug#{System.unique_integer()}",
         country_id: country.id
       })
@@ -69,7 +69,7 @@ defmodule TriviaAdvisor.LocationsFixtures do
       attrs
       |> Enum.into(%{
         address: "some address",
-        title: "some title",
+        name: "some name",
         slug: "some-slug#{System.unique_integer()}",
         postcode: "some postcode",
         latitude: "120.5",

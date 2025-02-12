@@ -13,7 +13,7 @@ defmodule TriviaAdvisor.EventsFixtures do
     {:ok, event} =
       attrs
       |> Enum.into(%{
-        title: "some title",
+        name: "some name",
         description: "some description",
         start_time: ~T[14:00:00],
         day_of_week: 42,

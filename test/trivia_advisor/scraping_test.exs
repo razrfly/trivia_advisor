@@ -8,7 +8,7 @@ defmodule TriviaAdvisor.ScrapingTest do
 
     import TriviaAdvisor.ScrapingFixtures
 
-    @invalid_attrs %{title: nil, website_url: nil, slug: nil}
+    @invalid_attrs %{name: nil, website_url: nil, slug: nil}
 
     test "list_sources/0 returns all sources" do
       source = source_fixture()
@@ -22,10 +22,10 @@ defmodule TriviaAdvisor.ScrapingTest do
     end
 
     test "create_source/1 with valid data creates a source" do
-      valid_attrs = %{title: "some title", website_url: "some website_url", slug: "some slug"}
+      valid_attrs = %{name: "some name", website_url: "some website_url", slug: "some slug"}
 
       assert {:ok, %Source{} = source} = Scraping.create_source(valid_attrs)
-      assert source.title == "some title"
+      assert source.name == "some name"
       assert source.website_url == "some website_url"
       assert source.slug == "some slug"
     end
@@ -36,10 +36,10 @@ defmodule TriviaAdvisor.ScrapingTest do
 
     test "update_source/2 with valid data updates the source" do
       source = source_fixture()
-      update_attrs = %{title: "some updated title", website_url: "some updated website_url", slug: "some updated slug"}
+      update_attrs = %{name: "some updated name", website_url: "some updated website_url", slug: "some updated slug"}
 
       assert {:ok, %Source{} = source} = Scraping.update_source(source, update_attrs)
-      assert source.title == "some updated title"
+      assert source.name == "some updated name"
       assert source.website_url == "some updated website_url"
       assert source.slug == "some updated slug"
     end

@@ -22,7 +22,7 @@ defmodule TriviaAdvisor.ScrapingFixtures do
       attrs
       |> Enum.into(%{
         slug: unique_source_slug(),
-        title: "some title",
+        name: "some name",
         website_url: unique_source_website_url()
       })
       |> TriviaAdvisor.Scraping.create_source()

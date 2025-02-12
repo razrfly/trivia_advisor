@@ -62,7 +62,7 @@ defmodule TriviaAdvisor.LocationsTest do
 
     import TriviaAdvisor.LocationsFixtures
 
-    @invalid_attrs %{title: nil, slug: nil}
+    @invalid_attrs %{name: nil, slug: nil}
 
     test "list_cities/0 returns all cities" do
       city = city_fixture()
@@ -77,12 +77,12 @@ defmodule TriviaAdvisor.LocationsTest do
     test "create_city/1 with valid data creates a city" do
       country = country_fixture()
       valid_attrs = %{
-        title: "some title",
+        name: "some name",
         slug: "some-slug",
         country_id: country.id
       }
       assert {:ok, %City{} = city} = Locations.create_city(valid_attrs)
-      assert city.title == "some title"
+      assert city.name == "some name"
       assert city.slug == "some-slug"
     end
 
@@ -92,10 +92,10 @@ defmodule TriviaAdvisor.LocationsTest do
 
     test "update_city/2 with valid data updates the city" do
       city = city_fixture()
-      update_attrs = %{title: "some updated title", slug: "some updated slug"}
+      update_attrs = %{name: "some updated name", slug: "some updated slug"}
 
       assert {:ok, %City{} = city} = Locations.update_city(city, update_attrs)
-      assert city.title == "some updated title"
+      assert city.name == "some updated name"
       assert city.slug == "some updated slug"
     end
 
@@ -122,7 +122,7 @@ defmodule TriviaAdvisor.LocationsTest do
 
     import TriviaAdvisor.LocationsFixtures
 
-    @invalid_attrs %{address: nil, title: nil, postcode: nil, latitude: nil, longitude: nil, place_id: nil, phone: nil, website: nil, slug: nil}
+    @invalid_attrs %{address: nil, name: nil, postcode: nil, latitude: nil, longitude: nil, place_id: nil, phone: nil, website: nil, slug: nil}
 
     test "list_venues/0 returns all venues" do
       venue = venue_fixture()
@@ -146,7 +146,7 @@ defmodule TriviaAdvisor.LocationsTest do
       city = city_fixture()
       valid_attrs = %{
         address: "some address",
-        title: "some title",
+        name: "some name",
         slug: "some-slug",
         postcode: "some postcode",
         latitude: "120.5",
@@ -158,7 +158,7 @@ defmodule TriviaAdvisor.LocationsTest do
       }
       assert {:ok, %Venue{} = venue} = Locations.create_venue(valid_attrs)
       assert venue.address == "some address"
-      assert venue.title == "some title"
+      assert venue.name == "some name"
       assert venue.postcode == "some postcode"
       assert venue.latitude == Decimal.new("120.5")
       assert venue.longitude == Decimal.new("120.5")
@@ -174,11 +174,11 @@ defmodule TriviaAdvisor.LocationsTest do
 
     test "update_venue/2 with valid data updates the venue" do
       venue = venue_fixture()
-      update_attrs = %{address: "some updated address", title: "some updated title", postcode: "some updated postcode", latitude: "456.7", longitude: "456.7", place_id: "some updated place_id", phone: "some updated phone", website: "some updated website", slug: "some updated slug"}
+      update_attrs = %{address: "some updated address", name: "some updated name", postcode: "some updated postcode", latitude: "456.7", longitude: "456.7", place_id: "some updated place_id", phone: "some updated phone", website: "some updated website", slug: "some updated slug"}
 
       assert {:ok, %Venue{} = venue} = Locations.update_venue(venue, update_attrs)
       assert venue.address == "some updated address"
-      assert venue.title == "some updated title"
+      assert venue.name == "some updated name"
       assert venue.postcode == "some updated postcode"
       assert venue.latitude == Decimal.new("456.7")
       assert venue.longitude == Decimal.new("456.7")
@@ -193,7 +193,7 @@ defmodule TriviaAdvisor.LocationsTest do
       assert {:error, %Ecto.Changeset{}} = Locations.update_venue(venue, @invalid_attrs)
       result = Locations.get_venue!(venue.id)
       assert venue.id == result.id
-      assert venue.title == result.title
+      assert venue.name == result.name
       # ... other field comparisons except latitude/longitude
     end
 

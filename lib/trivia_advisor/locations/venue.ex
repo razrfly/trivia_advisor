@@ -4,7 +4,7 @@ defmodule TriviaAdvisor.Locations.Venue do
 
   schema "venues" do
     field :address, :string
-    field :title, :string
+    field :name, :string
     field :postcode, :string
     field :latitude, :decimal
     field :longitude, :decimal
@@ -22,9 +22,9 @@ defmodule TriviaAdvisor.Locations.Venue do
   @doc false
   def changeset(venue, attrs) do
     venue
-    |> cast(attrs, [:city_id, :title, :address, :postcode, :latitude, :longitude,
+    |> cast(attrs, [:city_id, :name, :address, :postcode, :latitude, :longitude,
                     :place_id, :phone, :website, :slug])
-    |> validate_required([:city_id, :title, :latitude, :longitude])
+    |> validate_required([:city_id, :name, :latitude, :longitude])
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:place_id)
@@ -34,8 +34,8 @@ defmodule TriviaAdvisor.Locations.Venue do
   defp put_slug(changeset) do
     case get_field(changeset, :slug) do
       nil ->
-        title = get_field(changeset, :title) || ""
-        slug = String.downcase(title) |> String.replace(" ", "-")
+        name = get_field(changeset, :name) || ""
+        slug = String.downcase(name) |> String.replace(" ", "-")
         put_change(changeset, :slug, slug)
 
       _ ->
