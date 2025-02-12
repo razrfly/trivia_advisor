@@ -13,7 +13,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   """
   def lookup_address(address, opts \\ []) when is_binary(address) do
     base_url = Keyword.get(opts, :base_url, @base_url)
-    timeout = Keyword.get(opts, :timeout, 5_000)
+    _timeout = Keyword.get(opts, :timeout, 5_000)
     case find_place_from_text(address, base_url) do
       {:ok, %{"candidates" => [place | _]}} ->
         case lookup_place_id(place["place_id"], opts) do
