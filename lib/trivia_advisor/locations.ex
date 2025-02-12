@@ -314,4 +314,19 @@ defmodule TriviaAdvisor.Locations do
       country -> {:ok, country}
     end
   end
+
+  def find_or_create_city(city_title, country_code) when is_binary(city_title) and is_binary(country_code) do
+    with {:ok, country} <- find_or_create_country(country_code) do
+      case Repo.get_by(City, [name: city_title, country_id: country.id]) do
+        nil ->
+          %City{}
+          |> City.changeset(%{
+            name: city_title,
+            country_id: country.id
+          })
+          |> Repo.insert()
+        city -> {:ok, city}
+      end
+    end
+  end
 end
