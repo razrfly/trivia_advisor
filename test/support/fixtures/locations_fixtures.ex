@@ -63,22 +63,22 @@ defmodule TriviaAdvisor.LocationsFixtures do
   Generate a venue.
   """
   def venue_fixture(attrs \\ %{}) do
-    city = city_fixture()
+    {:ok, city} = city_fixture() |> then(&{:ok, &1})
+
+    attrs = Enum.into(attrs, %{
+      name: "some name",
+      address: "some address",
+      postcode: "some postcode",
+      latitude: Decimal.new("51.5074"),  # London's latitude
+      longitude: Decimal.new("-0.1278"), # London's longitude
+      place_id: "some place_id-#{System.unique_integer([:positive])}",
+      phone: "some phone",
+      website: "some website",
+      city_id: city.id
+    })
 
     {:ok, venue} =
       attrs
-      |> Enum.into(%{
-        address: "some address",
-        name: "some name",
-        slug: "some-slug#{System.unique_integer()}",
-        postcode: "some postcode",
-        latitude: "120.5",
-        longitude: "120.5",
-        place_id: "some place_id#{System.unique_integer()}",
-        phone: "some phone",
-        website: "some website",
-        city_id: city.id
-      })
       |> TriviaAdvisor.Locations.create_venue()
 
     venue
