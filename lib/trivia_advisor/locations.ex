@@ -303,7 +303,7 @@ defmodule TriviaAdvisor.Locations do
             country_data ->
               %Country{}
               |> Country.changeset(%{
-                code: country_code,
+                code: country_data.alpha2,
                 name: country_data.name
               })
               |> Repo.insert()
