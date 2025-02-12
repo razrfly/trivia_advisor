@@ -16,15 +16,27 @@ defmodule TriviaAdvisor.LocationsTest do
       assert found_country.id == country.id
       assert found_country.code == country_data.alpha2
       assert found_country.name == country_data.name
+
+      # Test dynamic data retrieval
+      assert Country.currency_code(found_country) == country_data.currency_code
+      assert Country.continent(found_country) == country_data.continent
+      assert Country.calling_code(found_country) == country_data.country_code
     end
 
     test "creates new country if not found" do
       assert {:ok, country} = Locations.find_or_create_country("AU")
       country_data = Countries.get("AU")
 
+      # Test stored fields
       assert country.code == country_data.alpha2
       assert country.name == country_data.name
 
+      # Test dynamic data retrieval
+      assert Country.currency_code(country) == country_data.currency_code
+      assert Country.continent(country) == country_data.continent
+      assert Country.calling_code(country) == country_data.country_code
+
+      # Verify DB storage
       db_country = Repo.get_by(Country, code: "AU")
       assert db_country.code == country_data.alpha2
     end
