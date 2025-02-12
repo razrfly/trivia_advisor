@@ -346,24 +346,37 @@ defmodule TriviaAdvisor.Locations do
          {:ok, country} <- find_or_create_country(validated_data.country_code),
          {:ok, city} <- find_or_create_city(normalize_city_name(validated_data.city), country.code) do
 
-      # Try to find existing venue by place_id or coordinates
       lat = Decimal.new(to_string(validated_data.lat))
       lng = Decimal.new(to_string(validated_data.lng))
 
-      # First try by place_id
+      # Try to find existing venue in this order:
+      # 1. By place_id (exact match)
+      # 2. By coordinates within 100m radius in same city
+      # 3. Create new if none found
       existing_venue =
         if validated_data.place_id do
+          # First try by place_id
           Repo.get_by(Venue, place_id: validated_data.place_id)
         end
 
-      # Then try by exact coordinates if no venue found
+      # Then try by proximity if no venue found by place_id
       existing_venue =
         if is_nil(existing_venue) do
-          Repo.get_by(Venue, [
-            latitude: lat,
-            longitude: lng,
-            city_id: city.id
-          ])
+          lat_float = Decimal.to_float(lat)
+          lng_float = Decimal.to_float(lng)
+
+          # Find venues within roughly 100m using coordinate comparison
+          # 0.001 degrees ≈ 111m at the equator
+          Repo.one(
+            from v in Venue,
+            where: v.city_id == ^city.id
+              and fragment(
+                "ABS(CAST(? AS FLOAT) - CAST(latitude AS FLOAT)) < 0.001 AND ABS(CAST(? AS FLOAT) - CAST(longitude AS FLOAT)) < 0.001",
+                type(^lat_float, :float),
+                type(^lng_float, :float)
+              ),
+            limit: 1
+          )
         else
           existing_venue
         end
@@ -375,14 +388,22 @@ defmodule TriviaAdvisor.Locations do
     end
   end
 
-  defp validate_location_data(%{lat: lat, lng: lng, city: city, country_code: code} = data)
-    when is_number(lat) and is_number(lng) and is_binary(city) and is_binary(code), do: {:ok, data}
-  defp validate_location_data(_), do: {:error, "Missing required location data"}
+  defp validate_location_data(%{lat: lat, lng: lng} = data)
+    when is_number(lat) and is_number(lng) and lat >= -90 and lat <= 90
+    and lng >= -180 and lng <= 180 do
+    case {Map.get(data, :city), Map.get(data, :country_code)} do
+      {nil, _} -> {:error, "City name missing"}
+      {_, nil} -> {:error, "Country code missing"}
+      {city, code} when is_binary(city) and is_binary(code) -> {:ok, data}
+      _ -> {:error, "Invalid city or country data"}
+    end
+  end
+  defp validate_location_data(_), do: {:error, "Invalid or missing coordinates"}
 
-  defp normalize_city_name(city) do
+  defp normalize_city_name(city) when is_binary(city) do
     city
-    |> String.split(",")
-    |> List.first()
+    |> String.replace(~r/\s*\(.+\)$/, "")  # Remove parenthetical content
+    |> String.replace(~r/\s*,.+$/, "")     # Remove everything after comma
     |> String.trim()
   end
 

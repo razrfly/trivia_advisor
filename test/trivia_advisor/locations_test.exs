@@ -194,7 +194,7 @@ defmodule TriviaAdvisor.LocationsTest do
         }}
       end)
 
-      assert {:error, "Missing required location data"} = Locations.find_or_create_venue(%{
+      assert {:error, "City name missing"} = Locations.find_or_create_venue(%{
         "title" => "Incomplete Pub",
         "address" => "123 Unknown Road"
       })
@@ -280,6 +280,65 @@ defmodule TriviaAdvisor.LocationsTest do
 
       # Both venues should be in the same city
       assert venue1.city_id == venue2.city_id
+    end
+
+    test "finds venue by proximity even with different place_id" do
+      # First create a venue
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5225,
+          lng: -0.1057,
+          place_id: "venue1",
+          city: "London",
+          country_code: "GB",
+          postcode: "EC1R 0EG"
+        }}
+      end)
+
+      {:ok, venue1} = Locations.find_or_create_venue(%{
+        "title" => "The Crown",
+        "address" => "43 Clerkenwell Green"
+      })
+
+      # Try to create another venue nearby (within 100m)
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5226,  # Very close coordinates
+          lng: -0.1058,
+          place_id: "venue2",  # Different place_id
+          city: "London",
+          country_code: "GB",
+          postcode: "EC1R 0EG"
+        }}
+      end)
+
+      {:ok, venue2} = Locations.find_or_create_venue(%{
+        "title" => "Crown Pub",  # Similar name
+        "address" => "43 Clerkenwell Green, London"
+      })
+
+      assert venue1.id == venue2.id
+      assert Repo.aggregate(Venue, :count) == 1
+    end
+
+    test "handles missing city in Google API response" do
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          place_id: "no_city",
+          country_code: "GB"
+          # city is missing
+        }}
+      end)
+
+      assert {:error, "City name missing"} = Locations.find_or_create_venue(%{
+        "title" => "No City Pub",
+        "address" => "Unknown Location"
+      })
     end
   end
 end
