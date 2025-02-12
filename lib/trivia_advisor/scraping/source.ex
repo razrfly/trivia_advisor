@@ -3,7 +3,7 @@ defmodule TriviaAdvisor.Scraping.Source do
   import Ecto.Changeset
 
   schema "sources" do
-    field :title, :string
+    field :name, :string
     field :website_url, :string
     field :slug, :string
 
@@ -17,8 +17,8 @@ defmodule TriviaAdvisor.Scraping.Source do
   @doc false
   def changeset(source, attrs) do
     source
-    |> cast(attrs, [:title, :website_url, :slug])
-    |> validate_required([:title, :website_url])
+    |> cast(attrs, [:name, :website_url, :slug])
+    |> validate_required([:name, :website_url])
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:website_url)
@@ -27,8 +27,8 @@ defmodule TriviaAdvisor.Scraping.Source do
   defp put_slug(changeset) do
     case get_field(changeset, :slug) do
       nil ->
-        title = get_field(changeset, :title) || ""
-        slug = String.downcase(title) |> String.replace(" ", "-")
+        name = get_field(changeset, :name) || ""
+        slug = String.downcase(name) |> String.replace(" ", "-")
         put_change(changeset, :slug, slug)
 
       _ ->

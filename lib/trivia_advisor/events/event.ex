@@ -3,7 +3,7 @@ defmodule TriviaAdvisor.Events.Event do
   import Ecto.Changeset
 
   schema "events" do
-    field :title, :string
+    field :name, :string
     field :day_of_week, :integer
     field :start_time, :time
     field :frequency, :integer
@@ -19,7 +19,7 @@ defmodule TriviaAdvisor.Events.Event do
   @doc false
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:title, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :venue_id])
+    |> cast(attrs, [:name, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :venue_id])
     |> validate_required([:day_of_week, :start_time, :frequency, :venue_id])
   end
 end
