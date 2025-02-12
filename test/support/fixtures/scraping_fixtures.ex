@@ -34,13 +34,16 @@ defmodule TriviaAdvisor.ScrapingFixtures do
   Generate a scrape_log.
   """
   def scrape_log_fixture(attrs \\ %{}) do
+    source = source_fixture()
+
     {:ok, scrape_log} =
       attrs
       |> Enum.into(%{
-        error: %{},
+        success: true,
         event_count: 42,
+        error: %{},
         metadata: %{},
-        success: true
+        source_id: source.id
       })
       |> TriviaAdvisor.Scraping.create_scrape_log()
 

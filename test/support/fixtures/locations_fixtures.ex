@@ -16,8 +16,10 @@ defmodule TriviaAdvisor.LocationsFixtures do
     {:ok, country} =
       attrs
       |> Enum.into(%{
-        code: unique_country_code(),
-        name: "some name"
+        title: "some title",
+        name: "United States",
+        code: "US",
+        slug: "some-slug#{System.unique_integer()}"
       })
       |> TriviaAdvisor.Locations.create_country()
 
@@ -33,11 +35,14 @@ defmodule TriviaAdvisor.LocationsFixtures do
   Generate a city.
   """
   def city_fixture(attrs \\ %{}) do
+    country = country_fixture()
+
     {:ok, city} =
       attrs
       |> Enum.into(%{
-        slug: unique_city_slug(),
-        title: "some title"
+        title: "some title",
+        slug: "some-slug#{System.unique_integer()}",
+        country_id: country.id
       })
       |> TriviaAdvisor.Locations.create_city()
 
@@ -58,18 +63,21 @@ defmodule TriviaAdvisor.LocationsFixtures do
   Generate a venue.
   """
   def venue_fixture(attrs \\ %{}) do
+    city = city_fixture()
+
     {:ok, venue} =
       attrs
       |> Enum.into(%{
         address: "some address",
+        title: "some title",
+        slug: "some-slug#{System.unique_integer()}",
+        postcode: "some postcode",
         latitude: "120.5",
         longitude: "120.5",
+        place_id: "some place_id#{System.unique_integer()}",
         phone: "some phone",
-        place_id: unique_venue_place_id(),
-        postcode: "some postcode",
-        slug: unique_venue_slug(),
-        title: "some title",
-        website: "some website"
+        website: "some website",
+        city_id: city.id
       })
       |> TriviaAdvisor.Locations.create_venue()
 
