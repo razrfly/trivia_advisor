@@ -8,15 +8,18 @@ defmodule TriviaAdvisor.EventsFixtures do
   Generate a event.
   """
   def event_fixture(attrs \\ %{}) do
+    venue = TriviaAdvisor.LocationsFixtures.venue_fixture()
+
     {:ok, event} =
       attrs
       |> Enum.into(%{
-        day_of_week: 42,
+        title: "some title",
         description: "some description",
-        entry_fee_cents: 42,
-        frequency: 42,
         start_time: ~T[14:00:00],
-        title: "some title"
+        day_of_week: 42,
+        frequency: 42,
+        entry_fee_cents: 42,
+        venue_id: venue.id
       })
       |> TriviaAdvisor.Events.create_event()
 
@@ -27,16 +30,22 @@ defmodule TriviaAdvisor.EventsFixtures do
   Generate a event_source.
   """
   def event_source_fixture(attrs \\ %{}) do
+    event = event_fixture()
+    source = TriviaAdvisor.ScrapingFixtures.source_fixture()
+
     {:ok, event_source} =
       attrs
       |> Enum.into(%{
-        last_seen_at: ~U[2025-02-09 21:21:00Z],
+        status: "some status",
         metadata: %{},
         source_url: "some source_url",
-        status: "some status"
+        last_seen_at: ~U[2025-02-09 21:21:00Z],
+        event_id: event.id,
+        source_id: source.id
       })
       |> TriviaAdvisor.Events.create_event_source()
 
-    event_source
+    # Reload with associations for consistent test state
+    TriviaAdvisor.Events.get_event_source!(event_source.id)
   end
 end

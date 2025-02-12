@@ -1,4 +1,5 @@
 import Config
+import DotenvParser
 
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
@@ -19,6 +20,14 @@ import Config
 if System.get_env("PHX_SERVER") do
   config :trivia_advisor, TriviaAdvisorWeb.Endpoint, server: true
 end
+
+# Check if the .env file exists before loading it
+if File.exists?(".env") do
+  DotenvParser.load_file(".env")
+end
+
+config :trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI,
+  google_maps_api_key: System.get_env("GOOGLE_MAPS_API_KEY")
 
 if config_env() == :prod do
   database_url =

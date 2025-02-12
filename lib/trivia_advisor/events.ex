@@ -114,7 +114,8 @@ defmodule TriviaAdvisor.Events do
 
   """
   def list_event_sources do
-    Repo.all(EventSource) |> Repo.preload([:event, :source])
+    Repo.all(EventSource)
+    |> Repo.preload([:event, :source])
   end
 
   @doc """
@@ -131,7 +132,11 @@ defmodule TriviaAdvisor.Events do
       ** (Ecto.NoResultsError)
 
   """
-  def get_event_source!(id), do: Repo.get!(EventSource, id) |> Repo.preload([:event, :source])
+  def get_event_source!(id) do
+    EventSource
+    |> Repo.get!(id)
+    |> Repo.preload([:event, :source])
+  end
 
   @doc """
   Creates a event_source.
