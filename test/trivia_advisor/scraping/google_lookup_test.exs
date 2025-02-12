@@ -10,12 +10,30 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
 
   describe "lookup_address/1" do
     test "returns enriched place data with country and city", %{bypass: bypass, base_url: base_url} do
+      # Mock findplacefromtext response
       Bypass.expect_once(bypass, "GET", "/maps/api/place/findplacefromtext/json", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
         |> Plug.Conn.resp(200, ~s({
           "status": "OK",
           "candidates": [{
+            "place_id": "ChIJK",
+            "formatted_address": "4 Pennsylvania Plaza, New York, NY 10001",
+            "geometry": {
+              "location": {"lat": 40.7505, "lng": -73.9934}
+            },
+            "name": "Madison Square Garden"
+          }]
+        }))
+      end)
+
+      # Mock place details response
+      Bypass.expect_once(bypass, "GET", "/maps/api/place/details/json", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({
+          "status": "OK",
+          "result": {
             "place_id": "ChIJK",
             "formatted_address": "4 Pennsylvania Plaza, New York, NY 10001",
             "geometry": {
@@ -34,7 +52,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
                 "types": ["country", "political"]
               }
             ]
-          }]
+          }
         }))
       end)
 
