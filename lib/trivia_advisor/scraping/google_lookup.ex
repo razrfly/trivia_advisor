@@ -15,15 +15,13 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     base_url = Keyword.get(opts, :base_url, @base_url)
     case find_place_from_text(address, base_url) do
       {:ok, %{"candidates" => [place | _]}} ->
-        # Get detailed place data including address components
         case lookup_place_id(place["place_id"], opts) do
           {:ok, %{"result" => details}} -> {:ok, enrich_place_data(details)}
           error -> error
         end
       {:ok, %{"candidates" => []}} ->
         case lookup_geocode(address, [base_url: base_url]) do
-          {:ok, %{"results" => [result | _]}} ->
-            {:ok, enrich_place_data(result)}
+          {:ok, %{"results" => [result | _]}} -> {:ok, enrich_place_data(result)}
           other -> other
         end
       error -> error
@@ -38,7 +36,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     params = %{
       place_id: place_id,
       key: api_key(),
-      fields: "formatted_address,geometry,name,place_id,types"
+      fields: "formatted_address,geometry,name,place_id,types,address_components"
     }
 
     "#{base_url}#{@places_path}/details/json"
