@@ -18,6 +18,8 @@ jobs:
   build:
     name: Build and test
     runs-on: ubuntu-22.04
+    env:
+      GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }} 
 
     services:
       postgres:
