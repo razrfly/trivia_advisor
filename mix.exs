@@ -63,7 +63,8 @@ defmodule TriviaAdvisor.MixProject do
       {:wallaby, "~> 0.30.0", runtime: false},
       {:html_entities, "~> 0.5"},
       {:dotenv_parser, "~> 2.0"},
-      {:bypass, "~> 2.1", only: :test}
+      {:bypass, "~> 2.1", only: :test},
+      {:countries, "~> 1.6"}
     ]
   end
 
