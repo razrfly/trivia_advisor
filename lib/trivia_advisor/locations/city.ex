@@ -19,7 +19,7 @@ defmodule TriviaAdvisor.Locations.City do
     |> validate_required([:name, :country_id])
     |> put_slug()
     |> unique_constraint(:slug)
-    |> unique_constraint(:name, name: :cities_lower_title_index)
+    |> unique_constraint(:name, name: :cities_lower_name_index)
     |> foreign_key_constraint(:country_id)
   end
 
