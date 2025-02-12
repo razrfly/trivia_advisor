@@ -293,4 +293,25 @@ defmodule TriviaAdvisor.Locations do
   def change_venue(%Venue{} = venue, attrs \\ %{}) do
     Venue.changeset(venue, attrs)
   end
+
+  def find_or_create_country(country_code) do
+    case Repo.get_by(Country, code: country_code) do
+      nil ->
+        try do
+          case Countries.get(country_code) do
+            [] -> {:error, "Invalid country code"}
+            country_data ->
+              %Country{}
+              |> Country.changeset(%{
+                code: country_data.alpha2,
+                name: country_data.name
+              })
+              |> Repo.insert()
+          end
+        rescue
+          _ -> {:error, "Invalid country code"}
+        end
+      country -> {:ok, country}
+    end
+  end
 end
