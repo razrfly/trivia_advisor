@@ -1,9 +1,15 @@
 defmodule TriviaAdvisor.LocationsTest do
   use TriviaAdvisor.DataCase
+  import Mox
+
+  # Ensure mocks are verified when the test exits
+  setup :verify_on_exit!
 
   alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Locations.Country
   alias TriviaAdvisor.Locations.City
+  alias TriviaAdvisor.Locations.Venue
+  alias TriviaAdvisor.Scraping.MockGoogleLookup
 
   describe "find_or_create_country/1" do
     test "returns existing country if found" do
@@ -100,6 +106,71 @@ defmodule TriviaAdvisor.LocationsTest do
 
     test "handles invalid country code" do
       assert {:error, "Invalid country code"} = Locations.find_or_create_city("Invalid City", "XX")
+    end
+  end
+
+  describe "find_or_create_venue/1" do
+    test "returns existing venue if place_id matches" do
+      {:ok, city} = Locations.find_or_create_city("London", "GB")
+      {:ok, venue} = Repo.insert(%Venue{
+        city_id: city.id,
+        name: "The Crown Tavern",
+        address: "43 Clerkenwell Green",
+        latitude: Decimal.new("51.5225"),
+        longitude: Decimal.new("-0.1057"),
+        place_id: "ChIJN1t_tDeuEmsRUsoyG83frY4",
+        slug: "the-crown-tavern"
+      })
+
+      # Mock the Google API response
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5225,
+          lng: -0.1057,
+          place_id: "ChIJN1t_tDeuEmsRUsoyG83frY4",
+          city: "London",
+          country_code: "GB",
+          postcode: "EC1R 0EG"
+        }}
+      end)
+
+      assert {:ok, found_venue} = Locations.find_or_create_venue(%{
+        "title" => "The Crown Tavern",
+        "address" => "43 Clerkenwell Green"
+      })
+
+      assert found_venue.id == venue.id
+    end
+
+    test "creates new venue when none exists" do
+      # Mock the Google API response
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          place_id: "new_place_id",
+          city: "London",
+          country_code: "GB",
+          postcode: "SW1A 1AA"
+        }}
+      end)
+
+      assert {:ok, venue} = Locations.find_or_create_venue(%{
+        "title" => "New Pub",
+        "address" => "123 London Road",
+        "phone" => "123456",
+        "website" => "http://example.com"
+      })
+
+      assert venue.name == "New Pub"
+      assert venue.place_id == "new_place_id"
+      assert venue.latitude == Decimal.new("51.5074")
+    end
+
+    test "returns error if address is missing" do
+      assert {:error, "Address is required"} = Locations.find_or_create_venue(%{})
     end
   end
 end

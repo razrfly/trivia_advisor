@@ -63,7 +63,7 @@ defmodule TriviaAdvisor.LocationsFixtures do
   Generate a venue.
   """
   def venue_fixture(attrs \\ %{}) do
-    {:ok, city} = city_fixture() |> then(&{:ok, &1})
+    city = city_fixture()
 
     attrs = Enum.into(attrs, %{
       name: "some name",

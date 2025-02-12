@@ -41,3 +41,5 @@ config :wallaby,
   chrome: [
     headless: true
   ]
+
+config :trivia_advisor, :google_lookup, TriviaAdvisor.Scraping.MockGoogleLookup

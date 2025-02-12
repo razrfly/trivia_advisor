@@ -64,7 +64,8 @@ defmodule TriviaAdvisor.MixProject do
       {:html_entities, "~> 0.5"},
       {:dotenv_parser, "~> 2.0"},
       {:bypass, "~> 2.1", only: :test},
-      {:countries, "~> 1.6"}
+      {:countries, "~> 1.6"},
+      {:mox, "~> 1.0", only: :test}
     ]
   end
 

@@ -329,4 +329,50 @@ defmodule TriviaAdvisor.Locations do
       end
     end
   end
+
+  @doc """
+  Finds or creates a venue based on provided details.
+  Uses Google Places API for geocoding and deduplication.
+  """
+  @spec find_or_create_venue(map()) :: {:ok, Venue.t()} | {:error, String.t()}
+  def find_or_create_venue(%{"address" => address} = attrs) do
+    google_lookup = Application.get_env(:trivia_advisor, :google_lookup, TriviaAdvisor.Scraping.GoogleLookup)
+
+    with {:ok, location_data} <- google_lookup.lookup_address(address),
+         {:ok, country} <- find_or_create_country(location_data.country_code),
+         {:ok, city} <- find_or_create_city(location_data.city, country.code) do
+
+      # Try to find existing venue
+      existing_venue = cond do
+        location_data.place_id ->
+          Repo.get_by(Venue, place_id: location_data.place_id)
+        true ->
+          Repo.get_by(Venue, [
+            latitude: Decimal.new(to_string(location_data.lat)),
+            longitude: Decimal.new(to_string(location_data.lng))
+          ])
+      end
+
+      case existing_venue do
+        nil ->
+          # Create new venue
+          %Venue{}
+          |> Venue.changeset(%{
+            name: attrs["title"],
+            address: address,
+            postcode: location_data.postcode,
+            latitude: Decimal.new(to_string(location_data.lat)),
+            longitude: Decimal.new(to_string(location_data.lng)),
+            place_id: location_data.place_id,
+            phone: attrs["phone"],
+            website: attrs["website"],
+            city_id: city.id
+          })
+          |> Repo.insert()
+        venue ->
+          {:ok, venue}
+      end
+    end
+  end
+  def find_or_create_venue(_), do: {:error, "Address is required"}
 end
