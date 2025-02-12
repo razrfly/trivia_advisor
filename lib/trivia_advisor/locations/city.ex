@@ -15,7 +15,7 @@ defmodule TriviaAdvisor.Locations.City do
   @doc false
   def changeset(city, attrs) do
     city
-    |> cast(attrs, [:name, :country_id, :slug])
+    |> cast(attrs, [:name, :country_id])
     |> validate_required([:name, :country_id])
     |> put_slug()
     |> unique_constraint(:slug)
@@ -24,14 +24,9 @@ defmodule TriviaAdvisor.Locations.City do
   end
 
   defp put_slug(changeset) do
-    case get_field(changeset, :slug) do
-      nil ->
-        name = get_field(changeset, :name) || ""
-        slug = String.downcase(name) |> String.replace(" ", "-")
-        put_change(changeset, :slug, slug)
-
-      _ ->
-        changeset
+    case get_change(changeset, :name) do
+      nil -> changeset
+      name -> put_change(changeset, :slug, Slug.slugify(name))
     end
   end
 end

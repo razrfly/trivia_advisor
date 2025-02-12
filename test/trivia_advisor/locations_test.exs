@@ -3,6 +3,7 @@ defmodule TriviaAdvisor.LocationsTest do
 
   alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Locations.Country
+  alias TriviaAdvisor.Locations.City
 
   describe "find_or_create_country/1" do
     test "returns existing country if found" do
@@ -53,6 +54,52 @@ defmodule TriviaAdvisor.LocationsTest do
       assert Repo.aggregate(Country, :count) == 1
       assert country2.code == country_data.alpha2
       assert country2.name == country_data.name
+    end
+  end
+
+  describe "find_or_create_city/2" do
+    test "returns existing city if found" do
+      {:ok, country} = Locations.find_or_create_country("GB")
+      {:ok, city} = Repo.insert(%City{
+        name: "London",
+        country_id: country.id,
+        slug: "london"
+      })
+
+      assert {:ok, found_city} = Locations.find_or_create_city("London", "GB")
+      assert found_city.id == city.id
+      assert found_city.name == "London"
+      assert found_city.country_id == country.id
+    end
+
+    test "creates new city if not found" do
+      assert {:ok, city} = Locations.find_or_create_city("Manchester", "GB")
+      assert city.name == "Manchester"
+      assert city.slug == "manchester"
+
+      country = Repo.get!(Country, city.country_id)
+      assert country.code == "GB"
+
+      db_city = Repo.get_by(City, name: "Manchester")
+      assert db_city.name == "Manchester"
+    end
+
+    test "ensures city belongs to correct country" do
+      assert {:ok, london_uk} = Locations.find_or_create_city("London", "GB")
+      assert {:ok, london_ca} = Locations.find_or_create_city("London, Ontario", "CA")
+
+      uk_country = Repo.get!(Country, london_uk.country_id)
+      ca_country = Repo.get!(Country, london_ca.country_id)
+
+      assert uk_country.code == "GB"
+      assert ca_country.code == "CA"
+      assert london_uk.country_id != london_ca.country_id
+      assert london_uk.slug == "london"
+      assert london_ca.slug == "london-ontario"
+    end
+
+    test "handles invalid country code" do
+      assert {:error, "Invalid country code"} = Locations.find_or_create_city("Invalid City", "XX")
     end
   end
 end
