@@ -10,10 +10,11 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   @doc """
   Looks up an address using Google Places API, falling back to Geocoding API if needed.
   """
-  def lookup_address(address) when is_binary(address) do
-    case find_place_from_text(address) do
+  def lookup_address(address, opts \\ []) when is_binary(address) do
+    base_url = Keyword.get(opts, :base_url, @base_url)
+    case find_place_from_text(address, base_url) do
       {:ok, %{"candidates" => [place | _]}} -> {:ok, place}
-      {:ok, %{"candidates" => []}} -> lookup_geocode(address)
+      {:ok, %{"candidates" => []}} -> lookup_geocode(address, [base_url: base_url])
       error -> error
     end
   end
@@ -21,50 +22,46 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   @doc """
   Fetches detailed place data from Google Places API using a place_id.
   """
-  def lookup_place_id(place_id) when is_binary(place_id) do
+  def lookup_place_id(place_id, opts \\ []) when is_binary(place_id) do
+    base_url = Keyword.get(opts, :base_url, @base_url)
     params = %{
       place_id: place_id,
       key: api_key(),
       fields: "formatted_address,geometry,name,place_id,types"
     }
 
-    "#{@base_url}#{@places_path}/details/json"
-    |> HTTPoison.get([],
-      params: params
-    )
+    "#{base_url}#{@places_path}/details/json"
+    |> HTTPoison.get([], params: params)
     |> handle_response()
   end
 
   @doc """
   Looks up address components and coordinates using Google Geocoding API.
   """
-  def lookup_geocode(address) when is_binary(address) do
+  def lookup_geocode(address, opts \\ []) when is_binary(address) do
+    base_url = Keyword.get(opts, :base_url, @base_url)
     params = %{
       address: address,
       key: api_key()
     }
 
-    "#{@base_url}#{@geocoding_path}"
-    |> HTTPoison.get([],
-      params: params
-    )
+    "#{base_url}#{@geocoding_path}"
+    |> HTTPoison.get([], params: params)
     |> handle_response()
   end
 
   # Private Functions
 
-  defp find_place_from_text(input) do
+  defp find_place_from_text(input, base_url) when is_binary(base_url) do
     params = %{
       input: input,
       inputtype: "textquery",
       key: api_key(),
-      fields: "formatted_address,geometry,name,place_id"
+      fields: "formatted_address,geometry,name,place_id,types,address_components"
     }
 
-    "#{@base_url}#{@places_path}/findplacefromtext/json"
-    |> HTTPoison.get([],
-      params: params
-    )
+    "#{base_url}#{@places_path}/findplacefromtext/json"
+    |> HTTPoison.get([], params: params)
     |> handle_response()
   end
 

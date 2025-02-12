@@ -5,11 +5,11 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
   # We'll use bypass to mock the Google APIs
   setup do
     bypass = Bypass.open()
-    {:ok, bypass: bypass}
+    {:ok, bypass: bypass, base_url: "http://localhost:#{bypass.port}"}
   end
 
   describe "lookup_address/1" do
-    test "returns place data when found via Places API", %{bypass: bypass} do
+    test "returns place data when found via Places API", %{bypass: bypass, base_url: base_url} do
       Bypass.expect_once(bypass, "GET", "/maps/api/place/findplacefromtext/json", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
@@ -26,19 +26,23 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
         }))
       end)
 
-      assert {:ok, result} = GoogleLookup.lookup_address("Madison Square Garden")
+      assert {:ok, result} = GoogleLookup.lookup_address("Madison Square Garden", base_url: base_url)
       assert result["place_id"] == "ChIJK"
     end
 
-    test "falls back to Geocoding API when Places API returns no results", %{bypass: bypass} do
+    test "falls back to Geocoding API when Places API returns no results", %{bypass: bypass, base_url: base_url} do
       # Mock Places API response (no results)
       Bypass.expect_once(bypass, "GET", "/maps/api/place/findplacefromtext/json", fn conn ->
-        Plug.Conn.resp(conn, 200, ~s({"status": "OK", "candidates": []}))
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": "OK", "candidates": []}))
       end)
 
       # Mock Geocoding API response
       Bypass.expect_once(bypass, "GET", "/maps/api/geocode/json", fn conn ->
-        Plug.Conn.resp(conn, 200, ~s({
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({
           "status": "OK",
           "results": [{
             "formatted_address": "Nonexistent Place 1234",
@@ -49,7 +53,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
         }))
       end)
 
-      assert {:ok, result} = GoogleLookup.lookup_address("Nonexistent Place 1234")
+      assert {:ok, result} = GoogleLookup.lookup_address("Nonexistent Place 1234", base_url: base_url)
       assert result["results"]
     end
   end
