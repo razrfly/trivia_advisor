@@ -335,44 +335,70 @@ defmodule TriviaAdvisor.Locations do
   Uses Google Places API for geocoding and deduplication.
   """
   @spec find_or_create_venue(map()) :: {:ok, Venue.t()} | {:error, String.t()}
-  def find_or_create_venue(%{"address" => address} = attrs) do
+  def find_or_create_venue(%{"address" => _} = attrs), do: do_find_or_create_venue(attrs)
+  def find_or_create_venue(_), do: {:error, "Address is required"}
+
+  defp do_find_or_create_venue(%{"address" => address} = attrs) do
     google_lookup = Application.get_env(:trivia_advisor, :google_lookup, TriviaAdvisor.Scraping.GoogleLookup)
 
     with {:ok, location_data} <- google_lookup.lookup_address(address),
-         {:ok, country} <- find_or_create_country(location_data.country_code),
-         {:ok, city} <- find_or_create_city(location_data.city, country.code) do
+         {:ok, validated_data} <- validate_location_data(location_data),
+         {:ok, country} <- find_or_create_country(validated_data.country_code),
+         {:ok, city} <- find_or_create_city(normalize_city_name(validated_data.city), country.code) do
 
-      # Try to find existing venue
-      existing_venue = cond do
-        location_data.place_id ->
-          Repo.get_by(Venue, place_id: location_data.place_id)
-        true ->
+      # Try to find existing venue by place_id or coordinates
+      lat = Decimal.new(to_string(validated_data.lat))
+      lng = Decimal.new(to_string(validated_data.lng))
+
+      # First try by place_id
+      existing_venue =
+        if validated_data.place_id do
+          Repo.get_by(Venue, place_id: validated_data.place_id)
+        end
+
+      # Then try by exact coordinates if no venue found
+      existing_venue =
+        if is_nil(existing_venue) do
           Repo.get_by(Venue, [
-            latitude: Decimal.new(to_string(location_data.lat)),
-            longitude: Decimal.new(to_string(location_data.lng))
+            latitude: lat,
+            longitude: lng,
+            city_id: city.id
           ])
-      end
+        else
+          existing_venue
+        end
 
       case existing_venue do
-        nil ->
-          # Create new venue
-          %Venue{}
-          |> Venue.changeset(%{
-            name: attrs["title"],
-            address: address,
-            postcode: location_data.postcode,
-            latitude: Decimal.new(to_string(location_data.lat)),
-            longitude: Decimal.new(to_string(location_data.lng)),
-            place_id: location_data.place_id,
-            phone: attrs["phone"],
-            website: attrs["website"],
-            city_id: city.id
-          })
-          |> Repo.insert()
-        venue ->
-          {:ok, venue}
+        nil -> create_venue(attrs, validated_data, city)
+        venue -> {:ok, venue}
       end
     end
   end
-  def find_or_create_venue(_), do: {:error, "Address is required"}
+
+  defp validate_location_data(%{lat: lat, lng: lng, city: city, country_code: code} = data)
+    when is_number(lat) and is_number(lng) and is_binary(city) and is_binary(code), do: {:ok, data}
+  defp validate_location_data(_), do: {:error, "Missing required location data"}
+
+  defp normalize_city_name(city) do
+    city
+    |> String.split(",")
+    |> List.first()
+    |> String.trim()
+  end
+
+  defp create_venue(attrs, validated_data, city) do
+    %Venue{}
+    |> Venue.changeset(%{
+      name: attrs["title"],
+      address: attrs["address"],
+      postcode: validated_data.postcode,
+      latitude: Decimal.new(to_string(validated_data.lat)),
+      longitude: Decimal.new(to_string(validated_data.lng)),
+      place_id: validated_data.place_id,
+      phone: attrs["phone"],
+      website: attrs["website"],
+      city_id: city.id
+    })
+    |> Repo.insert()
+  end
 end

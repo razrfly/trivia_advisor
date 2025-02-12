@@ -172,5 +172,114 @@ defmodule TriviaAdvisor.LocationsTest do
     test "returns error if address is missing" do
       assert {:error, "Address is required"} = Locations.find_or_create_venue(%{})
     end
+
+    test "returns error when Google API fails" do
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address -> {:error, "Google API error"} end)
+
+      assert {:error, "Google API error"} = Locations.find_or_create_venue(%{
+        "title" => "Some Pub",
+        "address" => "Unknown Address"
+      })
+    end
+
+    test "handles incomplete Google API response" do
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          # Missing city and country_code
+          place_id: "incomplete_data"
+        }}
+      end)
+
+      assert {:error, "Missing required location data"} = Locations.find_or_create_venue(%{
+        "title" => "Incomplete Pub",
+        "address" => "123 Unknown Road"
+      })
+    end
+
+    test "finds venue by coordinates even with different address format" do
+      # First create a venue
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          place_id: "same_coords",
+          city: "London",
+          country_code: "GB",
+          postcode: "SW1A 1AA"
+        }}
+      end)
+
+      {:ok, venue1} = Locations.find_or_create_venue(%{
+        "title" => "The Pub",
+        "address" => "10 Downing St"
+      })
+
+      # Try to create another venue at same coordinates
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          place_id: "different_id",  # Different place_id
+          city: "London",
+          country_code: "GB",
+          postcode: "SW1A 1AA"
+        }}
+      end)
+
+      {:ok, venue2} = Locations.find_or_create_venue(%{
+        "title" => "The Same Pub",
+        "address" => "10 Downing Street, London"  # Different format
+      })
+
+      assert venue1.id == venue2.id
+      assert Repo.aggregate(Venue, :count) == 1
+    end
+
+    test "handles city name variations" do
+      # First lookup with simple city name
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          place_id: "london_1",
+          city: "London",
+          country_code: "GB",
+          postcode: "SW1A 1AA"
+        }}
+      end)
+
+      {:ok, venue1} = Locations.find_or_create_venue(%{
+        "title" => "London Pub",
+        "address" => "London Address"
+      })
+
+      # Second lookup with more detailed city name
+      MockGoogleLookup
+      |> expect(:lookup_address, fn _address ->
+        {:ok, %{
+          lat: 51.5074,
+          lng: -0.1278,
+          place_id: "london_2",
+          city: "London, Greater London",  # More detailed city name
+          country_code: "GB",
+          postcode: "SW1A 1AA"
+        }}
+      end)
+
+      {:ok, venue2} = Locations.find_or_create_venue(%{
+        "title" => "Another London Pub",
+        "address" => "Another London Address"
+      })
+
+      # Both venues should be in the same city
+      assert venue1.city_id == venue2.city_id
+    end
   end
 end
