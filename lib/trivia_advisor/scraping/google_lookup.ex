@@ -51,7 +51,8 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     base_url = Keyword.get(opts, :base_url, @base_url)
     params = %{
       address: address,
-      key: api_key()
+      key: api_key(),
+      result_type: "locality"  # Filter for city-level results
     }
 
     "#{base_url}#{@geocoding_path}"
@@ -105,14 +106,19 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp extract_location_components(%{"address_components" => components}) do
     %{
-      "country" => extract_component(components, "country"),
-      "city" => extract_component(components, "locality"),
-      "state" => extract_component(components, "administrative_area_level_1"),
-      "postal_code" => extract_component(components, "postal_code")
+      "country" => extract_component(components, "country") || %{"name" => "", "code" => ""},
+      "city" => extract_component(components, "locality") || %{"name" => "", "code" => ""},
+      "state" => extract_component(components, "administrative_area_level_1") || %{"name" => "", "code" => ""},
+      "postal_code" => extract_component(components, "postal_code") || %{"name" => "", "code" => ""}
     }
   end
 
-  defp extract_location_components(_), do: %{}
+  defp extract_location_components(_), do: %{
+    "country" => %{"name" => "", "code" => ""},
+    "city" => %{"name" => "", "code" => ""},
+    "state" => %{"name" => "", "code" => ""},
+    "postal_code" => %{"name" => "", "code" => ""}
+  }
 
   defp extract_component(components, type) do
     case Enum.find(components, &(type in &1["types"])) do

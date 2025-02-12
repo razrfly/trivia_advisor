@@ -203,6 +203,69 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
       assert result["state"]["name"] == "California"
       assert result["state"]["code"] == "CA"
     end
+
+    test "handles missing address components gracefully", %{bypass: bypass, base_url: base_url} do
+      Bypass.expect_once(bypass, "GET", "/maps/api/place/findplacefromtext/json", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({
+          "status": "OK",
+          "candidates": [{
+            "place_id": "test_place_id",
+            "formatted_address": "Unknown Location",
+            "name": "Test Place"
+          }]
+        }))
+      end)
+
+      Bypass.expect_once(bypass, "GET", "/maps/api/place/details/json", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({
+          "status": "OK",
+          "result": {
+            "name": "Test Place",
+            "formatted_address": "Unknown Location"
+          }
+        }))
+      end)
+
+      assert {:ok, result} = GoogleLookup.lookup_address("Test Place", base_url: base_url)
+      assert result["country"] == %{"name" => "", "code" => ""}
+      assert result["city"] == %{"name" => "", "code" => ""}
+      assert result["state"] == %{"name" => "", "code" => ""}
+    end
+
+    test "geocoding filters by locality result type", %{bypass: bypass, base_url: base_url} do
+      Bypass.expect_once(bypass, "GET", "/maps/api/place/findplacefromtext/json", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({"status": "OK", "candidates": []}))
+      end)
+
+      Bypass.expect_once(bypass, "GET", "/maps/api/geocode/json", fn conn ->
+        assert conn.query_string =~ "result_type=locality"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, ~s({
+          "status": "OK",
+          "results": [{
+            "formatted_address": "Mountain View, CA, USA",
+            "address_components": [
+              {
+                "long_name": "Mountain View",
+                "short_name": "MV",
+                "types": ["locality", "political"]
+              }
+            ]
+          }]
+        }))
+      end)
+
+      assert {:ok, result} = GoogleLookup.lookup_address("Mountain View", base_url: base_url)
+      assert result["city"]["name"] == "Mountain View"
+    end
   end
 
   # Add more test cases for lookup_place_id and lookup_geocode...
