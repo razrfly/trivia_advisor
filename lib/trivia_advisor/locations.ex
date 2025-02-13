@@ -408,6 +408,8 @@ defmodule TriviaAdvisor.Locations do
   end
 
   defp create_venue(attrs, validated_data, city) do
+    metadata = extract_relevant_metadata(validated_data)
+
     %Venue{}
     |> Venue.changeset(%{
       name: attrs["title"],
@@ -418,8 +420,38 @@ defmodule TriviaAdvisor.Locations do
       place_id: validated_data.place_id,
       phone: attrs["phone"],
       website: attrs["website"],
-      city_id: city.id
+      city_id: city.id,
+      metadata: metadata
     })
     |> Repo.insert()
+  end
+
+  defp extract_relevant_metadata(google_data) do
+    %{
+      "formatted_address" => Map.get(google_data, "formatted_address"),
+      "place_id" => Map.get(google_data, "place_id"),
+      "address_components" => extract_address_components(Map.get(google_data, "address_components", [])),
+      "business_status" => Map.get(google_data, "business_status"),
+      "formatted_phone_number" => Map.get(google_data, "formatted_phone_number"),
+      "international_phone_number" => Map.get(google_data, "international_phone_number"),
+      "opening_hours" => Map.get(google_data, "opening_hours"),
+      "rating" => Map.get(google_data, "rating"),
+      "user_ratings_total" => Map.get(google_data, "user_ratings_total")
+    }
+    |> Map.reject(fn {_k, v} -> is_nil(v) end)
+  end
+
+  defp extract_address_components(components) do
+    Enum.reduce(components, %{}, fn component, acc ->
+      type = List.first(Map.get(component, "types", []))
+      if type do
+        Map.put(acc, type, %{
+          "long_name" => Map.get(component, "long_name"),
+          "short_name" => Map.get(component, "short_name")
+        })
+      else
+        acc
+      end
+    end)
   end
 end

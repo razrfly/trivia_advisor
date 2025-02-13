@@ -32,11 +32,12 @@ defmodule TriviaAdvisor.Events.Event do
   Parses frequency text into the correct enum value.
   """
   def parse_frequency(text) when is_binary(text) do
-    text = String.downcase(text)
+    text = String.trim(text) |> String.downcase()
     cond do
-      Regex.match?(~r/every\s+week|weekly|each week/i, text) -> :weekly
-      Regex.match?(~r/every\s+2\s+weeks?|bi.?weekly|fortnightly/i, text) -> :biweekly
-      Regex.match?(~r/every\s+month|monthly/i, text) -> :monthly
+      text == "" -> :irregular
+      Regex.match?(~r/\b(every\s+2\s+weeks?|bi-?weekly|fortnightly)\b/, text) -> :biweekly
+      Regex.match?(~r/\b(every\s+week|weekly|each\s+week)\b/, text) -> :weekly
+      Regex.match?(~r/\b(every\s+month|monthly)\b/, text) -> :monthly
       true -> :irregular
     end
   end
