@@ -150,10 +150,37 @@ defmodule TriviaAdvisor.Events do
       {:error, %Ecto.Changeset{}}
 
   """
-  def create_event_source(attrs \\ %{}) do
-    %EventSource{}
-    |> EventSource.changeset(attrs)
-    |> Repo.insert()
+  def create_event_source(attrs) when is_map(attrs) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    attrs = Map.put(attrs, :last_seen_at, now)
+
+    # Return error changeset if required fields are missing
+    changeset = EventSource.changeset(%EventSource{}, attrs)
+    if !changeset.valid? do
+      {:error, changeset}
+    else
+      # First try to find existing record
+      query = from es in EventSource,
+        where: es.event_id == ^attrs.event_id and es.source_url == ^attrs.source_url
+
+      case Repo.one(query) do
+        nil ->
+          %EventSource{}
+          |> EventSource.changeset(attrs)
+          |> Repo.insert()
+
+        event_source ->
+          # Update existing record, merging metadata
+          merged_metadata = Map.merge(event_source.metadata || %{}, attrs.metadata || %{})
+
+          event_source
+          |> EventSource.changeset(%{
+            last_seen_at: now,
+            metadata: merged_metadata
+          })
+          |> Repo.update()
+      end
+    end
   end
 
   @doc """
@@ -224,9 +251,20 @@ defmodule TriviaAdvisor.Events do
           source_url: source_url,
           last_seen_at: now,
           status: "active",
-          metadata: metadata
+          metadata: metadata,
+          source_id: event.source_id
         })
         |> Repo.insert()
+        |> case do
+          {:error, %{errors: [event_id: {_, [constraint: :unique]}]} = _changeset} ->
+            # If we hit the unique constraint, try to find and update the existing record
+            event_source = Repo.one(query)
+            update_event_source(event_source, %{
+              last_seen_at: now,
+              metadata: Map.merge(event_source.metadata || %{}, metadata || %{})
+            })
+          other -> other
+        end
 
       # Update existing record, merging metadata
       event_source ->

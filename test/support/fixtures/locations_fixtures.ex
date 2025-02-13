@@ -4,6 +4,9 @@ defmodule TriviaAdvisor.LocationsFixtures do
   entities via the `TriviaAdvisor.Locations` context.
   """
 
+  alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Locations.Country
+
   @doc """
   Generate a unique country code.
   """
@@ -13,17 +16,22 @@ defmodule TriviaAdvisor.LocationsFixtures do
   Generate a country.
   """
   def country_fixture(attrs \\ %{}) do
-    {:ok, country} =
-      attrs
-      |> Enum.into(%{
-        title: "some title",
-        name: "United States",
-        code: "US",
-        slug: "some-slug#{System.unique_integer()}"
-      })
-      |> TriviaAdvisor.Locations.create_country()
+    attrs = Enum.into(attrs, %{
+      code: "GB",  # Changed from US to GB to avoid conflicts
+      name: "United Kingdom"
+    })
 
-    country
+    # Try to find existing country first
+    case Repo.get_by(Country, code: attrs.code) do
+      nil ->
+        {:ok, country} =
+          %Country{}
+          |> Country.changeset(attrs)
+          |> Repo.insert()
+        country
+      country ->
+        country
+    end
   end
 
   @doc """
@@ -36,12 +44,13 @@ defmodule TriviaAdvisor.LocationsFixtures do
   """
   def city_fixture(attrs \\ %{}) do
     country = country_fixture()
+    unique_id = System.unique_integer([:positive])
 
     {:ok, city} =
       attrs
       |> Enum.into(%{
-        name: "some name",
-        slug: "some-slug#{System.unique_integer()}",
+        name: "City #{unique_id}",  # Make name unique too
+        slug: "city-#{unique_id}",  # Ensure unique slug
         country_id: country.id
       })
       |> TriviaAdvisor.Locations.create_city()
@@ -64,14 +73,15 @@ defmodule TriviaAdvisor.LocationsFixtures do
   """
   def venue_fixture(attrs \\ %{}) do
     city = city_fixture()
+    unique_id = System.unique_integer([:positive])
 
     attrs = Enum.into(attrs, %{
-      name: "some name",
+      name: "Venue #{unique_id}",  # Make name unique
       address: "some address",
       postcode: "some postcode",
-      latitude: Decimal.new("51.5074"),  # London's latitude
-      longitude: Decimal.new("-0.1278"), # London's longitude
-      place_id: "some place_id-#{System.unique_integer([:positive])}",
+      latitude: Decimal.new("51.5074"),
+      longitude: Decimal.new("-0.1278"),
+      place_id: "place_id_#{unique_id}",  # Make place_id unique
       phone: "some phone",
       website: "some website",
       city_id: city.id
