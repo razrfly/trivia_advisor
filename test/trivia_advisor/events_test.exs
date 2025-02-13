@@ -9,16 +9,33 @@ defmodule TriviaAdvisor.EventsTest do
 
     import TriviaAdvisor.EventsFixtures
 
-    @invalid_attrs %{description: nil, name: nil, day_of_week: nil, start_time: nil, frequency: nil, entry_fee_cents: nil}
+    @invalid_attrs %{
+      name: nil,
+      description: nil,
+      day_of_week: nil,
+      start_time: nil,
+      frequency: nil,
+      entry_fee_cents: nil,
+      venue_id: nil
+    }
 
     @valid_attrs %{
       name: "some name",
       description: "some description",
-      start_time: ~T[14:00:00],
       day_of_week: 42,
-      frequency: "weekly",
+      start_time: ~T[14:00:00],
+      frequency: :weekly,
       entry_fee_cents: 42,
       venue_id: nil  # Will be set in the test
+    }
+
+    @update_attrs %{
+      name: "some updated name",
+      description: "some updated description",
+      day_of_week: 43,
+      start_time: ~T[15:01:01],
+      frequency: :monthly,
+      entry_fee_cents: 43
     }
 
     test "list_events/0 returns all events" do
@@ -39,7 +56,7 @@ defmodule TriviaAdvisor.EventsTest do
       assert event.name == "some name"
       assert event.day_of_week == 42
       assert event.start_time == ~T[14:00:00]
-      assert event.frequency == "weekly"
+      assert event.frequency == :weekly
       assert event.entry_fee_cents == 42
     end
 
@@ -50,13 +67,12 @@ defmodule TriviaAdvisor.EventsTest do
     test "update_event/2 with valid data updates the event" do
       event = event_fixture()
       update_attrs = %{description: "some updated description", name: "some updated name", day_of_week: 43, start_time: ~T[15:01:01], frequency: "weekly", entry_fee_cents: 43}
-
       assert {:ok, %Event{} = event} = Events.update_event(event, update_attrs)
       assert event.description == "some updated description"
       assert event.name == "some updated name"
       assert event.day_of_week == 43
       assert event.start_time == ~T[15:01:01]
-      assert event.frequency == "weekly"
+      assert event.frequency == :monthly
       assert event.entry_fee_cents == 43
     end
 
