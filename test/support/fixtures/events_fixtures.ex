@@ -17,7 +17,7 @@ defmodule TriviaAdvisor.EventsFixtures do
         description: "some description",
         start_time: ~T[14:00:00],
         day_of_week: 42,
-        frequency: 42,
+        frequency: :weekly,
         entry_fee_cents: 42,
         venue_id: venue.id
       })
