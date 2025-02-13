@@ -3,15 +3,15 @@ defmodule TriviaAdvisor.Locations.Venue do
   import Ecto.Changeset
 
   schema "venues" do
-    field :address, :string
     field :name, :string
+    field :slug, :string
+    field :address, :string
     field :postcode, :string
     field :latitude, :decimal
     field :longitude, :decimal
     field :place_id, :string
     field :phone, :string
     field :website, :string
-    field :slug, :string
 
     belongs_to :city, TriviaAdvisor.Locations.City
     has_many :events, TriviaAdvisor.Events.Event
@@ -22,9 +22,11 @@ defmodule TriviaAdvisor.Locations.Venue do
   @doc false
   def changeset(venue, attrs) do
     venue
-    |> cast(attrs, [:city_id, :name, :address, :postcode, :latitude, :longitude,
-                    :place_id, :phone, :website, :slug])
-    |> validate_required([:city_id, :name, :latitude, :longitude])
+    |> cast(attrs, [:name, :address, :postcode, :latitude, :longitude,
+                   :place_id, :phone, :website, :city_id])
+    |> validate_required([:name, :address, :city_id])
+    |> validate_number(:latitude, greater_than_or_equal_to: -90, less_than_or_equal_to: 90)
+    |> validate_number(:longitude, greater_than_or_equal_to: -180, less_than_or_equal_to: 180)
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:place_id)
@@ -32,14 +34,18 @@ defmodule TriviaAdvisor.Locations.Venue do
   end
 
   defp put_slug(changeset) do
-    case get_field(changeset, :slug) do
-      nil ->
-        name = get_field(changeset, :name) || ""
-        slug = String.downcase(name) |> String.replace(" ", "-")
-        put_change(changeset, :slug, slug)
-
-      _ ->
-        changeset
+    case get_change(changeset, :name) do
+      nil -> changeset
+      name -> put_change(changeset, :slug, Slug.slugify(name))
     end
   end
+
+  @doc """
+  Helper function to get coordinates as a tuple
+  """
+  def coordinates(%__MODULE__{latitude: lat, longitude: lng})
+    when not is_nil(lat) and not is_nil(lng) do
+    {Decimal.to_float(lat), Decimal.to_float(lng)}
+  end
+  def coordinates(_), do: nil
 end

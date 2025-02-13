@@ -329,4 +329,97 @@ defmodule TriviaAdvisor.Locations do
       end
     end
   end
+
+  @doc """
+  Finds or creates a venue based on provided details.
+  Uses Google Places API for geocoding and deduplication.
+  """
+  @spec find_or_create_venue(map()) :: {:ok, Venue.t()} | {:error, String.t()}
+  def find_or_create_venue(%{"address" => _} = attrs), do: do_find_or_create_venue(attrs)
+  def find_or_create_venue(_), do: {:error, "Address is required"}
+
+  defp do_find_or_create_venue(%{"address" => address} = attrs) do
+    google_lookup = Application.get_env(:trivia_advisor, :google_lookup, TriviaAdvisor.Scraping.GoogleLookup)
+
+    with {:ok, location_data} <- google_lookup.lookup_address(address),
+         {:ok, validated_data} <- validate_location_data(location_data),
+         {:ok, country} <- find_or_create_country(validated_data.country_code),
+         {:ok, city} <- find_or_create_city(normalize_city_name(validated_data.city), country.code) do
+
+      lat = Decimal.new(to_string(validated_data.lat))
+      lng = Decimal.new(to_string(validated_data.lng))
+
+      # Try to find existing venue in this order:
+      # 1. By place_id (exact match)
+      # 2. By coordinates within 100m radius in same city
+      # 3. Create new if none found
+      existing_venue =
+        if validated_data.place_id do
+          # First try by place_id
+          Repo.get_by(Venue, place_id: validated_data.place_id)
+        end
+
+      # Then try by proximity if no venue found by place_id
+      existing_venue =
+        if is_nil(existing_venue) do
+          lat_float = Decimal.to_float(lat)
+          lng_float = Decimal.to_float(lng)
+
+          # Find venues within roughly 100m using coordinate comparison
+          # 0.001 degrees ≈ 111m at the equator
+          Repo.one(
+            from v in Venue,
+            where: v.city_id == ^city.id
+              and fragment(
+                "ABS(CAST(? AS FLOAT) - CAST(latitude AS FLOAT)) < 0.001 AND ABS(CAST(? AS FLOAT) - CAST(longitude AS FLOAT)) < 0.001",
+                type(^lat_float, :float),
+                type(^lng_float, :float)
+              ),
+            limit: 1
+          )
+        else
+          existing_venue
+        end
+
+      case existing_venue do
+        nil -> create_venue(attrs, validated_data, city)
+        venue -> {:ok, venue}
+      end
+    end
+  end
+
+  defp validate_location_data(%{lat: lat, lng: lng} = data)
+    when is_number(lat) and is_number(lng) and lat >= -90 and lat <= 90
+    and lng >= -180 and lng <= 180 do
+    case {Map.get(data, :city), Map.get(data, :country_code)} do
+      {nil, _} -> {:error, "City name missing"}
+      {_, nil} -> {:error, "Country code missing"}
+      {city, code} when is_binary(city) and is_binary(code) -> {:ok, data}
+      _ -> {:error, "Invalid city or country data"}
+    end
+  end
+  defp validate_location_data(_), do: {:error, "Invalid or missing coordinates"}
+
+  defp normalize_city_name(city) when is_binary(city) do
+    city
+    |> String.replace(~r/\s*\(.+\)$/, "")  # Remove parenthetical content
+    |> String.replace(~r/\s*,.+$/, "")     # Remove everything after comma
+    |> String.trim()
+  end
+
+  defp create_venue(attrs, validated_data, city) do
+    %Venue{}
+    |> Venue.changeset(%{
+      name: attrs["title"],
+      address: attrs["address"],
+      postcode: validated_data.postcode,
+      latitude: Decimal.new(to_string(validated_data.lat)),
+      longitude: Decimal.new(to_string(validated_data.lng)),
+      place_id: validated_data.place_id,
+      phone: attrs["phone"],
+      website: attrs["website"],
+      city_id: city.id
+    })
+    |> Repo.insert()
+  end
 end
