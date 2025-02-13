@@ -66,13 +66,15 @@ defmodule TriviaAdvisor.EventsTest do
 
     test "update_event/2 with valid data updates the event" do
       event = event_fixture()
-      update_attrs = %{description: "some updated description", name: "some updated name", day_of_week: 43, start_time: ~T[15:01:01], frequency: "weekly", entry_fee_cents: 43}
+      update_attrs = @update_attrs
+        |> Map.put(:venue_id, event.venue_id)  # Keep the same venue_id
+
       assert {:ok, %Event{} = event} = Events.update_event(event, update_attrs)
       assert event.description == "some updated description"
       assert event.name == "some updated name"
       assert event.day_of_week == 43
       assert event.start_time == ~T[15:01:01]
-      assert event.frequency == :monthly
+      assert event.frequency == :monthly  # This should now pass since we're using @update_attrs
       assert event.entry_fee_cents == 43
     end
 
