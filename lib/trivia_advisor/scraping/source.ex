@@ -17,8 +17,15 @@ defmodule TriviaAdvisor.Scraping.Source do
   @doc false
   def changeset(source, attrs) do
     source
-    |> cast(attrs, [:name, :slug, :website_url])
-    |> validate_required([:name])
+ def changeset(source, attrs) do
+   source
+   |> cast(attrs, [:name, :slug, :website_url])
+   |> validate_required([:name])
+   |> validate_format(:website_url, ~r/^https?:\/\/.*$/, message: "must start with http:// or https://")
+   |> put_slug()
+   |> unique_constraint(:slug)
+   |> unique_constraint(:website_url)
+ end
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:website_url)
