@@ -68,8 +68,11 @@ defmodule TriviaAdvisor.Events.Event do
         _currency = get_currency_for_venue!(venue)
         case extract_amount(amount) do
           {:ok, number} ->
+            # Convert float to string first to handle decimal numbers correctly
             value =
-              Decimal.new(number)
+              number
+              |> Float.to_string()
+              |> Decimal.new()
               |> Decimal.mult(Decimal.new(100))
               |> Decimal.to_integer()
             value
