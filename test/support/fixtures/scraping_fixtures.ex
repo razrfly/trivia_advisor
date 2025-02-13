@@ -18,14 +18,14 @@ defmodule TriviaAdvisor.ScrapingFixtures do
   Generate a source.
   """
   def source_fixture(attrs \\ %{}) do
-    {:ok, source} =
-      attrs
-      |> Enum.into(%{
-        slug: unique_source_slug(),
+    attrs =
+      Enum.into(attrs, %{
         name: "some name",
-        website_url: unique_source_website_url()
+        website_url: "https://example.com/#{System.unique_integer()}",
+        slug: "some slug#{System.unique_integer()}"
       })
-      |> TriviaAdvisor.Scraping.create_source()
+
+    {:ok, source} = TriviaAdvisor.Scraping.create_source(attrs)
 
     source
   end

@@ -4,8 +4,8 @@ defmodule TriviaAdvisor.Scraping.Source do
 
   schema "sources" do
     field :name, :string
-    field :website_url, :string
     field :slug, :string
+    field :website_url, :string
 
     has_many :event_sources, TriviaAdvisor.Events.EventSource, on_delete: :delete_all
     has_many :scrape_logs, TriviaAdvisor.Scraping.ScrapeLog, on_delete: :delete_all
@@ -17,8 +17,9 @@ defmodule TriviaAdvisor.Scraping.Source do
   @doc false
   def changeset(source, attrs) do
     source
-    |> cast(attrs, [:name, :website_url, :slug])
-    |> validate_required([:name, :website_url])
+    |> cast(attrs, [:name, :slug, :website_url])
+    |> validate_required([:name])
+    |> validate_format(:website_url, ~r/^https?:\/\/.*$/, message: "must start with http:// or https://")
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:website_url)

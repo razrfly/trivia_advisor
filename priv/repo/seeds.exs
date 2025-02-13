@@ -15,15 +15,15 @@ alias TriviaAdvisor.Repo
 
 sources = [
   %{
-    title: "question one",
+    name: "question one",
     website_url: "https://questionone.com"
   },
   %{
-    title: "geeks who drink",
+    name: "geeks who drink",
     website_url: "https://www.geekswhodrink.com"
   },
   %{
-    title: "inquizition",
+    name: "inquizition",
     website_url: "https://inquizition.com"
   }
 ]
