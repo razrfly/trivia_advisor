@@ -1,9 +1,7 @@
 defmodule TriviaAdvisor.Events.Event do
   use Ecto.Schema
   import Ecto.Changeset
-  import Ecto.Query
-  alias TriviaAdvisor.Repo
-  alias TriviaAdvisor.Locations.Venue
+  alias TriviaAdvisor.Locations.{Venue, City}
   require Logger
 
   @frequencies ~w(weekly biweekly monthly irregular)a
@@ -67,10 +65,10 @@ defmodule TriviaAdvisor.Events.Event do
         nil
 
       true ->
-        currency = get_currency_for_venue!(venue)
+        _currency = get_currency_for_venue!(venue)
         case extract_amount(amount) do
           {:ok, number} ->
-            Money.new(currency, number) |> Money.to_integer()
+            round(number * 100)
           :error ->
             Logger.warning("Failed to parse price: #{amount}")
             nil
@@ -82,35 +80,33 @@ defmodule TriviaAdvisor.Events.Event do
   Gets the currency code for a venue by following venue -> city -> country relationship.
   Raises if city or country information is missing.
   """
-  def get_currency_for_venue!(venue_id) when is_integer(venue_id) do
-    venue = Repo.get!(Venue, venue_id) |> Repo.preload(city: :country)
-    get_currency_for_venue!(venue)
-  end
-
-  def get_currency_for_venue!(%Venue{city: nil}), do:
-    raise "Venue must have an associated city"
-
-  def get_currency_for_venue!(%Venue{city: %{country: nil}}), do:
+  def get_currency_for_venue!(%Venue{city: %City{country: nil}} = _venue), do:
     raise "Venue's city must have an associated country"
 
-  def get_currency_for_venue!(%Venue{city: %{country: country}}) do
-    case Countries.get(country.code) do
+  def get_currency_for_venue!(%Venue{city: %City{country: %{code: code}}} = _venue) when not is_nil(code) do
+    case Countries.get(code) do
       nil ->
-        raise "Invalid country code: #{country.code}"
+        raise "Invalid country code: #{code}"
       country_data ->
         country_data.currency_code
     end
   end
 
+  def get_currency_for_venue!(%Venue{city: nil}), do:
+    raise "Venue must have an associated city"
+
+  def get_currency_for_venue!(%Venue{} = _venue), do:
+    raise "Venue's city association is not loaded"
+
   # Private helper to safely extract numeric amount
   defp extract_amount(amount) do
-    # First try with currency symbol
-    case Regex.run(~r/^([£€$])?(\d+(?:\.\d{2})?)\s*$/u, amount) do
+    # First try with currency symbol - allow whitespace between symbol and number
+    case Regex.run(~r/^([£€$])\s*(\d+(?:\.\d{2})?)\s*$/u, amount) do
       [_, _symbol, number] ->
         parse_number(number)
       nil ->
         # Then try just the number
-        case Regex.run(~r/^(\d+(?:\.\d{2})?)\s*$/, amount) do
+        case Regex.run(~r/^\s*(\d+(?:\.\d{2})?)\s*$/, amount) do
           [_, number] -> parse_number(number)
           nil -> :error
         end

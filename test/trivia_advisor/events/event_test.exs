@@ -7,40 +7,69 @@ defmodule TriviaAdvisor.Events.EventTest do
     setup do
       # Set up test data
       {:ok, country_gb} = Repo.insert(%Country{code: "GB", name: "United Kingdom"})
-      {:ok, city} = Repo.insert(%City{name: "London", country_id: country_gb.id})
+      {:ok, city} = Repo.insert(%City{
+        name: "London",
+        country_id: country_gb.id,
+        slug: "london"
+      })
       {:ok, venue_gb} = Repo.insert(%Venue{
         name: "Test Pub GB",
         city_id: city.id,
-        address: "123 Test St"
+        address: "123 Test St",
+        latitude: 51.5074,
+        longitude: -0.1278,
+        slug: "test-pub-gb"
       })
 
       {:ok, country_de} = Repo.insert(%Country{code: "DE", name: "Germany"})
-      {:ok, city_de} = Repo.insert(%City{name: "Berlin", country_id: country_de.id})
+      {:ok, city_de} = Repo.insert(%City{
+        name: "Berlin",
+        country_id: country_de.id,
+        slug: "berlin"
+      })
       {:ok, venue_de} = Repo.insert(%Venue{
         name: "Test Bar DE",
         city_id: city_de.id,
-        address: "456 Test St"
-      })
-
-      # Add venue without city
-      {:ok, venue_no_city} = Repo.insert(%Venue{
-        name: "No City Venue",
-        address: "789 Test St"
-      })
-
-      # Add venue with city but no country
-      {:ok, city_no_country} = Repo.insert(%City{name: "No Country City"})
-      {:ok, venue_no_country} = Repo.insert(%Venue{
-        name: "No Country Venue",
-        city_id: city_no_country.id,
-        address: "012 Test St"
+        address: "456 Test St",
+        latitude: 52.5200,
+        longitude: 13.4050,
+        slug: "test-bar-de"
       })
 
       %{
         venue_gb: venue_gb,
         venue_de: venue_de,
-        venue_no_city: venue_no_city,
-        venue_no_country: venue_no_country
+        venue_no_city: build_venue_without_city(),
+        venue_no_country: build_venue_without_country()
+      }
+    end
+
+    defp build_venue_without_city do
+      %Venue{
+        name: "No City Venue",
+        address: "789 Test St",
+        latitude: 0.0,
+        longitude: 0.0,
+        slug: "no-city-venue"
+      }
+    end
+
+    defp build_venue_without_country do
+      city = %City{
+        name: "No Country City",
+        slug: "no-country-city",
+        country: nil,
+        __meta__: %Ecto.Schema.Metadata{state: :loaded}
+      }
+
+      %Venue{
+        name: "No Country Venue",
+        city: city,
+        address: "012 Test St",
+        latitude: 0.0,
+        longitude: 0.0,
+        slug: "no-country-venue",
+        __meta__: %Ecto.Schema.Metadata{state: :loaded}
       }
     end
 
@@ -70,9 +99,27 @@ defmodule TriviaAdvisor.Events.EventTest do
       assert Event.parse_currency(nil, venue) == nil
     end
 
-    test "fails when country is missing", %{venue_gb: venue} do
-      venue = %Venue{name: "No Country Venue"}
-      assert_raise RuntimeError, ~r/must have an associated country/, fn ->
+    test "fails when country is missing", %{venue_gb: _venue} do
+      # Create a venue with a city that has no country
+      city = %City{
+        name: "No Country City",
+        slug: "no-country-city",
+        country: nil,  # Explicitly set country to nil
+        __meta__: %Ecto.Schema.Metadata{state: :loaded}
+      }
+      venue = %Venue{
+        name: "No Country Venue",
+        city: city,  # Don't use force: true, just set the struct directly
+        address: "012 Test St",
+        latitude: 0.0,
+        longitude: 0.0,
+        slug: "no-country-venue",
+        __meta__: %Ecto.Schema.Metadata{state: :loaded},
+        city_id: nil
+      }
+
+      # No need to preload since we've built the struct with associations
+      assert_raise RuntimeError, "Venue's city must have an associated country", fn ->
         Event.parse_currency("£3.50", venue)
       end
     end
@@ -96,8 +143,24 @@ defmodule TriviaAdvisor.Events.EventTest do
       end
     end
 
-    test "raises error when city has no country", %{venue_no_country: venue} do
-      venue = Repo.preload(venue, city: :country)
+    test "raises error when city has no country", %{venue_no_country: _venue} do
+      # Create a venue with a city that has no country
+      city = %City{
+        name: "No Country City",
+        slug: "no-country-city",
+        country: nil,  # Explicitly set country to nil
+        __meta__: %Ecto.Schema.Metadata{state: :loaded}
+      }
+      venue = %Venue{
+        name: "No Country Venue",
+        city: city,  # Set city directly
+        address: "012 Test St",
+        latitude: 0.0,
+        longitude: 0.0,
+        slug: "no-country-venue",
+        __meta__: %Ecto.Schema.Metadata{state: :loaded}
+      }
+
       assert_raise RuntimeError, "Venue's city must have an associated country", fn ->
         Event.parse_currency("£3.50", venue)
       end
