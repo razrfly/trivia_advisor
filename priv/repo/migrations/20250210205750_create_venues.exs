@@ -13,6 +13,7 @@ defmodule TriviaAdvisor.Repo.Migrations.CreateVenues do
       add :phone, :string
       add :website, :string
       add :slug, :string, null: false
+      add :metadata, :jsonb
 
       timestamps(type: :utc_datetime)
     end
