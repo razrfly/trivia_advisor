@@ -17,7 +17,7 @@ defmodule TriviaAdvisor.EventsFixtures do
         description: "some description",
         start_time: ~T[14:00:00],
         day_of_week: 42,
-        frequency: :weekly,
+        frequency: "weekly",
         entry_fee_cents: 42,
         venue_id: venue.id
       })
@@ -32,14 +32,15 @@ defmodule TriviaAdvisor.EventsFixtures do
   def event_source_fixture(attrs \\ %{}) do
     event = event_fixture()
     source = TriviaAdvisor.ScrapingFixtures.source_fixture()
+    unique_id = System.unique_integer([:positive])
 
     {:ok, event_source} =
       attrs
       |> Enum.into(%{
         status: "some status",
         metadata: %{},
-        source_url: "some source_url",
-        last_seen_at: ~U[2025-02-09 21:21:00Z],
+        source_url: "some-source-url-#{unique_id}",
+        last_seen_at: DateTime.utc_now() |> DateTime.truncate(:second),
         event_id: event.id,
         source_id: source.id
       })

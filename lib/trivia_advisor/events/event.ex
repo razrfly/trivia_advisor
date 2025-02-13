@@ -25,6 +25,7 @@ defmodule TriviaAdvisor.Events.Event do
     event
     |> cast(attrs, [:name, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :venue_id])
     |> validate_required([:day_of_week, :start_time, :frequency, :venue_id])
+    |> validate_inclusion(:frequency, @frequencies) # Even though it's Ecto.Enum, keeping it
     |> validate_entry_fee()
   end
 
@@ -42,18 +43,11 @@ defmodule TriviaAdvisor.Events.Event do
     end
   end
   def parse_frequency(_), do: :irregular
+
   @doc """
   Parses currency strings into cents integer based on venue's country.
   Returns nil for free events or unparseable amounts.
   Raises if venue structure is invalid.
-
-  ## Examples
-      iex> parse_currency("£3.50", venue_with_gb)
-      350
-      iex> parse_currency("3.50", venue_with_gb)  # Uses GB currency
-      350
-      iex> parse_currency("Free", venue_with_de)
-      nil
   """
   def parse_currency(nil, _venue), do: nil
   def parse_currency(amount, _venue) when is_integer(amount), do: amount
@@ -68,7 +62,6 @@ defmodule TriviaAdvisor.Events.Event do
         _currency = get_currency_for_venue!(venue)
         case extract_amount(amount) do
           {:ok, number} ->
-            # Convert float to string first to handle decimal numbers correctly
             value =
               number
               |> Float.to_string()
@@ -82,6 +75,7 @@ defmodule TriviaAdvisor.Events.Event do
         end
     end
   end
+
   @doc """
   Gets the currency code for a venue by following venue -> city -> country relationship.
   Raises if city or country information is missing.

@@ -17,7 +17,8 @@ defmodule TriviaAdvisor.Events.EventSource do
   @doc false
   def changeset(event_source, attrs) do
     event_source
-    |> cast(attrs, [:source_url, :last_seen_at, :status, :metadata, :event_id, :source_id])
+    |> cast(attrs, [:status, :metadata, :source_url, :last_seen_at, :event_id, :source_id])
     |> validate_required([:source_url, :last_seen_at, :event_id, :source_id])
+    |> unique_constraint([:event_id, :source_url], name: "event_sources_event_id_source_url_index")
   end
 end

@@ -150,10 +150,37 @@ defmodule TriviaAdvisor.Events do
       {:error, %Ecto.Changeset{}}
 
   """
-  def create_event_source(attrs \\ %{}) do
-    %EventSource{}
-    |> EventSource.changeset(attrs)
-    |> Repo.insert()
+  def create_event_source(attrs) when is_map(attrs) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    attrs = Map.put(attrs, :last_seen_at, now)
+
+    # Return error changeset if required fields are missing
+    changeset = EventSource.changeset(%EventSource{}, attrs)
+    if !changeset.valid? do
+      {:error, changeset}
+    else
+      # First try to find existing record
+      query = from es in EventSource,
+        where: es.event_id == ^attrs.event_id and es.source_url == ^attrs.source_url
+
+      case Repo.one(query) do
+        nil ->
+          %EventSource{}
+          |> EventSource.changeset(attrs)
+          |> Repo.insert()
+
+        event_source ->
+          # Update existing record, merging metadata
+          merged_metadata = Map.merge(event_source.metadata || %{}, attrs.metadata || %{})
+
+          event_source
+          |> EventSource.changeset(%{
+            last_seen_at: now,
+            metadata: merged_metadata
+          })
+          |> Repo.update()
+      end
+    end
   end
 
   @doc """
@@ -201,5 +228,70 @@ defmodule TriviaAdvisor.Events do
   """
   def change_event_source(%EventSource{} = event_source, attrs \\ %{}) do
     EventSource.changeset(event_source, attrs)
+  end
+
+  @doc """
+  Creates or updates an event source entry.
+  Updates last_seen_at and merges metadata if the event source already exists.
+  Returns {:ok, event_source} with the created or updated record.
+  """
+  def create_event_source(event, source_url, metadata) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    # First try to find existing record
+    query = from es in EventSource,
+      where: es.event_id == ^event.id and es.source_url == ^source_url
+
+    case Repo.one(query) do
+      # Create new record if none exists
+      nil ->
+        %EventSource{}
+        |> EventSource.changeset(%{
+          event_id: event.id,
+          source_url: source_url,
+          last_seen_at: now,
+          status: "active",
+          metadata: metadata,
+          source_id: event.source_id
+        })
+        |> Repo.insert()
+        |> case do
+          {:error, %{errors: [event_id: {_, [constraint: :unique]}]} = _changeset} ->
+            # If we hit the unique constraint, try to find and update the existing record
+            event_source = Repo.one(query)
+            update_event_source(event_source, %{
+              last_seen_at: now,
+              metadata: Map.merge(event_source.metadata || %{}, metadata || %{})
+            })
+          other -> other
+        end
+
+      # Update existing record, merging metadata
+      event_source ->
+        merged_metadata = Map.merge(event_source.metadata || %{}, metadata || %{})
+
+        event_source
+        |> EventSource.changeset(%{
+          last_seen_at: now,
+          metadata: merged_metadata
+        })
+        |> Repo.update()
+    end
+  end
+
+  @doc """
+  Finds or creates an event based on venue_id and day_of_week.
+  Updates existing event if found with new attributes.
+  """
+  def find_or_create_event(attrs) do
+    query = from e in Event,
+      where: e.venue_id == ^attrs.venue_id and
+             e.day_of_week == ^attrs.day_of_week,
+      limit: 1
+
+    case Repo.one(query) do
+      nil -> create_event(attrs)
+      event -> update_event(event, attrs)
+    end
   end
 end

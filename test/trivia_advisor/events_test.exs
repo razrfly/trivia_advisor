@@ -2,7 +2,7 @@ defmodule TriviaAdvisor.EventsTest do
   use TriviaAdvisor.DataCase
 
   alias TriviaAdvisor.Events
-  alias TriviaAdvisor.Events.Event
+  alias TriviaAdvisor.Events.{Event, EventSource}
 
   describe "events" do
     alias TriviaAdvisor.Events.Event
@@ -66,12 +66,15 @@ defmodule TriviaAdvisor.EventsTest do
 
     test "update_event/2 with valid data updates the event" do
       event = event_fixture()
-      assert {:ok, %Event{} = event} = Events.update_event(event, @update_attrs)
+      update_attrs = @update_attrs
+        |> Map.put(:venue_id, event.venue_id)  # Keep the same venue_id
+
+      assert {:ok, %Event{} = event} = Events.update_event(event, update_attrs)
       assert event.description == "some updated description"
       assert event.name == "some updated name"
       assert event.day_of_week == 43
       assert event.start_time == ~T[15:01:01]
-      assert event.frequency == :monthly
+      assert event.frequency == :monthly  # This should now pass since we're using @update_attrs
       assert event.entry_fee_cents == 43
     end
 
@@ -129,7 +132,7 @@ defmodule TriviaAdvisor.EventsTest do
       assert event_source.status == "some status"
       assert event_source.metadata == %{}
       assert event_source.source_url == "some source_url"
-      assert event_source.last_seen_at == ~U[2025-02-09 21:21:00Z]
+      assert %DateTime{} = event_source.last_seen_at  # Just verify it's a DateTime
     end
 
     test "create_event_source/1 with invalid data returns error changeset" do
@@ -162,6 +165,124 @@ defmodule TriviaAdvisor.EventsTest do
     test "change_event_source/1 returns a event_source changeset" do
       event_source = event_source_fixture()
       assert %Ecto.Changeset{} = Events.change_event_source(event_source)
+    end
+
+    setup do
+      venue = TriviaAdvisor.LocationsFixtures.venue_fixture()
+      # Create a test source first
+      {:ok, source} = TriviaAdvisor.Scraping.create_source(%{
+        name: "Test Source",
+        url: "https://example.com",
+        website_url: "https://example.com"
+      })
+
+      {:ok, event} = Events.create_event(%{
+        name: "Test Quiz",
+        day_of_week: 2,
+        start_time: ~T[19:00:00],
+        frequency: "weekly",
+        venue_id: venue.id
+      })
+
+      %{event: event, source: source}
+    end
+
+    test "create_event_source/3 updates last_seen_at instead of duplicating", %{event: event, source: source} do
+      source_url = "https://example.com/quiz"
+      metadata = %{"key" => "value"}
+
+      {:ok, source1} = Events.create_event_source(%{
+        event_id: event.id,
+        source_id: source.id,
+        source_url: source_url,
+        metadata: metadata
+      })
+      assert source1.last_seen_at != nil
+      first_seen = source1.last_seen_at
+
+      # Wait to ensure timestamp differs
+      Process.sleep(1000)
+
+      # Second creation should update
+      {:ok, source2} = Events.create_event_source(%{
+        event_id: event.id,
+        source_id: source.id,
+        source_url: source_url,
+        metadata: metadata
+      })
+      assert source2.id == source1.id
+      assert source2.last_seen_at > first_seen
+    end
+
+    test "create_event_source/3 merges metadata correctly", %{event: event, source: source} do
+      source_url = "https://example.com/quiz"
+
+      # Initial metadata
+      {:ok, source1} = Events.create_event_source(%{
+        event_id: event.id,
+        source_id: source.id,
+        source_url: source_url,
+        metadata: %{"existing" => "value"}
+      })
+
+      # Add new metadata
+      {:ok, source2} = Events.create_event_source(%{
+        event_id: event.id,
+        source_id: source.id,
+        source_url: source_url,
+        metadata: %{"new" => "value2"}
+      })
+
+      assert source2.id == source1.id
+      assert source2.metadata == %{"existing" => "value", "new" => "value2"}
+    end
+  end
+
+  describe "find_or_create_event/1" do
+    setup do
+      venue = TriviaAdvisor.LocationsFixtures.venue_fixture()
+      %{venue: venue}
+    end
+
+    test "reuses existing event with same venue and day", %{venue: venue} do
+      attrs = %{
+        name: "Original Quiz",
+        day_of_week: 2,
+        start_time: ~T[19:00:00],
+        frequency: "weekly",
+        venue_id: venue.id
+      }
+
+      # Create initial event
+      {:ok, event1} = Events.find_or_create_event(attrs)
+
+      # Try to create/update with new name
+      {:ok, event2} = Events.find_or_create_event(Map.put(attrs, :name, "Updated Quiz"))
+
+      assert event2.id == event1.id
+      assert event2.name == "Updated Quiz"
+      assert event2.day_of_week == event1.day_of_week
+    end
+
+    test "creates new event for different day_of_week", %{venue: venue} do
+      attrs = %{
+        name: "Monday Quiz",
+        day_of_week: 1,
+        start_time: ~T[19:00:00],
+        frequency: "weekly",
+        entry_fee_cents: 42,
+        venue_id: venue.id
+      }
+
+      # Create Monday event
+      {:ok, monday_event} = Events.find_or_create_event(attrs)
+
+      # Create Tuesday event
+      {:ok, tuesday_event} = Events.find_or_create_event(Map.put(attrs, :day_of_week, 2))
+
+      refute tuesday_event.id == monday_event.id
+      assert tuesday_event.day_of_week == 2
+      assert monday_event.day_of_week == 1
     end
   end
 end
