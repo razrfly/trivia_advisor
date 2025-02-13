@@ -42,7 +42,6 @@ defmodule TriviaAdvisor.Events.Event do
     end
   end
   def parse_frequency(_), do: :irregular
-
   @doc """
   Parses currency strings into cents integer based on venue's country.
   Returns nil for free events or unparseable amounts.
@@ -69,14 +68,17 @@ defmodule TriviaAdvisor.Events.Event do
         _currency = get_currency_for_venue!(venue)
         case extract_amount(amount) do
           {:ok, number} ->
-            round(number * 100)
+            value =
+              Decimal.new(number)
+              |> Decimal.mult(Decimal.new(100))
+              |> Decimal.to_integer()
+            value
           :error ->
             Logger.warning("Failed to parse price: #{amount}")
             nil
         end
     end
   end
-
   @doc """
   Gets the currency code for a venue by following venue -> city -> country relationship.
   Raises if city or country information is missing.
