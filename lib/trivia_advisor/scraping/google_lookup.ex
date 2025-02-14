@@ -1,11 +1,13 @@
 defmodule TriviaAdvisor.Scraping.GoogleLookup do
   @moduledoc """
   Handles Google Places and Geocoding API lookups for venue addresses.
+  Includes rate limiting and fallback strategies.
   """
 
   require Logger
 
   @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
+  @retry_wait_ms 5_000  # Wait 5 seconds between retries
 
   @doc """
   Looks up an address using Google Places API first, falling back to Geocoding API.
@@ -17,12 +19,14 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
       case normalize_place_data(place_data) do
         %{"country" => nil} = data ->
-          Logger.info("Missing country, attempting Geocoding API for #{address}")
+          Logger.info("Missing country data for #{address}, attempting Geocoding API")
           case lookup_geocode(address, api_key, opts) do
             {:ok, geo_data} ->
               # Merge geocoding data, preferring existing non-nil values
               {:ok, Map.merge(geo_data, data, fn _k, v1, v2 -> v2 || v1 end)}
-            {:error, :no_results} -> {:error, :no_results}
+            {:error, :no_results} ->
+              Logger.warning("No results found for address: #{address}")
+              {:error, :no_results}
             {:error, _} -> {:ok, data}  # Keep original data if geocoding fails
           end
 
@@ -85,12 +89,8 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp get_api_key do
     case Application.get_env(:trivia_advisor, :google_api_key) do
-      nil ->
-        Logger.error("Google Maps API key is missing!")
-        {:error, "API key missing"}
-      "" ->
-        Logger.error("Google Maps API key is empty!")
-        {:error, "API key missing"}
+      nil -> raise "Google Maps API key is missing! Configure it in config.exs"
+      "" -> raise "Google Maps API key is empty! Configure it in config.exs"
       key -> {:ok, key}
     end
   end
@@ -100,10 +100,13 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp handle_places_response(%{"status" => "ZERO_RESULTS"}) do
+    Logger.warning("No results found for Places API request")
     {:error, :no_results}
   end
 
   defp handle_places_response(%{"status" => "OVER_QUERY_LIMIT"}) do
+    Logger.error("Google Places API rate limit exceeded. Retrying in #{@retry_wait_ms}ms...")
+    Process.sleep(@retry_wait_ms)
     {:error, :over_query_limit}
   end
 
@@ -113,6 +116,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp handle_geocoding_response(%{"status" => "OK", "results" => []}) do
+    Logger.warning("Empty results from Geocoding API")
     {:error, :no_results}
   end
 
@@ -121,6 +125,8 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp handle_geocoding_response(%{"status" => "OVER_QUERY_LIMIT"}) do
+    Logger.error("Google Geocoding API rate limit exceeded. Retrying in #{@retry_wait_ms}ms...")
+    Process.sleep(@retry_wait_ms)
     {:error, :over_query_limit}
   end
 
