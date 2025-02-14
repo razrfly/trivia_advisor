@@ -1,134 +1,238 @@
 defmodule TriviaAdvisor.Scraping.GoogleLookup do
   @moduledoc """
-  Module for looking up place data from Google Places and Geocoding APIs.
+  Handles Google Places and Geocoding API lookups for venue addresses.
   """
 
-  @base_url "https://maps.googleapis.com"
-  @places_path "/maps/api/place"
-  @geocoding_path "/maps/api/geocode/json"
+  require Logger
+
+  @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
   @doc """
-  Looks up an address using Google Places API, falling back to Geocoding API if needed.
-  Returns location data enriched with country and city information.
+  Looks up an address using Google Places API first, falling back to Geocoding API.
+  Returns {:ok, data} or {:error, reason}.
   """
-  def lookup_address(address, opts \\ []) when is_binary(address) do
-    base_url = Keyword.get(opts, :base_url, @base_url)
-    _timeout = Keyword.get(opts, :timeout, 5_000)
-    case find_place_from_text(address, base_url) do
-      {:ok, %{"candidates" => [place | _]}} ->
-        case lookup_place_id(place["place_id"], opts) do
-          {:ok, %{"result" => details}} -> {:ok, enrich_place_data(details)}
-          error -> error
-        end
-      {:ok, %{"candidates" => []}} ->
-        case lookup_geocode(address, [base_url: base_url]) do
-          {:ok, %{"results" => [result | _]}} -> {:ok, enrich_place_data(result)}
-          other -> other
-        end
-      error -> error
+  def lookup_address(address, opts \\ []) do
+    with {:ok, api_key} <- get_api_key(),
+         {:ok, place_data} <- find_place_from_text(address, api_key, opts) do
+
+      case normalize_place_data(place_data) do
+        %{"country" => nil} = data ->
+          Logger.info("Missing country, attempting Geocoding API for #{address}")
+          case lookup_geocode(address, api_key, opts) do
+            {:ok, geo_data} ->
+              # Merge geocoding data, preferring existing non-nil values
+              {:ok, Map.merge(geo_data, data, fn _k, v1, v2 -> v2 || v1 end)}
+            {:error, :no_results} -> {:error, :no_results}
+            {:error, _} -> {:ok, data}  # Keep original data if geocoding fails
+          end
+
+        data -> {:ok, data}
+      end
     end
   end
 
-  @doc """
-  Fetches detailed place data from Google Places API using a place_id.
-  """
-  def lookup_place_id(place_id, opts \\ []) when is_binary(place_id) do
-    base_url = Keyword.get(opts, :base_url, @base_url)
-    params = %{
-      place_id: place_id,
-      key: api_key(),
-      fields: "formatted_address,geometry,name,place_id,types,address_components"
-    }
-
-    "#{base_url}#{@places_path}/details/json"
-    |> HTTPoison.get([], params: params)
-    |> handle_response()
-  end
-
-  @doc """
-  Looks up address components and coordinates using Google Geocoding API.
-  """
-  def lookup_geocode(address, opts \\ []) when is_binary(address) do
-    base_url = Keyword.get(opts, :base_url, @base_url)
-    params = %{
-      address: address,
-      key: api_key(),
-      result_type: "locality"  # Filter for city-level results
-    }
-
-    "#{base_url}#{@geocoding_path}"
-    |> HTTPoison.get([], params: params)
-    |> handle_response()
-  end
-
-  # Private Functions
-
-  defp find_place_from_text(input, base_url) when is_binary(base_url) do
+  defp find_place_from_text(input, api_key, _opts) do
     params = %{
       input: input,
       inputtype: "textquery",
-      key: api_key(),
-      fields: "formatted_address,geometry,name,place_id"
+      fields: "formatted_address,name,place_id,geometry,address_components",
+      key: api_key
     }
 
-    "#{base_url}#{@places_path}/findplacefromtext/json"
-    |> HTTPoison.get([], params: params)
-    |> handle_response()
-  end
+    case @http_client.get(places_url(params), [], follow_redirect: true) do
+      {:ok, %{status_code: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, response} -> handle_places_response(response)
+          {:error, error} ->
+            Logger.error("Failed to decode Places API response: #{inspect(error)}")
+            {:error, "Invalid JSON response"}
+        end
 
-  defp handle_response({:ok, %HTTPoison.Response{status_code: 200, body: body}}) do
-    case Jason.decode(body) do
-      {:ok, %{"status" => "OK"} = response} -> {:ok, response}
-      {:ok, %{"status" => error, "error_message" => message}} -> {:error, "#{error}: #{message}"}
-      {:ok, %{"status" => error}} -> {:error, error}
-      error -> {:error, "Failed to decode response: #{inspect(error)}"}
+      {:ok, %{status_code: status}} ->
+        Logger.error("Google Places API HTTP #{status}")
+        {:error, "HTTP #{status}"}
+
+      {:error, error} ->
+        Logger.error("Google Places API request failed: #{inspect(error)}")
+        {:error, "Request failed"}
     end
   end
 
-  defp handle_response({:ok, %HTTPoison.Response{status_code: status, body: body}}) do
-    {:error, "HTTP Status #{status}: #{body}"}
+  defp lookup_geocode(address, api_key, _opts) do
+    params = %{
+      address: address,
+      key: api_key
+    }
+
+    case @http_client.get(geocoding_url(params), [], follow_redirect: true) do
+      {:ok, %{status_code: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, response} -> handle_geocoding_response(response)
+          {:error, error} ->
+            Logger.error("Failed to decode Geocoding API response: #{inspect(error)}")
+            {:error, "Invalid JSON response"}
+        end
+
+      {:ok, %{status_code: status}} ->
+        Logger.error("Google Geocoding API HTTP #{status}")
+        {:error, "HTTP #{status}"}
+
+      {:error, error} ->
+        Logger.error("Google Geocoding API request failed: #{inspect(error)}")
+        {:error, "Request failed"}
+    end
   end
 
-  defp handle_response({:error, %HTTPoison.Error{reason: reason}}) do
-    {:error, "HTTP Error: #{inspect(reason)}"}
+  defp get_api_key do
+    case Application.get_env(:trivia_advisor, :google_api_key) do
+      nil ->
+        Logger.error("Google Maps API key is missing!")
+        {:error, "API key missing"}
+      "" ->
+        Logger.error("Google Maps API key is empty!")
+        {:error, "API key missing"}
+      key -> {:ok, key}
+    end
   end
 
-  defp api_key do
-    key = Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
-    if is_nil(key) or key == "", do: raise("Google Maps API key not configured!")
-    key
+  defp handle_places_response(%{"status" => "OK", "candidates" => candidates}) do
+    {:ok, List.first(candidates)}
   end
 
-  defp enrich_place_data(place) do
-    place
-    |> extract_location_components()
-    |> Map.merge(place)
+  defp handle_places_response(%{"status" => "ZERO_RESULTS"}) do
+    {:error, :no_results}
   end
 
-  defp extract_location_components(%{"address_components" => components}) do
+  defp handle_places_response(%{"status" => "OVER_QUERY_LIMIT"}) do
+    {:error, :over_query_limit}
+  end
+
+  defp handle_places_response(%{"status" => status, "error_message" => msg}) do
+    Logger.error("Google Places API error: #{status} - #{msg}")
+    {:error, msg}
+  end
+
+  defp handle_geocoding_response(%{"status" => "OK", "results" => []}) do
+    {:error, :no_results}
+  end
+
+  defp handle_geocoding_response(%{"status" => "OK", "results" => [result | _]}) do
+    {:ok, normalize_geocoding_data(result)}
+  end
+
+  defp handle_geocoding_response(%{"status" => "OVER_QUERY_LIMIT"}) do
+    {:error, :over_query_limit}
+  end
+
+  defp handle_geocoding_response(%{"status" => status, "error_message" => msg}) do
+    Logger.error("Google Geocoding API error: #{status} - #{msg}")
+    {:error, msg}
+  end
+
+  defp normalize_place_data(place) when is_map(place) do
+    components = extract_address_components(place["address_components"])
+
     %{
-      "country" => extract_component(components, "country") || %{"name" => "", "code" => ""},
-      "city" => extract_component(components, "locality") || %{"name" => "", "code" => ""},
-      "state" => extract_component(components, "administrative_area_level_1") || %{"name" => "", "code" => ""},
-      "postal_code" => extract_component(components, "postal_code") || %{"name" => "", "code" => ""}
+      "name" => place["name"],
+      "formatted_address" => place["formatted_address"],
+      "place_id" => Map.get(place, "place_id", nil),
+      "location" => extract_location(place["geometry"]),
+      "country" => components["country"],
+      "city" => components["city"],
+      "state" => components["state"],
+      "postal_code" => components["postal_code"]
     }
   end
-
-  defp extract_location_components(_), do: %{
-    "country" => %{"name" => "", "code" => ""},
-    "city" => %{"name" => "", "code" => ""},
-    "state" => %{"name" => "", "code" => ""},
-    "postal_code" => %{"name" => "", "code" => ""}
+  defp normalize_place_data(_), do: %{
+    "name" => nil,
+    "formatted_address" => nil,
+    "place_id" => nil,
+    "location" => nil,
+    "country" => nil,
+    "city" => nil,
+    "state" => nil,
+    "postal_code" => nil
   }
 
-  defp extract_component(components, type) do
-    case Enum.find(components, &(type in &1["types"])) do
-      %{"long_name" => name, "short_name" => code} ->
-        %{
-          "name" => name,
-          "code" => code
-        }
-      _ -> nil
-    end
+  defp normalize_geocoding_data(result) do
+    components = extract_address_components(result["address_components"] || [])
+
+    %{
+      "name" => result["formatted_address"],  # Use formatted_address as name for geocoding results
+      "formatted_address" => result["formatted_address"],
+      "place_id" => Map.get(result, "place_id", nil),
+      "location" => extract_location(result["geometry"]),
+      "country" => components["country"],
+      "city" => components["city"],
+      "state" => components["state"],
+      "postal_code" => components["postal_code"]
+    }
+  end
+
+  defp extract_address_components(components) when is_list(components) do
+    result = Enum.reduce(components, %{}, fn component, acc ->
+      types = component["types"] || []
+
+      cond do
+        # Check for country type
+        "country" in types ->
+          Map.put(acc, "country", %{
+            "name" => component["long_name"],
+            "code" => component["short_name"]
+          })
+
+        # Check for locality type
+        "locality" in types ->
+          Map.put(acc, "city", %{
+            "name" => component["long_name"],
+            "code" => component["short_name"]
+          })
+
+        # Check for state/province type
+        "administrative_area_level_1" in types ->
+          Map.put(acc, "state", %{
+            "name" => component["long_name"],
+            "code" => component["short_name"]
+          })
+
+        # Check for postal code type
+        "postal_code" in types ->
+          Map.put(acc, "postal_code", %{
+            "name" => component["long_name"],
+            "code" => component["short_name"]
+          })
+
+        true -> acc
+      end
+    end)
+
+    Map.merge(%{
+      "country" => nil,
+      "city" => nil,
+      "state" => nil,
+      "postal_code" => nil
+    }, result)
+  end
+  defp extract_address_components(_), do: %{
+    "country" => nil,
+    "city" => nil,
+    "state" => nil,
+    "postal_code" => nil
+  }
+
+  defp extract_location(%{"location" => location}) do
+    %{
+      "lat" => location["lat"],
+      "lng" => location["lng"]
+    }
+  end
+  defp extract_location(_), do: nil
+
+  defp places_url(params) do
+    "https://maps.googleapis.com/maps/api/place/findplacefromtext/json?" <> URI.encode_query(params)
+  end
+
+  defp geocoding_url(params) do
+    "https://maps.googleapis.com/maps/api/geocode/json?" <> URI.encode_query(params)
   end
 end
