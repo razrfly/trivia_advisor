@@ -120,8 +120,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
 
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-        {:ok, document} = Floki.parse_document(body)
-        extract_venue_data(document, url, raw_title)
+        with {:ok, document} <- Floki.parse_document(body),
+             {:ok, venue_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title) do
+          venue_data
+        else
+          {:error, reason} ->
+            Logger.error("Failed to extract venue data from #{url}: #{reason}")
+            nil
+        end
 
       {:ok, %HTTPoison.Response{status_code: status}} ->
         Logger.error("HTTP #{status} when fetching venue: #{url}")
@@ -131,88 +137,5 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
         Logger.error("Error fetching venue #{url}: #{inspect(error)}")
         nil
     end
-  end
-
-  defp extract_venue_data(document, url, raw_title) do
-    # Clean the title - remove PUB QUIZ prefix and everything after dash
-    title = raw_title
-    |> String.replace(~r/^PUB QUIZ[[:punct:]]*/i, "")
-    |> String.replace(~r/^[–\s]+/, "")
-    |> String.replace(~r/\s+[–].*$/i, "")
-    |> String.trim()
-
-    # Extract data using icon-based selectors
-    address = find_text_with_icon(document, "pin")
-    time_text = find_text_with_icon(document, "calendar")
-    fee_text = find_text_with_icon(document, "tag")
-    phone = find_text_with_icon(document, "phone")
-
-    # Extract website link
-    website = document
-    |> Floki.find("a[href]:fl-contains('Visit Website')")
-    |> Floki.attribute("href")
-    |> List.first()
-
-    # Extract description
-    description = document
-    |> Floki.find(".post-content-area p")
-    |> Enum.map(&Floki.text/1)
-    |> Enum.join("\n\n")
-    |> String.trim()
-
-    # Extract hero image
-    hero_image_url = document
-    |> Floki.find("img[src*='wp-content/uploads']")
-    |> Floki.attribute("src")
-    |> List.first()
-
-    venue_data = %{
-      raw_title: raw_title,
-      title: title,
-      address: address,
-      time_text: time_text,
-      fee_text: fee_text,
-      phone: phone,
-      website: website,
-      description: description,
-      hero_image_url: hero_image_url,
-      url: url
-    }
-
-    log_venue_details(venue_data)
-    venue_data
-  end
-
-  defp find_text_with_icon(document, icon_name) do
-    document
-    |> Floki.find(".text-with-icon")
-    |> Enum.find(fn el ->
-      Floki.find(el, "use")
-      |> Enum.any?(fn use ->
-        href = Floki.attribute(use, "href") |> List.first()
-        xlink = Floki.attribute(use, "xlink:href") |> List.first()
-        (href && String.ends_with?(href, "##{icon_name}")) ||
-        (xlink && String.ends_with?(xlink, "##{icon_name}"))
-      end)
-    end)
-    |> case do
-      nil -> nil
-      el -> el |> Floki.find(".text-with-icon__text") |> Floki.text() |> String.trim()
-    end
-  end
-
-  defp log_venue_details(venue) do
-    Logger.info("""
-    Extracted Venue Data:
-      Raw Title: #{inspect(venue.raw_title)}
-      Cleaned Title: #{inspect(venue.title)}
-      Address: #{inspect(venue.address)}
-      Time: #{inspect(venue.time_text)}
-      Fee: #{inspect(venue.fee_text)}
-      Phone: #{inspect(venue.phone)}
-      Website: #{inspect(venue.website)}
-      Description: #{inspect(String.slice(venue.description || "", 0..100))}
-      Hero Image: #{inspect(venue.hero_image_url)}
-    """)
   end
 end
