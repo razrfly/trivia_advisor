@@ -121,7 +121,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         {:ok, document} = Floki.parse_document(body)
-        TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title)
+
+        case TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title) do
+          nil ->
+            Logger.error("Failed to extract venue data from #{url}")
+            nil
+          venue_data ->
+            venue_data
+        end
 
       {:ok, %HTTPoison.Response{status_code: status}} ->
         Logger.error("HTTP #{status} when fetching venue: #{url}")
