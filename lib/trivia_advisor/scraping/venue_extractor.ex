@@ -33,13 +33,14 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
 
     # Check required fields
     if is_nil(address) or is_nil(time_text) or is_nil(title) do
-      Logger.error("""
-      Skipping venue at #{url} due to missing required fields:
+      error_msg = """
+      Missing required fields:
         Address: #{inspect(address)}
         Time: #{inspect(time_text)}
         Title: #{inspect(title)}
-      """)
-      nil
+      """
+      Logger.error("Failed to extract venue at #{url}: #{error_msg}")
+      {:error, error_msg}
     else
       venue_data = %{
         raw_title: raw_title,
@@ -55,7 +56,7 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
       }
 
       log_venue_details(venue_data)
-      venue_data
+      {:ok, venue_data}
     end
   end
 
