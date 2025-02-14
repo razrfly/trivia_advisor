@@ -18,24 +18,41 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   Returns {:ok, venue} on success or {:error, reason} on failure.
   """
   def process_venue(venue_data) do
-    case validate_address(venue_data.address) do
+    case validate_address(venue_data) do
       {:ok, address} ->
         with {:ok, location_data} <- GoogleLookup.lookup_address(address) do
           Multi.new()
           |> Multi.run(:country, fn _repo, _changes ->
-            find_or_create_country(location_data["country"])
+            case find_or_create_country(location_data["country"]) do
+              {:ok, country} -> {:ok, country}
+              {:error, reason} ->
+                {:error, {:country, reason, location_data["country"]}}
+            end
           end)
           |> Multi.run(:city, fn _repo, %{country: country} ->
-            find_or_create_city(location_data["city"], country)
+            case find_or_create_city(location_data["city"], country) do
+              {:ok, city} -> {:ok, city}
+              {:error, reason} ->
+                {:error, {:city, reason, location_data["city"]}}
+            end
           end)
           |> Multi.run(:venue, fn _repo, %{city: city} ->
-            find_or_create_venue(venue_data, location_data, city)
+            case find_or_create_venue(venue_data, location_data, city) do
+              {:ok, venue} -> {:ok, venue}
+              {:error, reason} ->
+                {:error, {:venue, reason, venue_data}}
+            end
           end)
           |> Repo.transaction()
           |> case do
             {:ok, %{venue: venue}} -> {:ok, venue}
-            {:error, step, reason, _changes} ->
-              Logger.error("Failed to process venue at #{step}: #{Kernel.inspect(reason)}")
+            {:error, _step, {component, reason, data}, _changes} ->
+              Logger.error("""
+              Failed to process #{component}
+              Reason: #{Kernel.inspect(reason)}
+              Data: #{Kernel.inspect(data)}
+              Venue: #{venue_data.name}
+              """)
               {:error, reason}
           end
         end
@@ -108,14 +125,21 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
   # Private functions
 
-  defp validate_address(nil) do
-    Logger.error("Missing address in venue data")
+  defp validate_address(%{name: name, address: nil}) do
+    Logger.error("""
+    Missing address in venue data
+    Venue: #{name}
+    """)
     {:error, :missing_address}
   end
-  defp validate_address(address) when is_binary(address) do
+  defp validate_address(%{name: name, address: address}) when is_binary(address) do
     case String.trim(address) do
       "" ->
-        Logger.error("Invalid address: Empty or whitespace-only")
+        Logger.error("""
+        Invalid address: Empty or whitespace-only
+        Venue: #{name}
+        Raw address: #{Kernel.inspect(address)}
+        """)
         {:error, :invalid_address}
       valid_address -> {:ok, valid_address}
     end
@@ -137,7 +161,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   end
 
   defp build_venue_attrs(venue_data, location_data, lat, lng, city_id) do
-    {:ok, %{
+    %{
       name: venue_data.name,
       address: venue_data.address,
       latitude: lat,
@@ -146,7 +170,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
       city_id: city_id,
       phone: venue_data.phone,
       website: venue_data.website
-    }}
+    }
   end
 
   defp find_and_upsert_venue(venue_attrs, place_id) do
@@ -178,14 +202,17 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
   defp update_venue(venue, attrs) do
     updated_attrs = if venue.place_id, do: Map.drop(attrs, [:place_id]), else: attrs
+    current_attrs = venue |> Map.from_struct() |> Map.drop([:__meta__, :inserted_at, :updated_at])
+    changes = Map.merge(current_attrs, updated_attrs)
 
-    if Map.equal?(updated_attrs, venue |> Map.take(Map.keys(updated_attrs))) do
+    if changes == current_attrs do
       Logger.debug("No changes needed for venue: #{venue.name}")
       {:ok, venue}
     else
+      diff = Map.drop(updated_attrs, [:place_id])
       Logger.info("""
       Updating venue #{venue.id} (#{venue.name})
-      Changes: #{Kernel.inspect(Map.drop(updated_attrs, [:place_id]))}
+      Changes: #{Kernel.inspect(diff)}
       """)
       venue
       |> Venue.changeset(updated_attrs)
