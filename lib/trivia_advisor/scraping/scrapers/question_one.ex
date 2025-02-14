@@ -14,59 +14,46 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   Main entry point for the scraper.
   """
   def run do
-    try do
-      source = Repo.get_by!(Source, website_url: @base_url)
-      {:ok, log} = create_scrape_log(source)
+    source = Repo.get_by!(Source, website_url: @base_url)
 
-      Logger.info("Starting RSS feed scrape")
-      venues = scrape_feed(1, [])
+    case ScrapeLog.create_log(source) do
+      {:ok, log} ->
+        try do
+          Logger.info("Starting RSS feed scrape")
+          venues = scrape_feed(1, [])
 
-      # Process each venue's details
-      detailed_venues = venues
-      |> Enum.map(fn venue ->
-        Process.sleep(1000) # Be nice to their server
-        fetch_venue_details(venue)
-      end)
-      |> Enum.reject(&is_nil/1)
+          detailed_venues = venues
+          |> Enum.map(fn venue ->
+            Process.sleep(1000) # Be nice to their server
+            fetch_venue_details(venue)
+          end)
+          |> Enum.reject(&is_nil/1)
 
-      venue_count = length(detailed_venues)
-      Logger.info("Completed scraping #{venue_count} total venues")
+          venue_count = length(detailed_venues)
+          Logger.info("Completed scraping #{venue_count} total venues")
 
-      update_scrape_log(log, %{
-        success: true,
-        event_count: venue_count,
-        metadata: Map.merge(log.metadata, %{
-          total_venues: venue_count,
-          venues: detailed_venues,
-          completed_at: DateTime.utc_now()
-        })
-      })
+          ScrapeLog.update_log(log, %{
+            success: true,
+            event_count: venue_count,
+            metadata: %{
+              total_venues: venue_count,
+              venues: detailed_venues,
+              completed_at: DateTime.utc_now()
+            }
+          })
 
-      {:ok, detailed_venues}
-    rescue
-      e ->
-        Logger.error("Scraper failed: #{Exception.message(e)}")
-        {:error, e}
+          {:ok, detailed_venues}
+        rescue
+          e ->
+            ScrapeLog.log_error(log, e)
+            Logger.error("Scraper failed: #{Exception.message(e)}")
+            {:error, e}
+        end
+
+      {:error, reason} ->
+        Logger.error("Failed to create scrape log: #{inspect(reason)}")
+        {:error, reason}
     end
-  end
-
-  defp create_scrape_log(source) do
-    %ScrapeLog{}
-    |> ScrapeLog.changeset(%{
-      source_id: source.id,
-      success: false,
-      metadata: %{
-        started_at: DateTime.utc_now(),
-        scraper_version: "1.0.0"
-      }
-    })
-    |> Repo.insert()
-  end
-
-  defp update_scrape_log(log, attrs) do
-    log
-    |> ScrapeLog.changeset(attrs)
-    |> Repo.update()
   end
 
   defp scrape_feed(page, acc) do
