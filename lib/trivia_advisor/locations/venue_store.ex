@@ -18,46 +18,71 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   Returns {:ok, venue} on success or {:error, reason} on failure.
   """
   def process_venue(venue_data) do
-    case validate_address(venue_data) do
-      {:ok, address} ->
-        with {:ok, location_data} <- GoogleLookup.lookup_address(address) do
-          Multi.new()
-          |> Multi.run(:country, fn _repo, _changes ->
-            case find_or_create_country(location_data["country"]) do
-              {:ok, country} -> {:ok, country}
-              {:error, reason} ->
-                {:error, {:country, reason, location_data["country"]}}
-            end
-          end)
-          |> Multi.run(:city, fn _repo, %{country: country} ->
-            case find_or_create_city(location_data["city"], country) do
-              {:ok, city} -> {:ok, city}
-              {:error, reason} ->
-                {:error, {:city, reason, location_data["city"]}}
-            end
-          end)
-          |> Multi.run(:venue, fn _repo, %{city: city} ->
-            case find_or_create_venue(venue_data, location_data, city) do
-              {:ok, venue} -> {:ok, venue}
-              {:error, reason} ->
-                {:error, {:venue, reason, venue_data}}
-            end
-          end)
-          |> Repo.transaction()
-          |> case do
-            {:ok, %{venue: venue}} -> {:ok, venue}
-            {:error, _step, {component, reason, data}, _changes} ->
-              Logger.error("""
-              Failed to process #{component}
-              Reason: #{Kernel.inspect(reason)}
-              Data: #{Kernel.inspect(data)}
-              Venue: #{venue_data.name}
-              """)
-              {:error, reason}
-          end
-        end
+    with {:ok, address} <- validate_address(venue_data),
+         {:ok, location_data} <- GoogleLookup.lookup_address(address) do
 
-      {:error, reason} -> {:error, reason}
+      Multi.new()
+      |> Multi.run(:country, fn _repo, _changes ->
+        find_or_create_country(location_data["country"])
+      end)
+      |> Multi.run(:city, fn _repo, %{country: country} ->
+        find_or_create_city(location_data["city"], country)
+      end)
+      |> Multi.run(:venue, fn _repo, changes ->
+        case changes[:city] do
+          nil ->
+            Logger.error("""
+            ❌ City not found for venue:
+            Name: #{venue_data.name}
+            Address: #{venue_data.address}
+            Location: #{inspect(location_data)}
+            """)
+            {:error, :missing_city}
+
+          city ->
+            lat = get_in(location_data, ["location", "lat"]) || 0.0
+            lng = get_in(location_data, ["location", "lng"]) || 0.0
+            place_id = location_data["place_id"]
+
+            attrs = %{
+              name: venue_data.name,
+              address: venue_data.address,
+              latitude: lat,
+              longitude: lng,
+              place_id: place_id,
+              city_id: city.id,
+              phone: Map.get(venue_data, :phone, ""),
+              website: Map.get(venue_data, :website, "")
+            }
+
+            case find_venue_by_place_id(place_id) do
+              nil -> create_venue(attrs)
+              venue -> update_venue(venue, attrs)
+            end
+        end
+      end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{venue: venue}} ->
+          Logger.info("✅ Successfully processed venue: #{venue.name}")
+          {:ok, venue}
+        {:error, step, reason, _changes} ->
+          Logger.error("""
+          ❌ Venue processing failed at #{step}:
+          Reason: #{inspect(reason)}
+          Venue: #{venue_data.name}
+          Address: #{venue_data.address}
+          """)
+          {:error, reason}
+      end
+    else
+      {:error, reason} = error ->
+        Logger.error("""
+        ❌ Venue validation failed:
+        Reason: #{inspect(reason)}
+        Data: #{inspect(venue_data)}
+        """)
+        error
     end
   end
 
@@ -118,8 +143,11 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   """
   def find_or_create_venue(venue_data, location_data, %City{id: city_id}) do
     with {:ok, lat, lng} <- extract_coordinates(location_data),
-         {:ok, venue_attrs} <- build_venue_attrs(venue_data, location_data, lat, lng, city_id) do
-      find_and_upsert_venue(venue_attrs, location_data["place_id"])
+         attrs <- build_venue_attrs(venue_data, location_data, lat, lng, city_id) do
+      case find_venue_by_place_id(attrs.place_id) do
+        nil -> create_venue(attrs)
+        venue -> update_venue(venue, attrs)
+      end
     end
   end
 
@@ -168,23 +196,14 @@ defmodule TriviaAdvisor.Locations.VenueStore do
       longitude: lng,
       place_id: location_data["place_id"],
       city_id: city_id,
-      phone: venue_data.phone,
-      website: venue_data.website
+      phone: Map.get(venue_data, :phone, ""),
+      website: Map.get(venue_data, :website, "")
     }
   end
 
-  defp find_and_upsert_venue(venue_attrs, place_id) do
-    venue_query =
-      if place_id do
-        [place_id: place_id]
-      else
-        [name: venue_attrs.name, city_id: venue_attrs.city_id]
-      end
-
-    case Repo.get_by(Venue, venue_query) do
-      nil -> create_venue(venue_attrs)
-      venue -> update_venue(venue, venue_attrs)
-    end
+  defp find_venue_by_place_id(nil), do: nil
+  defp find_venue_by_place_id(place_id) do
+    Repo.get_by(Venue, place_id: place_id)
   end
 
   defp create_venue(attrs) do
