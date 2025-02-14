@@ -29,36 +29,45 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
       place_info = normalize_place_data(place_data)
 
-      if has_required_fields?(place_info) do
+      if has_required_fields?(place_info) and not Map.equal?(place_info, %{}) do
         {:ok, place_info}
       else
-        maybe_run_geocoding(address, place_info, api_key, opts)
-      end
-    end
-  end
+        Logger.warning("""
+        ⚠️ Missing location data for #{address}:
+        #{inspect_missing_fields(place_info)}
+        Attempting Geocoding API lookup...
+        """)
 
-  defp maybe_run_geocoding(address, place_info, api_key, opts) do
-    if opts[:force_geocoding] == false do
-      Logger.info("Skipping Geocoding API call for #{address} (force_geocoding: false)")
-      {:ok, place_info}
-    else
-      Logger.info("Missing location data for #{address}, attempting Geocoding API")
-      case lookup_geocode(address, api_key, opts) do
-        {:ok, geo_data} when is_map(geo_data) ->
-          merged_data = Map.merge(place_info, normalize_location_data(geo_data), fn _k, v1, v2 ->
-            v2 || v1
-          end)
+        case lookup_geocode(address, api_key, opts) do
+          {:ok, geo_data} when is_map(geo_data) ->
+            geo_info = normalize_location_data(geo_data)
 
-          if has_required_fields?(merged_data) do
-            {:ok, merged_data}
-          else
-            log_missing_fields(merged_data, address)
-            {:error, :no_results}
-          end
+            # Merge data, preferring geocoding results for location fields
+            merged_data = Map.merge(place_info, geo_info, fn
+              _k, v1, v2 when is_nil(v2) -> v1
+              _k, _v1, v2 -> v2
+            end)
 
-        {:error, _} ->
-          Logger.warning("Geocoding failed, no location data available")
-          {:error, :no_results}
+            if has_required_fields?(merged_data) do
+              {:ok, merged_data}
+            else
+              Logger.error("""
+              ❌ Failed to extract location data:
+              Address: #{address}
+              Places API: #{inspect_missing_fields(place_info)}
+              Geocoding API: #{inspect_missing_fields(geo_info)}
+              """)
+              {:error, :no_results}
+            end
+
+          {:error, reason} ->
+            Logger.error("""
+            ❌ Geocoding API failed for #{address}:
+            Reason: #{inspect(reason)}
+            Places API data: #{inspect_missing_fields(place_info)}
+            """)
+            {:error, reason}
+        end
       end
     end
   end
@@ -128,7 +137,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   defp fallback_to_config(key), do: key
 
   defp handle_places_response(%{"status" => "OK", "candidates" => []}) do
-    Logger.warning("No results found in Places API response")
+    Logger.debug("No results found in Places API response")
     {:ok, %{}}
   end
 
@@ -151,7 +160,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp handle_geocoding_response(%{"status" => "OK", "results" => []}) do
-    Logger.warning("Empty results from Geocoding API")
+    Logger.debug("Empty results from Geocoding API")
     {:ok, %{}}
   end
 
@@ -173,6 +182,9 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   defp normalize_location_data(nil), do: nil
   defp normalize_location_data(data) when is_map(data) do
     components = extract_address_components(data["address_components"] || [])
+    city = components["city"] ||
+           components["sublocality"] ||
+           fallback_city_from_formatted_address(data)
 
     %{
       "name" => Map.get(data, "name", data["formatted_address"]),
@@ -180,11 +192,20 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
       "place_id" => Map.get(data, "place_id"),
       "location" => extract_location(data["geometry"]),
       "country" => components["country"],
-      "city" => components["city"],
+      "city" => city,
       "state" => components["state"],
       "postal_code" => components["postal_code"]
     }
   end
+
+  defp fallback_city_from_formatted_address(%{"formatted_address" => address}) when is_binary(address) do
+    case String.split(address, ",") do
+      [_street, city, _state | _] -> %{"name" => String.trim(city), "code" => nil}
+      [_street, city | _] -> %{"name" => String.trim(city), "code" => nil}
+      _ -> nil
+    end
+  end
+  defp fallback_city_from_formatted_address(_), do: nil
 
   defp extract_address_components(components) when is_list(components) do
     %{
@@ -255,8 +276,9 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
       Logger.error("#{message}. Max retries (#{@max_retries}) exceeded.")
       {:error, :over_query_limit}
     else
-      Logger.warning("#{message}. Retry #{retries + 1}/#{@max_retries} in #{@retry_wait_ms}ms...")
-      Process.sleep(@retry_wait_ms)
+      delay = @retry_wait_ms * :math.pow(2, retries) |> round()
+      Logger.warning("#{message}. Retry #{retries + 1}/#{@max_retries} in #{delay}ms...")
+      Process.sleep(delay)
       retry_google_api(message, retries + 1)
     end
   end
@@ -266,16 +288,16 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     not is_nil(get_in(data, ["city", "name"]))
   end
 
-  defp log_missing_fields(data, address) do
-    missing = ["country", "city"]
-    |> Enum.filter(fn field -> is_nil(get_in(data, [field, "name"])) end)
-    |> Enum.join(", ")
+  defp inspect_missing_fields(data) do
+    required = ["country", "city"]
+    missing = Enum.filter(required, fn field ->
+      is_nil(get_in(data, [field, "name"]))
+    end)
 
-    Logger.warning("""
-    Incomplete location data for #{address}:
-    Missing fields: #{missing}
+    """
+    Missing fields: #{Enum.join(missing, ", ")}
     Data: #{inspect(data)}
-    """)
+    """
   end
 
   defp mask_api_key(url) do
