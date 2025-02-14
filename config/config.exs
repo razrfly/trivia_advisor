@@ -9,7 +9,8 @@ import Config
 
 config :trivia_advisor,
   ecto_repos: [TriviaAdvisor.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  google_api_key: System.get_env("GOOGLE_API_KEY")
 
 # Configures the endpoint
 config :trivia_advisor, TriviaAdvisorWeb.Endpoint,

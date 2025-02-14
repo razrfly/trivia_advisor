@@ -43,3 +43,9 @@ config :wallaby,
   ]
 
 config :trivia_advisor, :google_lookup, TriviaAdvisor.Scraping.MockGoogleLookup
+
+config :trivia_advisor,
+  google_api_key: "test_api_key"
+
+# Add HTTPoison mock
+config :trivia_advisor, :http_client, HTTPoison.Mock
