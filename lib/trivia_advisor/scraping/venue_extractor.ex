@@ -10,38 +10,36 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
     |> String.replace(~r/\s+[–].*$/i, "")
     |> String.trim()
 
-    address = find_text_with_icon(document, "pin")
-    time_text = find_text_with_icon(document, "calendar")
-    fee_text = find_text_with_icon(document, "tag")
-    phone = find_text_with_icon(document, "phone")
+    with {:ok, address} <- find_text_with_icon(document, "pin"),
+         {:ok, time_text} <- find_text_with_icon(document, "calendar") do
 
-    website = document
-    |> Floki.find("a[href]:fl-contains('Visit Website')")
-    |> Floki.attribute("href")
-    |> List.first()
+      # Optional fields can use case
+      fee_text = case find_text_with_icon(document, "tag") do
+        {:ok, value} -> value
+        {:error, _} -> nil
+      end
 
-    description = document
-    |> Floki.find(".post-content-area p")
-    |> Enum.map(&Floki.text/1)
-    |> Enum.join("\n\n")
-    |> String.trim()
+      phone = case find_text_with_icon(document, "phone") do
+        {:ok, value} -> value
+        {:error, _} -> nil
+      end
 
-    hero_image_url = document
-    |> Floki.find("img[src*='wp-content/uploads']")
-    |> Floki.attribute("src")
-    |> List.first()
+      website = document
+      |> Floki.find("a[href]:fl-contains('Visit Website')")
+      |> Floki.attribute("href")
+      |> List.first()
 
-    # Check required fields
-    if is_nil(address) or is_nil(time_text) or is_nil(title) do
-      error_msg = """
-      Missing required fields:
-        Address: #{inspect(address)}
-        Time: #{inspect(time_text)}
-        Title: #{inspect(title)}
-      """
-      Logger.error("Failed to extract venue at #{url}: #{error_msg}")
-      {:error, error_msg}
-    else
+      description = document
+      |> Floki.find(".post-content-area p")
+      |> Enum.map(&Floki.text/1)
+      |> Enum.join("\n\n")
+      |> String.trim()
+
+      hero_image_url = document
+      |> Floki.find("img[src*='wp-content/uploads']")
+      |> Floki.attribute("src")
+      |> List.first()
+
       venue_data = %{
         raw_title: raw_title,
         title: title,
@@ -57,6 +55,11 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
 
       log_venue_details(venue_data)
       {:ok, venue_data}
+    else
+      {:error, reason} ->
+        error_msg = "Failed to extract required fields: #{reason}"
+        Logger.error("#{error_msg} for venue at #{url}")
+        {:error, error_msg}
     end
   end
 
@@ -73,11 +76,13 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
            end)
          end) do
       nil ->
-        Logger.warning("Missing icon text for #{icon_name}")
-        nil
+        reason = "Missing icon text for #{icon_name}"
+        Logger.warning(reason)
+        {:error, reason}
 
       el ->
-        el |> Floki.find(".text-with-icon__text") |> Floki.text() |> String.trim()
+        text = el |> Floki.find(".text-with-icon__text") |> Floki.text() |> String.trim()
+        if String.trim(text) == "", do: {:error, "Empty text for #{icon_name}"}, else: {:ok, text}
     end
   end
 
