@@ -56,22 +56,9 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
       key: api_key
     }
 
-    case @http_client.get(places_url(params), [], follow_redirect: true) do
-      {:ok, %{status_code: 200, body: body}} ->
-        case Jason.decode(body) do
-          {:ok, response} -> handle_places_response(response)
-          {:error, error} ->
-            Logger.error("Failed to decode Places API response: #{inspect(error)}")
-            {:error, "Invalid JSON response"}
-        end
-
-      {:ok, %{status_code: status}} ->
-        Logger.error("Google Places API HTTP #{status}")
-        {:error, "HTTP #{status}"}
-
-      {:error, error} ->
-        Logger.error("Google Places API request failed: #{inspect(error)}")
-        {:error, "Request failed"}
+    case make_api_request("Places", places_url(params)) do
+      {:ok, response} -> handle_places_response(response)
+      error -> error
     end
   end
 
@@ -81,22 +68,9 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
       key: api_key
     }
 
-    case @http_client.get(geocoding_url(params), [], follow_redirect: true) do
-      {:ok, %{status_code: 200, body: body}} ->
-        case Jason.decode(body) do
-          {:ok, response} -> handle_geocoding_response(response)
-          {:error, error} ->
-            Logger.error("Failed to decode Geocoding API response: #{inspect(error)}")
-            {:error, "Invalid JSON response"}
-        end
-
-      {:ok, %{status_code: status}} ->
-        Logger.error("Google Geocoding API HTTP #{status}")
-        {:error, "HTTP #{status}"}
-
-      {:error, error} ->
-        Logger.error("Google Geocoding API request failed: #{inspect(error)}")
-        {:error, "Request failed"}
+    case make_api_request("Geocoding", geocoding_url(params)) do
+      {:ok, response} -> handle_geocoding_response(response)
+      error -> error
     end
   end
 
@@ -200,14 +174,40 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     "https://maps.googleapis.com/maps/api/geocode/json?" <> URI.encode_query(params)
   end
 
+  defp make_api_request(api_name, url, retries \\ 0) do
+    case @http_client.get(url, [], follow_redirect: true) do
+      {:ok, %{status_code: 200, body: body}} ->
+        case Jason.decode(body) do
+          {:ok, response} -> {:ok, response}
+          {:error, error} ->
+            Logger.error("Failed to decode #{api_name} API response: #{inspect(error)}")
+            {:error, "Invalid JSON response"}
+        end
+
+      {:ok, %{status_code: status}} ->
+        Logger.error("Google #{api_name} API HTTP #{status}")
+        {:error, "HTTP #{status}"}
+
+      {:error, error} ->
+        if retries < @max_retries do
+          Logger.warning("#{api_name} API request failed: #{inspect(error)}. Retry #{retries + 1}/#{@max_retries}")
+          Process.sleep(@retry_wait_ms)
+          make_api_request(api_name, url, retries + 1)
+        else
+          Logger.error("#{api_name} API request failed after #{@max_retries} retries: #{inspect(error)}")
+          {:error, :over_query_limit}
+        end
+    end
+  end
+
   defp retry_google_api(message, retries \\ 0) do
-    if retries < @max_retries do
-      Logger.warning("#{message}. Retry #{retries + 1}/#{@max_retries} in #{@retry_wait_ms}ms...")
-      Process.sleep(@retry_wait_ms)
-      {:error, {:retry, retries + 1}}
-    else
+    if retries >= @max_retries do
       Logger.error("#{message}. Max retries (#{@max_retries}) exceeded.")
       {:error, :over_query_limit}
+    else
+      Logger.warning("#{message}. Retry #{retries + 1}/#{@max_retries} in #{@retry_wait_ms}ms...")
+      Process.sleep(@retry_wait_ms)
+      retry_google_api(message, retries + 1)
     end
   end
 
