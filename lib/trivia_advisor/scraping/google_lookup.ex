@@ -38,12 +38,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
           end
 
         data ->
-          if has_required_fields?(data) do
-            {:ok, data}
-          else
-            log_incomplete_data(data, address)
-            {:error, :no_results}
-          end
+          {:ok, data}
       end
     end
   end
@@ -75,10 +70,31 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp get_api_key do
-    case Application.get_env(:trivia_advisor, :google_api_key) do
-      nil -> raise "Google Maps API key is missing! Configure it in config.exs"
-      "" -> raise "Google Maps API key is empty! Configure it in config.exs"
-      key -> {:ok, key}
+    system_env_key = System.get_env("GOOGLE_MAPS_API_KEY")
+    app_env_key = Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)
+
+    case app_env_key do
+      nil when not is_nil(system_env_key) ->
+        Application.put_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, [
+          google_maps_api_key: system_env_key
+        ])
+        IO.puts("✅ Google Maps API key loaded dynamically!")
+        {:ok, system_env_key}
+
+      nil ->
+        IO.puts("❌ [GoogleLookup] API key is missing, even after trying System.get_env")
+        {:error, :missing_api_key}
+
+      config when is_list(config) ->
+        case Keyword.get(config, :google_maps_api_key) do
+          nil -> {:error, :missing_api_key}
+          "" -> {:error, :empty_api_key}
+          key -> {:ok, key}
+        end
+
+      _ ->
+        IO.puts("❌ [GoogleLookup] Invalid API config structure")
+        {:error, :invalid_config}
     end
   end
 
