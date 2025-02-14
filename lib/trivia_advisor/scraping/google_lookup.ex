@@ -4,11 +4,20 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   Includes rate limiting and fallback strategies.
   """
 
+  use Agent
   require Logger
 
   @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
   @retry_wait_ms 5_000  # Wait 5 seconds between retries
   @max_retries 3
+
+  def start_link(_) do
+    case Agent.start_link(fn -> nil end, name: __MODULE__) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, {:already_started, pid}} -> {:ok, pid}
+      error -> error
+    end
+  end
 
   @doc """
   Looks up an address using Google Places API first, falling back to Geocoding API.
@@ -18,27 +27,38 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     with {:ok, api_key} <- get_api_key(),
          {:ok, place_data} <- find_place_from_text(address, api_key, opts) do
 
-      case normalize_place_data(place_data) do
-        %{"country" => nil} = data ->
-          Logger.info("Missing country data for #{address}, attempting Geocoding API")
-          case lookup_geocode(address, api_key, opts) do
-            {:ok, geo_data} when is_map(geo_data) ->
-              # Merge geocoding data, preferring non-nil values from either source
-              merged_data = Map.merge(data, normalize_location_data(geo_data), fn _k, v1, v2 -> v2 || v1 end)
-              if has_required_fields?(merged_data) do
-                {:ok, merged_data}
-              else
-                log_incomplete_data(merged_data, address)
-                {:error, :no_results}
-              end
+      place_info = normalize_place_data(place_data)
 
-            {:error, _} ->
-              log_incomplete_data(data, address)
-              {:error, :no_results}
+      if has_required_fields?(place_info) do
+        {:ok, place_info}
+      else
+        maybe_run_geocoding(address, place_info, api_key, opts)
+      end
+    end
+  end
+
+  defp maybe_run_geocoding(address, place_info, api_key, opts) do
+    if opts[:force_geocoding] == false do
+      Logger.info("Skipping Geocoding API call for #{address} (force_geocoding: false)")
+      {:ok, place_info}
+    else
+      Logger.info("Missing location data for #{address}, attempting Geocoding API")
+      case lookup_geocode(address, api_key, opts) do
+        {:ok, geo_data} when is_map(geo_data) ->
+          merged_data = Map.merge(place_info, normalize_location_data(geo_data), fn _k, v1, v2 ->
+            v2 || v1
+          end)
+
+          if has_required_fields?(merged_data) do
+            {:ok, merged_data}
+          else
+            log_missing_fields(merged_data, address)
+            {:error, :no_results}
           end
 
-        data ->
-          {:ok, data}
+        {:error, _} ->
+          Logger.warning("Geocoding failed, no location data available")
+          {:error, :no_results}
       end
     end
   end
@@ -47,10 +67,11 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     params = %{
       input: input,
       inputtype: "textquery",
-      fields: "formatted_address,name,place_id,geometry,address_components",
+      fields: "formatted_address,name,place_id,geometry",
       key: api_key
     }
 
+    Logger.debug("🔍 Places API Request: #{mask_api_key(places_url(params))}")
     case make_api_request("Places", places_url(params)) do
       {:ok, response} -> handle_places_response(response)
       error -> error
@@ -70,33 +91,41 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp get_api_key do
-    system_env_key = System.get_env("GOOGLE_MAPS_API_KEY")
-    app_env_key = Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)
+    unless Process.whereis(__MODULE__) do
+      start_link(nil)
+    end
 
-    case app_env_key do
-      nil when not is_nil(system_env_key) ->
-        Application.put_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, [
-          google_maps_api_key: system_env_key
-        ])
-        IO.puts("✅ Google Maps API key loaded dynamically!")
-        {:ok, system_env_key}
-
+    case Agent.get(__MODULE__, & &1) do
       nil ->
-        IO.puts("❌ [GoogleLookup] API key is missing, even after trying System.get_env")
-        {:error, :missing_api_key}
+        key =
+          System.get_env("GOOGLE_MAPS_API_KEY")
+          |> fallback_to_config()
 
-      config when is_list(config) ->
-        case Keyword.get(config, :google_maps_api_key) do
-          nil -> {:error, :missing_api_key}
-          "" -> {:error, :empty_api_key}
-          key -> {:ok, key}
+        if is_binary(key) and byte_size(key) > 0 do
+          Agent.update(__MODULE__, fn _ -> key end)
+          {:ok, key}
+        else
+          Logger.error("""
+          ❌ Google Maps API key is missing or empty!
+          Check:
+          1. Environment variable GOOGLE_MAPS_API_KEY
+          2. Application config :trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI
+          """)
+          {:error, :missing_api_key}
         end
 
-      _ ->
-        IO.puts("❌ [GoogleLookup] Invalid API config structure")
-        {:error, :invalid_config}
+      key -> {:ok, key}
     end
   end
+
+  defp fallback_to_config(nil) do
+    case Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, %{}) do
+      env when is_list(env) -> Keyword.get(env, :google_maps_api_key)
+      env when is_map(env) -> Map.get(env, :google_maps_api_key)
+      _ -> nil
+    end
+  end
+  defp fallback_to_config(key), do: key
 
   defp handle_places_response(%{"status" => "OK", "candidates" => []}) do
     Logger.warning("No results found in Places API response")
@@ -109,6 +138,11 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp handle_places_response(%{"status" => "OVER_QUERY_LIMIT"}) do
     retry_google_api("Places API rate limit exceeded")
+  end
+
+  defp handle_places_response(%{"status" => "INVALID_REQUEST", "error_message" => msg}) do
+    Logger.error("Google Places API error: INVALID_REQUEST - #{msg}")
+    {:error, "Invalid request to Places API: #{msg}"}
   end
 
   defp handle_places_response(%{"status" => status, "error_message" => msg}) do
@@ -232,18 +266,19 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     not is_nil(get_in(data, ["city", "name"]))
   end
 
-  defp log_incomplete_data(data, address) do
-    missing_fields =
-      Enum.filter(["country", "city"], fn field ->
-        is_nil(get_in(data, [field, "name"]))
-      end)
+  defp log_missing_fields(data, address) do
+    missing = ["country", "city"]
+    |> Enum.filter(fn field -> is_nil(get_in(data, [field, "name"])) end)
+    |> Enum.join(", ")
 
-    unless Enum.empty?(missing_fields) do
-      Logger.warning("""
-      Incomplete location data for #{address}:
-      Missing fields: #{Enum.join(missing_fields, ", ")}
-      Data: #{inspect(data)}
-      """)
-    end
+    Logger.warning("""
+    Incomplete location data for #{address}:
+    Missing fields: #{missing}
+    Data: #{inspect(data)}
+    """)
+  end
+
+  defp mask_api_key(url) do
+    String.replace(url, ~r/([?&](?:key|apiKey|API_KEY|Key)=)[^&]+/, "\\1REDACTED")
   end
 end
