@@ -26,8 +26,12 @@ if File.exists?(".env") do
   DotenvParser.load_file(".env")
 end
 
-config :trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI,
-  google_maps_api_key: System.get_env("GOOGLE_MAPS_API_KEY")
+# Set API key explicitly if it's missing
+if is_nil(Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)) do
+  Application.put_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, [
+    google_maps_api_key: System.get_env("GOOGLE_MAPS_API_KEY")
+  ])
+end
 
 if config_env() == :prod do
   database_url =
