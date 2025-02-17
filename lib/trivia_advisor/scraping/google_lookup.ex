@@ -75,10 +75,10 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp get_api_key do
-    case Application.get_env(:trivia_advisor, :google_api_key) do
-      nil -> raise "Google Maps API key is missing! Configure it in config.exs"
-      "" -> raise "Google Maps API key is empty! Configure it in config.exs"
-      key -> {:ok, key}
+    case System.get_env("GOOGLE_MAPS_API_KEY") ||
+         get_in(Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, %{}), [:google_maps_api_key]) do
+      key when is_binary(key) and byte_size(key) > 0 -> {:ok, key}
+      _ -> {:error, :missing_api_key}
     end
   end
 
