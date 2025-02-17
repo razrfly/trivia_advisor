@@ -27,17 +27,84 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   """
   def lookup_address(address, opts \\ []) do
     with {:ok, api_key} <- get_api_key(),
-         # Step 1: Get business details from Places API
+         # Step 1: Try to get place_id from Places API
          {:ok, place_data} <- find_place_from_text(address, api_key, opts),
-         {:ok, place_id} <- extract_place_id(place_data),
-         {:ok, place_details} <- get_place_details(place_id, api_key),
-         # Step 2: Get address components from Geocoding API using lat/lng
-         location = get_in(place_details, ["geometry", "location"]),
-         {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
+         {:ok, maybe_place_id} <- extract_place_id(place_data) do
 
-      # Merge data from both APIs
-      merged_data = merge_api_responses(place_details, geocoding_data)
-      {:ok, normalize_business_data(merged_data)}
+      case maybe_place_id do
+        nil ->
+          # No place_id found, use Geocoding API directly
+          Logger.info("No place_id found for #{address}, using Geocoding API")
+          lookup_by_geocoding(address, api_key, opts)
+
+        place_id ->
+          # Get business details and geocoding data
+          with {:ok, place_details} <- get_place_details(place_id, api_key),
+               location = get_in(place_details, ["geometry", "location"]),
+               {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
+            merged_data = merge_api_responses(place_details, geocoding_data)
+            {:ok, normalize_business_data(merged_data)}
+          else
+            error ->
+              Logger.warning("Failed to get place details: #{inspect(error)}, falling back to Geocoding API")
+              lookup_by_geocoding(address, api_key, opts)
+          end
+      end
+    end
+  end
+
+  defp lookup_by_geocoding(address, api_key, opts) do
+    case lookup_geocode_by_address(address, api_key, opts) do
+      {:ok, geocoding_data} ->
+        Logger.info("📍 Using Geocoding API for #{address} - no business details available")
+
+        # Extract only the fields we need, explicitly excluding place_id
+        basic_data = %{
+          "name" => extract_street_address(geocoding_data["formatted_address"]),
+          "formatted_address" => geocoding_data["formatted_address"],
+          "place_id" => nil,  # Always nil for non-business addresses
+          "geometry" => %{"location" => get_in(geocoding_data, ["geometry", "location"])},
+          "phone" => nil,
+          "website" => nil,
+          "google_maps_url" => nil,
+          "types" => ["street_address"],
+          "opening_hours" => nil,
+          "rating" => nil,
+          "source" => "geocoding"
+        }
+
+        # Extract address components, ensuring no place_id is included
+        components = extract_address_components(geocoding_data["address_components"] || [])
+        final_data = Map.merge(basic_data, %{
+          "city" => components["city"],
+          "state" => components["state"],
+          "country" => components["country"],
+          "postal_code" => components["postal_code"]
+        })
+
+        {:ok, normalize_business_data(final_data)}
+      error -> error
+    end
+  end
+
+  # Extract just the street address part for non-business addresses
+  defp extract_street_address(formatted_address) do
+    formatted_address
+    |> String.split(",")
+    |> List.first()
+    |> String.trim()
+  end
+
+  defp lookup_geocode_by_address(address, api_key, _opts) do
+    params = %{
+      address: address,
+      key: api_key
+    }
+
+    url = "https://maps.googleapis.com/maps/api/geocode/json?" <> URI.encode_query(params)
+    case make_api_request(url) do
+      {:ok, response} -> handle_geocoding_response(response)
+      error -> error
     end
   end
 
@@ -56,6 +123,8 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   defp lookup_geocode_by_latlng(_, _, _), do: {:error, :invalid_location}
 
   defp handle_geocoding_response(%{"status" => "OK", "results" => [result | _]}) do
+    # Remove any place_id from geocoding result to prevent confusion with business IDs
+    result = Map.delete(result, "place_id")
     {:ok, result}
   end
   defp handle_geocoding_response(%{"status" => status, "error_message" => msg}) do
@@ -65,21 +134,21 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp normalize_business_data(details) do
     %{
-      # Business details from Places API
+      # Basic details (available for both businesses and addresses)
       "name" => details["name"],
       "formatted_address" => details["formatted_address"],
       "place_id" => details["place_id"],
       "location" => extract_location(details["geometry"]),
+
+      # Business-only details (nil for non-business addresses)
       "phone" => details["international_phone_number"] || details["formatted_phone_number"],
       "website" => details["website"],
       "google_maps_url" => details["url"],
       "types" => details["types"],
       "opening_hours" => extract_hours(details["opening_hours"]),
-      "rating" => %{
-        "value" => details["rating"],
-        "total_ratings" => details["user_ratings_total"]
-      },
-      # Address components from Geocoding API
+      "rating" => rating_data(details),
+
+      # Address components (from Geocoding API)
       "city" => details["city"],
       "state" => details["state"],
       "country" => details["country"],
@@ -87,21 +156,32 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     }
   end
 
+  defp rating_data(details) do
+    if details["rating"] do
+      %{
+        "value" => details["rating"],
+        "total_ratings" => details["user_ratings_total"]
+      }
+    else
+      nil
+    end
+  end
+
   defp merge_api_responses(place_details, geocoding_data) do
-    # Extract address components from geocoding data
     components = extract_address_components(geocoding_data["address_components"] || [])
 
-    # Start with Places API data
+    # Only keep place_id from Places API results
+    place_id = if place_details["source"] == "places", do: place_details["place_id"]
+
+    # Start with place details and add geocoding components
     place_details
-    # Add Geocoding API address components
     |> Map.merge(%{
       "city" => components["city"],
       "state" => components["state"],
       "country" => components["country"],
       "postal_code" => components["postal_code"]
     })
-    # Ensure place_id is preserved
-    |> Map.put_new("place_id", place_details["place_id"])
+    |> Map.put("place_id", place_id)  # Explicitly set place_id based on source
   end
 
   defp extract_location(%{"location" => location}) when is_map(location) do
@@ -121,7 +201,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   defp extract_hours(_), do: nil
 
   defp extract_place_id(%{"place_id" => place_id}) when is_binary(place_id), do: {:ok, place_id}
-  defp extract_place_id(_), do: {:error, :no_place_id}
+  defp extract_place_id(_), do: {:ok, nil}  # Return nil instead of error to trigger fallback
 
   defp get_api_key do
     case System.get_env("GOOGLE_MAPS_API_KEY") do
@@ -134,7 +214,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     params = %{
       input: input,
       inputtype: "textquery",
-      fields: "place_id",
+      fields: "place_id,types",
       key: api_key
     }
 
@@ -154,8 +234,12 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     url = "https://maps.googleapis.com/maps/api/place/details/json?" <> URI.encode_query(params)
     case make_api_request(url) do
       {:ok, response} ->
-        # Add place_id to the result since it might not be in the response
-        response = put_in(response, ["result", "place_id"], place_id)
+        # Ensure we're using the Places API place_id and mark the source
+        response =
+          response
+          |> put_in(["result", "place_id"], place_id)  # Keep original Places API place_id
+          |> put_in(["result", "source"], "places")    # Mark as Places API data
+          |> update_in(["result", "types"], &(if &1, do: &1, else: []))  # Ensure types is a list
         handle_place_details_response(response)
       error -> error
     end
@@ -163,11 +247,19 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp handle_places_response(%{"status" => "OK", "candidates" => []}) do
     Logger.warning("No results found in Places API response")
-    {:ok, %{}}
+    {:ok, nil}
   end
 
   defp handle_places_response(%{"status" => "OK", "candidates" => [candidate | _]}) do
-    {:ok, candidate}
+    Logger.debug("Places API candidate: #{inspect(candidate)}")
+
+    # Check if this is a business or just a street address
+    if is_business?(candidate["types"]) do
+      {:ok, candidate}
+    else
+      Logger.info("Found location but not a business, using geocoding instead")
+      {:ok, nil}
+    end
   end
 
   defp handle_places_response(%{"status" => status, "error_message" => msg}) do
@@ -230,5 +322,34 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
       %{"long_name" => name, "short_name" => code} -> %{"name" => name, "code" => code}
       _ -> nil
     end
+  end
+
+  # Helper to determine if a type indicates a business
+  defp is_business?(nil), do: false
+  defp is_business?(types) do
+    business_types = [
+      "establishment",
+      "point_of_interest",
+      "food",
+      "restaurant",
+      "bar",
+      "cafe",
+      "night_club",
+      "lodging",
+      "store",
+      "shopping_mall",
+      "movie_theater",
+      "museum",
+      "art_gallery",
+      "gym",
+      "spa",
+      "casino"
+    ]
+
+    # Must have "establishment" or "point_of_interest" AND not be just a street_address
+    has_business_type = Enum.any?(types, &(&1 in business_types))
+    not_street_address = "street_address" not in types
+
+    has_business_type and not_street_address
   end
 end
