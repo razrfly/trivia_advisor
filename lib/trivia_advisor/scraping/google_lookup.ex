@@ -6,21 +6,72 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   require Logger
   @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
+  # Business fields we want to fetch from the Places API
+  @place_fields [
+    "name",
+    "formatted_address",
+    "geometry",
+    "address_components",
+    "formatted_phone_number",
+    "international_phone_number",
+    "website",
+    "url",           # Google Maps URL
+    "opening_hours", # Hours of operation
+    "types",         # Business categories
+    "rating",
+    "user_ratings_total"
+  ]
+
   @doc """
-  Looks up a place_id using Google Places API.
-  Returns {:ok, place_id} or {:error, reason}.
+  Looks up venue details using Google Places API.
+  Returns {:ok, venue_details} or {:error, reason}.
   """
   def lookup_address(address, opts \\ []) do
     with {:ok, api_key} <- get_api_key(),
-         {:ok, place_data} <- find_place_from_text(address, api_key, opts) do
-      case place_data do
-        %{"place_id" => place_id} when is_binary(place_id) ->
-          {:ok, place_id}
-        _ ->
-          {:error, :no_place_id}
-      end
+         {:ok, place_data} <- find_place_from_text(address, api_key, opts),
+         {:ok, place_id} <- extract_place_id(place_data),
+         {:ok, details} <- get_place_details(place_id, api_key) do
+      Logger.debug("Place details response: #{inspect(details)}")
+      {:ok, normalize_business_data(details)}
     end
   end
+
+  defp normalize_business_data(details) do
+    %{
+      "name" => details["name"],
+      "formatted_address" => details["formatted_address"],
+      "place_id" => details["place_id"],
+      "location" => extract_location(details["geometry"]),
+      "phone" => details["international_phone_number"] || details["formatted_phone_number"],
+      "website" => details["website"],
+      "google_maps_url" => details["url"],
+      "types" => details["types"],
+      "opening_hours" => extract_hours(details["opening_hours"]),
+      "rating" => %{
+        "value" => details["rating"],
+        "total_ratings" => details["user_ratings_total"]
+      }
+    }
+  end
+
+  defp extract_location(%{"location" => location}) when is_map(location) do
+    %{
+      "lat" => location["lat"],
+      "lng" => location["lng"]
+    }
+  end
+  defp extract_location(_), do: nil
+
+  defp extract_hours(%{"periods" => periods, "weekday_text" => weekday_text}) do
+    %{
+      "periods" => periods,
+      "formatted" => weekday_text
+    }
+  end
+  defp extract_hours(_), do: nil
+
+  defp extract_place_id(%{"place_id" => place_id}) when is_binary(place_id), do: {:ok, place_id}
+  defp extract_place_id(_), do: {:error, :no_place_id}
 
   defp get_api_key do
     case System.get_env("GOOGLE_MAPS_API_KEY") do
@@ -43,6 +94,20 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     end
   end
 
+  defp get_place_details(place_id, api_key) do
+    params = %{
+      place_id: place_id,
+      fields: Enum.join(@place_fields, ","),
+      key: api_key
+    }
+
+    url = "https://maps.googleapis.com/maps/api/place/details/json?" <> URI.encode_query(params)
+    case make_api_request(url) do
+      {:ok, response} -> handle_place_details_response(response)
+      error -> error
+    end
+  end
+
   defp handle_places_response(%{"status" => "OK", "candidates" => []}) do
     Logger.warning("No results found in Places API response")
     {:ok, %{}}
@@ -54,6 +119,15 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp handle_places_response(%{"status" => status, "error_message" => msg}) do
     Logger.error("Google Places API error: #{status} - #{msg}")
+    {:error, msg}
+  end
+
+  defp handle_place_details_response(%{"status" => "OK", "result" => result}) do
+    {:ok, result}
+  end
+
+  defp handle_place_details_response(%{"status" => status, "error_message" => msg}) do
+    Logger.error("Google Place Details API error: #{status} - #{msg}")
     {:error, msg}
   end
 
