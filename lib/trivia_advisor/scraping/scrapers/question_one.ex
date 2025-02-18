@@ -117,20 +117,23 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-             {:ok, extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+             {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
              venue_data = %{
-               name: extracted_data.title,
-               address: extracted_data.address,
-               phone: extracted_data.phone,
-               website: extracted_data.website
+               name: title,
+               address: address,
+               phone: Map.get(extracted_data, :phone),
+               website: Map.get(extracted_data, :website)
              },
              {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
           venue
         else
-          {:error, reason} ->
+          {:ok, %{title: _title} = data} ->
+            Logger.error("❌ Missing required address in extracted data: #{inspect(data)}")
+            nil
+          error ->
             Logger.error("""
             ❌ Failed to process venue: #{raw_title}
-            Reason: #{inspect(reason)}
+            Reason: #{inspect(error)}
             URL: #{url}
             """)
             nil
