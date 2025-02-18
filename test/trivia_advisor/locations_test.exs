@@ -81,7 +81,7 @@ defmodule TriviaAdvisor.LocationsTest do
     test "creates new city if not found" do
       assert {:ok, city} = Locations.find_or_create_city("Manchester", "GB")
       assert city.name == "Manchester"
-      assert city.slug == "manchester"
+      assert city.slug == "manchester-gb"
 
       country = Repo.get!(Country, city.country_id)
       assert country.code == "GB"
@@ -92,16 +92,15 @@ defmodule TriviaAdvisor.LocationsTest do
 
     test "ensures city belongs to correct country" do
       assert {:ok, london_uk} = Locations.find_or_create_city("London", "GB")
-      assert {:ok, london_ca} = Locations.find_or_create_city("London, Ontario", "CA")
+      assert {:ok, london_us} = Locations.find_or_create_city("London", "US")
 
-      uk_country = Repo.get!(Country, london_uk.country_id)
-      ca_country = Repo.get!(Country, london_ca.country_id)
+      assert london_uk.name == "London"
+      assert london_us.name == "London"
+      assert london_uk.slug == "london-gb"
+      assert london_us.slug == "london-us"
 
-      assert uk_country.code == "GB"
-      assert ca_country.code == "CA"
-      assert london_uk.country_id != london_ca.country_id
-      assert london_uk.slug == "london"
-      assert london_ca.slug == "london-ontario"
+      refute london_uk.id == london_us.id
+      refute london_uk.country_id == london_us.country_id
     end
 
     test "handles invalid country code" do

@@ -315,17 +315,32 @@ defmodule TriviaAdvisor.Locations do
     end
   end
 
-  def find_or_create_city(city_title, country_code) when is_binary(city_title) and is_binary(country_code) do
+  def find_or_create_city(city_name, country_code) when is_binary(city_name) and is_binary(country_code) do
+    normalized_name = city_name |> String.trim() |> String.replace(~r/\s+/, " ")
+    base_slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+
     with {:ok, country} <- find_or_create_country(country_code) do
-      case Repo.get_by(City, [name: city_title, country_id: country.id]) do
+      country_specific_slug = "#{base_slug}-#{String.downcase(country.code)}"
+
+      # First try to find by case-insensitive name and country_id
+      import Ecto.Query
+      case Repo.one(
+        from c in City,
+        where: fragment("LOWER(?)", c.name) == ^String.downcase(normalized_name)
+          and c.country_id == ^country.id,
+        limit: 1
+      ) do
+        %City{} = city ->
+          {:ok, city}
+
         nil ->
           %City{}
           |> City.changeset(%{
-            name: city_title,
-            country_id: country.id
+            name: normalized_name,
+            country_id: country.id,
+            slug: country_specific_slug
           })
           |> Repo.insert()
-        city -> {:ok, city}
       end
     end
   end

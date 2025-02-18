@@ -15,18 +15,19 @@ defmodule TriviaAdvisor.Locations.City do
   @doc false
   def changeset(city, attrs) do
     city
-    |> cast(attrs, [:name, :country_id])
-    |> validate_required([:name, :country_id])
-    |> put_slug()
+    |> cast(attrs, [:name, :country_id, :slug])
+    |> validate_required([:name, :country_id, :slug])
     |> unique_constraint(:slug)
-    |> unique_constraint(:name, name: :cities_lower_name_index)
     |> foreign_key_constraint(:country_id)
   end
 
-  defp put_slug(changeset) do
-    case get_change(changeset, :name) do
-      nil -> changeset
-      name -> put_change(changeset, :slug, Slug.slugify(name))
-    end
-  end
+  # Remove or comment out this function since we're handling slug generation in VenueStore
+  # defp maybe_generate_slug(%{changes: %{slug: _}} = changeset), do: changeset
+  # defp maybe_generate_slug(changeset) do
+  #   if get_change(changeset, :name) do
+  #     put_change(changeset, :slug, generate_slug(get_change(changeset, :name)))
+  #   else
+  #     changeset
+  #   end
+  # end
 end

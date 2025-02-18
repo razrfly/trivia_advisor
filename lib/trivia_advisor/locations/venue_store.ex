@@ -121,68 +121,69 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   def find_or_create_city(%{"name" => name}, %Country{id: country_id, name: country_name, code: country_code}) do
     normalized_name = name |> String.trim() |> String.replace(~r/\s+/, " ")
     base_slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+    country_specific_slug = "#{base_slug}-#{String.downcase(country_code)}"
 
     if normalized_name == "" do
       Logger.error("❌ Invalid city name: Empty or whitespace-only")
       {:error, :invalid_city_name}
     else
-      # First check if base slug exists for this country
-      case Repo.get_by(City, slug: base_slug, country_id: country_id) do
-        nil ->
-          # Check if base slug exists for any country
-          case Repo.get_by(City, slug: base_slug) do
-            nil ->
-              # Base slug is available, use it
-              create_city(normalized_name, base_slug, country_id, country_name)
-            _existing_city ->
-              # Base slug exists in another country, append country code
-              country_specific_slug = "#{base_slug}-#{String.downcase(country_code)}"
-              create_city(normalized_name, country_specific_slug, country_id, country_name)
-          end
-
-        city ->
-          Logger.info("✅ Found existing city: #{normalized_name} in #{country_name}")
+      # First try to find by case-insensitive name and country_id
+      import Ecto.Query
+      case Repo.one(
+        from c in City,
+        where: fragment("LOWER(?)", c.name) == ^String.downcase(normalized_name)
+          and c.country_id == ^country_id,
+        limit: 1
+      ) do
+        %City{} = city ->
+          Logger.info("✅ Found existing city: #{city.name} in #{country_name}")
           {:ok, city}
+
+        nil ->
+          # Create new city with country-specific slug
+          Logger.info("🏙️ Creating new city: #{normalized_name} in #{country_name} (#{country_specific_slug})")
+
+          attrs = %{
+            name: normalized_name,
+            country_id: country_id,
+            slug: country_specific_slug
+          }
+
+          %City{}
+          |> City.changeset(attrs)
+          |> Repo.insert()
+          |> case do
+            {:ok, city} ->
+              Logger.info("✅ Created new city: #{city.name} in #{country_name} (#{city.slug})")
+              {:ok, city}
+            {:error, %{errors: [{:name, {_, [constraint: :unique]} = _error} | _]} = _changeset} ->
+              # If we hit the unique constraint, try one final time to find the city
+              case Repo.one(
+                from c in City,
+                where: fragment("LOWER(?)", c.name) == ^String.downcase(normalized_name)
+                  and c.country_id == ^country_id,
+                limit: 1
+              ) do
+                %City{} = city ->
+                  Logger.info("✅ Found existing city after constraint error: #{city.name} in #{country_name}")
+                  {:ok, city}
+                nil ->
+                  Logger.error("❌ City exists but couldn't be found: #{normalized_name} in #{country_name}")
+                  {:error, :city_exists_but_not_found}
+              end
+            {:error, changeset} ->
+              Logger.error("""
+              ❌ Failed to create city
+              Name: #{normalized_name}
+              Country: #{country_name}
+              Error: #{inspect(changeset.errors)}
+              """)
+              {:error, changeset}
+          end
       end
     end
   end
   def find_or_create_city(_, _), do: {:error, :invalid_city_data}
-
-  defp create_city(name, slug, country_id, country_name) do
-    Logger.info("🏙️ Creating new city: #{name} in #{country_name} (slug: #{slug})")
-
-    %City{}
-    |> City.changeset(%{
-      name: name,
-      country_id: country_id,
-      slug: slug
-    })
-    |> Repo.insert()
-    |> case do
-      {:ok, city} -> {:ok, city}
-      {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]}} ->
-        # In case of race condition, try to find by slug
-        case Repo.get_by(City, slug: slug) do
-          nil ->
-            Logger.error("""
-            ❌ Failed to retrieve existing city after unique constraint error
-            Name: #{name}
-            Slug: #{slug}
-            """)
-            {:error, :city_not_found}
-          city ->
-            Logger.info("🔄 Found existing city by slug: #{city.name}")
-            {:ok, city}
-        end
-      {:error, changeset} ->
-        Logger.error("""
-        ❌ Failed to create city
-        Name: #{name}
-        Error: #{inspect(changeset.errors)}
-        """)
-        {:error, changeset}
-    end
-  end
 
   @doc """
   Finds or creates a venue, storing its location details.
