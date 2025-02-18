@@ -3,6 +3,7 @@ defmodule TriviaAdvisor.Locations.City do
   import Ecto.Changeset
   import Ecto.Query
   alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Slug
   alias TriviaAdvisor.Locations.{Country, Venue}
 
   schema "cities" do
