@@ -27,13 +27,17 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   """
   def lookup_address(address, opts \\ []) do
     with {:ok, api_key} <- get_api_key(),
-         # Step 1: Try to get place_id from Places API
-         {:ok, place_data} <- find_place_from_text(address, api_key, opts),
+         # Extract venue name from opts or use empty string
+         venue_name = Keyword.get(opts, :venue_name, ""),
+         # Combine venue name with address for Places API lookup
+         search_text = (if venue_name == "", do: address, else: "#{venue_name}, #{address}"),
+         # Step 1: Try to get place_id from Places API using combined text
+         {:ok, place_data} <- find_place_from_text(search_text, api_key, opts),
          {:ok, maybe_place_id} <- extract_place_id(place_data) do
 
       case maybe_place_id do
         nil ->
-          # No place_id found, use Geocoding API directly
+          # No place_id found, use Geocoding API with just the address
           Logger.info("No place_id found for #{address}, using Geocoding API")
           lookup_by_geocoding(address, api_key, opts)
 
