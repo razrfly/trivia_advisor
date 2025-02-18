@@ -199,7 +199,9 @@ defmodule TriviaAdvisor.Locations.VenueStore do
            place_id: location_data["place_id"],
            city_id: city_id,
            phone: venue_data.phone,
-           website: venue_data.website
+           website: venue_data.website,
+           postcode: location_data["postal_code"]["code"],
+           metadata: extract_metadata(location_data)
          } do
       find_and_upsert_venue(venue_attrs, location_data["place_id"])
     end
@@ -220,6 +222,24 @@ defmodule TriviaAdvisor.Locations.VenueStore do
     else
       {:ok, lat, lng}
     end
+  end
+
+  defp extract_metadata(location_data) do
+    %{
+      "formatted_address" => location_data["formatted_address"],
+      "google_maps_url" => location_data["google_maps_url"],
+      "place_id" => location_data["place_id"],
+      "opening_hours" => location_data["opening_hours"],
+      "phone" => location_data["phone"],
+      "rating" => location_data["rating"],
+      "types" => location_data["types"],
+      "website" => location_data["website"],
+      "city" => location_data["city"],
+      "state" => location_data["state"],
+      "country" => location_data["country"],
+      "postal_code" => location_data["postal_code"]
+    }
+    |> Map.reject(fn {_k, v} -> is_nil(v) end)
   end
 
   defp find_and_upsert_venue(venue_attrs, place_id) do
