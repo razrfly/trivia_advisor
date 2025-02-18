@@ -10,6 +10,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
 
+  @type venue_data :: %{
+    name: String.t(),
+    address: String.t(),
+    phone: String.t() | nil,
+    website: String.t() | nil
+  }
+
   @doc """
   Main entry point for the scraper.
   """
@@ -117,32 +124,29 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-@type venue_data :: %{
-  name: String.t(),
-  address: String.t(),
-  phone: String.t() | nil,
-  website: String.t() | nil
-}
-
-with {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
-     true <- String.length(title) > 0 || {:error, :empty_title},
-     true <- String.length(address) > 0 || {:error, :empty_address},
-     venue_data = %{
-       name: title,
-       address: address,
-       phone: Map.get(extracted_data, :phone),
-       website: Map.get(extracted_data, :website)
-     } |> tap(fn data -> 
-           if is_nil(data.phone), do: Logger.info("ℹ️ No phone number for venue: #{title}")
-           if is_nil(data.website), do: Logger.info("ℹ️ No website for venue: #{title}")
-         end),
-     {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
-  ...
-end
+             {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+             true <- String.length(title) > 0 || {:error, :empty_title},
+             true <- String.length(address) > 0 || {:error, :empty_address},
+             venue_data = %{
+               name: title,
+               address: address,
+               phone: Map.get(extracted_data, :phone),
+               website: Map.get(extracted_data, :website)
+             } |> tap(fn data ->
+               if is_nil(data.phone), do: Logger.info("ℹ️ No phone number for venue: #{title}")
+               if is_nil(data.website), do: Logger.info("ℹ️ No website for venue: #{title}")
+             end),
+             {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
           venue
         else
           {:ok, %{title: _title} = data} ->
             Logger.error("❌ Missing required address in extracted data: #{inspect(data)}")
+            nil
+          {:error, :empty_title} ->
+            Logger.error("❌ Empty title for venue: #{raw_title}")
+            nil
+          {:error, :empty_address} ->
+            Logger.error("❌ Empty address for venue: #{raw_title}")
             nil
           error ->
             Logger.error("""
