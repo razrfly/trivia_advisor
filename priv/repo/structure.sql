@@ -16,6 +16,32 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+--
+-- Name: postgis; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION postgis; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION postgis IS 'PostGIS geometry and geography spatial types and functions';
+
+
+--
+-- Name: event_frequency; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.event_frequency AS ENUM (
+    'weekly',
+    'biweekly',
+    'monthly',
+    'irregular'
+);
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -27,7 +53,7 @@ SET default_table_access_method = heap;
 CREATE TABLE public.cities (
     id bigint NOT NULL,
     country_id bigint NOT NULL,
-    title character varying(255) NOT NULL,
+    name character varying(255) NOT NULL,
     slug character varying(255) NOT NULL,
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL
@@ -128,10 +154,10 @@ ALTER SEQUENCE public.event_sources_id_seq OWNED BY public.event_sources.id;
 CREATE TABLE public.events (
     id bigint NOT NULL,
     venue_id bigint NOT NULL,
-    title character varying(255) NOT NULL,
+    name character varying(255) NOT NULL,
     day_of_week integer NOT NULL,
     start_time time(0) without time zone NOT NULL,
-    frequency integer DEFAULT 0 NOT NULL,
+    frequency public.event_frequency DEFAULT 'weekly'::public.event_frequency NOT NULL,
     entry_fee_cents integer DEFAULT 0,
     description text,
     inserted_at timestamp(0) without time zone NOT NULL,
@@ -209,7 +235,7 @@ ALTER SEQUENCE public.scrape_logs_id_seq OWNED BY public.scrape_logs.id;
 
 CREATE TABLE public.sources (
     id bigint NOT NULL,
-    title character varying(255) NOT NULL,
+    name character varying(255) NOT NULL,
     website_url character varying(255) NOT NULL,
     slug character varying(255) NOT NULL,
     inserted_at timestamp(0) without time zone NOT NULL,
@@ -243,7 +269,7 @@ ALTER SEQUENCE public.sources_id_seq OWNED BY public.sources.id;
 CREATE TABLE public.venues (
     id bigint NOT NULL,
     city_id bigint NOT NULL,
-    title character varying(255) NOT NULL,
+    name character varying(255) NOT NULL,
     address character varying(255),
     postcode character varying(255),
     latitude numeric(10,6) NOT NULL,
@@ -252,6 +278,7 @@ CREATE TABLE public.venues (
     phone character varying(255),
     website character varying(255),
     slug character varying(255) NOT NULL,
+    metadata jsonb,
     inserted_at timestamp(0) without time zone NOT NULL,
     updated_at timestamp(0) without time zone NOT NULL
 );
@@ -397,13 +424,6 @@ CREATE INDEX cities_country_id_index ON public.cities USING btree (country_id);
 
 
 --
--- Name: cities_lower_title_index; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX cities_lower_title_index ON public.cities USING btree (lower((title)::text));
-
-
---
 -- Name: cities_slug_index; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -422,6 +442,13 @@ CREATE UNIQUE INDEX countries_code_index ON public.countries USING btree (code);
 --
 
 CREATE INDEX event_sources_event_id_index ON public.event_sources USING btree (event_id);
+
+
+--
+-- Name: event_sources_event_id_source_url_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX event_sources_event_id_source_url_index ON public.event_sources USING btree (event_id, source_url);
 
 
 --
@@ -471,6 +498,13 @@ CREATE UNIQUE INDEX sources_website_url_index ON public.sources USING btree (web
 --
 
 CREATE INDEX venues_city_id_index ON public.venues USING btree (city_id);
+
+
+--
+-- Name: venues_metadata_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX venues_metadata_idx ON public.venues USING gin (metadata jsonb_path_ops);
 
 
 --
@@ -547,3 +581,9 @@ INSERT INTO public."schema_migrations" (version) VALUES (20250210212131);
 INSERT INTO public."schema_migrations" (version) VALUES (20250210213716);
 INSERT INTO public."schema_migrations" (version) VALUES (20250210214042);
 INSERT INTO public."schema_migrations" (version) VALUES (20250210214758);
+INSERT INTO public."schema_migrations" (version) VALUES (20250210220000);
+INSERT INTO public."schema_migrations" (version) VALUES (20250212194500);
+INSERT INTO public."schema_migrations" (version) VALUES (20250213000000);
+INSERT INTO public."schema_migrations" (version) VALUES (20250213135445);
+INSERT INTO public."schema_migrations" (version) VALUES (20250214000000);
+INSERT INTO public."schema_migrations" (version) VALUES (20250214000003);

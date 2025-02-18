@@ -10,6 +10,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
 
+  @type venue_data :: %{
+    name: String.t(),
+    address: String.t(),
+    phone: String.t() | nil,
+    website: String.t() | nil
+  }
+
   @doc """
   Main entry point for the scraper.
   """
@@ -23,10 +30,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           venues = scrape_feed(1, [])
 
           detailed_venues = venues
-          |> Enum.map(fn venue ->
-            Process.sleep(1000) # Be nice to their server
-            fetch_venue_details(venue)
-          end)
+          |> Enum.map(&fetch_venue_details/1)
           |> Enum.reject(&is_nil/1)
 
           venue_count = length(detailed_venues)
@@ -69,7 +73,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           venues ->
             Logger.info("Found #{length(venues)} venues on page #{page}")
             venues |> Enum.each(&log_venue/1)
-            Process.sleep(1000) # Be nice to their server
             scrape_feed(page + 1, acc ++ venues)
         end
 
@@ -116,25 +119,50 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   end
 
   defp fetch_venue_details(%{url: url, title: raw_title}) do
-    Logger.info("\n🔍 Processing venue: #{url}")
+    Logger.info("\n🔍 Processing venue: #{raw_title}")
 
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-             {:ok, venue_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title) do
-          venue_data
+             {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+             true <- String.length(title) > 0 || {:error, :empty_title},
+             true <- String.length(address) > 0 || {:error, :empty_address},
+             venue_data = %{
+               name: title,
+               address: address,
+               phone: Map.get(extracted_data, :phone),
+               website: Map.get(extracted_data, :website)
+             } |> tap(fn data ->
+               if is_nil(data.phone), do: Logger.info("ℹ️ No phone number for venue: #{title}")
+               if is_nil(data.website), do: Logger.info("ℹ️ No website for venue: #{title}")
+             end),
+             {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
+          venue
         else
-          {:error, reason} ->
-            Logger.error("Failed to extract venue data from #{url}: #{reason}")
+          {:ok, %{title: _title} = data} ->
+            Logger.error("❌ Missing required address in extracted data: #{inspect(data)}")
+            nil
+          {:error, :empty_title} ->
+            Logger.error("❌ Empty title for venue: #{raw_title}")
+            nil
+          {:error, :empty_address} ->
+            Logger.error("❌ Empty address for venue: #{raw_title}")
+            nil
+          error ->
+            Logger.error("""
+            ❌ Failed to process venue: #{raw_title}
+            Reason: #{inspect(error)}
+            URL: #{url}
+            """)
             nil
         end
 
       {:ok, %HTTPoison.Response{status_code: status}} ->
-        Logger.error("HTTP #{status} when fetching venue: #{url}")
+        Logger.error("❌ HTTP #{status} when fetching venue: #{url}")
         nil
 
       {:error, error} ->
-        Logger.error("Error fetching venue #{url}: #{inspect(error)}")
+        Logger.error("❌ Error fetching venue #{url}: #{inspect(error)}")
         nil
     end
   end

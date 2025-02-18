@@ -27,7 +27,13 @@ config :trivia_advisor, TriviaAdvisor.Mailer, adapter: Swoosh.Adapters.Test
 config :swoosh, :api_client, false
 
 # Print only warnings and errors during test
-config :logger, level: :warning
+config :logger,
+  level: :warning,  # Only show warnings and errors
+  handle_otp_reports: false,
+  handle_sasl_reports: false
+
+# Add this to silence Ecto SQL logs during tests
+config :logger, Ecto.LogEntry, level: :error
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
