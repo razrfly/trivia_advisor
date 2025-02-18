@@ -10,13 +10,15 @@ defmodule TriviaAdvisor.LocationsTest do
   alias TriviaAdvisor.Locations.City
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Scraping.MockGoogleLookup
+  alias TriviaAdvisor.Utils.Slug
 
   describe "find_or_create_country/1" do
     test "returns existing country if found" do
       country_data = Countries.get("GB")
       {:ok, country} = Repo.insert(%Country{
         code: country_data.alpha2,
-        name: country_data.name
+        name: country_data.name,
+        slug: Slug.slugify(country_data.name)
       })
 
       assert {:ok, found_country} = Locations.find_or_create_country("GB")
