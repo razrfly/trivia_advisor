@@ -23,9 +23,8 @@ defmodule TriviaAdvisor.Locations.Venue do
   @doc false
   def changeset(venue, attrs) do
     venue
-    |> cast(attrs, [:name, :address, :postcode, :latitude, :longitude,
-                   :place_id, :phone, :website, :city_id, :metadata])
-    |> validate_required([:name, :address, :city_id])
+    |> cast(attrs, [:name, :address, :latitude, :longitude, :place_id, :phone, :website, :city_id, :postcode, :metadata])
+    |> validate_required([:name, :address, :latitude, :longitude, :city_id])
     |> validate_number(:latitude, greater_than_or_equal_to: -90, less_than_or_equal_to: 90)
     |> validate_number(:longitude, greater_than_or_equal_to: -180, less_than_or_equal_to: 180)
     |> put_slug()
