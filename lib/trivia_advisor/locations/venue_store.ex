@@ -70,16 +70,18 @@ defmodule TriviaAdvisor.Locations.VenueStore do
     normalized_code = code |> String.trim() |> String.upcase()
 
     if normalized_code == "" do
-      Logger.error("Invalid country code: Empty or whitespace-only")
+      Logger.error("❌ Invalid country code: Empty or whitespace-only")
       {:error, :invalid_country_code}
     else
       case Repo.get_by(Country, code: normalized_code) do
         nil ->
+          Logger.info("🏳️ Creating new country: #{name} (#{normalized_code})")
           %Country{}
           |> Country.changeset(%{name: name, code: normalized_code})
           |> Repo.insert()
 
         country ->
+          Logger.info("✅ Found existing country: #{name}")
           {:ok, country}
       end
     end
@@ -92,20 +94,22 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   """
   def find_or_create_city(nil, _country), do: {:error, :missing_city}
   def find_or_create_city(%{"name" => nil}, _country), do: {:error, :invalid_city_data}
-  def find_or_create_city(%{"name" => name}, %Country{id: country_id}) do
+  def find_or_create_city(%{"name" => name}, %Country{id: country_id, name: country_name}) do
     normalized_name = name |> String.trim() |> String.replace(~r/\s+/, " ")
 
     if normalized_name == "" do
-      Logger.error("Invalid city name: Empty or whitespace-only")
+      Logger.error("❌ Invalid city name: Empty or whitespace-only")
       {:error, :invalid_city_name}
     else
       case Repo.get_by(City, name: normalized_name, country_id: country_id) do
         nil ->
+          Logger.info("🏙️ Creating new city: #{normalized_name} in #{country_name}")
           %City{}
           |> City.changeset(%{name: normalized_name, country_id: country_id})
           |> Repo.insert()
 
         city ->
+          Logger.info("✅ Found existing city: #{normalized_name}")
           {:ok, city}
       end
     end
@@ -125,24 +129,35 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
   # Private functions
 
-  defp validate_address(%{name: name, address: nil}) do
+  defp validate_address(%{title: name, address: nil}) do
     Logger.error("""
-    Missing address in venue data
+    ❌ Missing address in venue data
     Venue: #{name}
     """)
     {:error, :missing_address}
   end
-  defp validate_address(%{name: name, address: address}) when is_binary(address) do
+  defp validate_address(%{title: name, address: address}) when is_binary(address) do
     case String.trim(address) do
       "" ->
         Logger.error("""
-        Invalid address: Empty or whitespace-only
+        ❌ Invalid address: Empty or whitespace-only
         Venue: #{name}
-        Raw address: #{Kernel.inspect(address)}
+        Raw address: #{inspect(address)}
         """)
         {:error, :invalid_address}
-      valid_address -> {:ok, valid_address}
+      valid_address ->
+        Logger.info("🌍 Looking up address: #{valid_address}")
+        {:ok, valid_address}
     end
+  end
+
+  defp validate_address(venue_data) do
+    Logger.error("""
+    ❌ Invalid venue data structure
+    Expected keys: title, address
+    Got: #{inspect(venue_data)}
+    """)
+    {:error, :invalid_venue_data}
   end
 
   defp extract_coordinates(location_data) do
@@ -161,8 +176,8 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   end
 
   defp build_venue_attrs(venue_data, location_data, lat, lng, city_id) do
-    %{
-      name: venue_data.name,
+    {:ok, %{
+      name: venue_data.title,
       address: venue_data.address,
       latitude: lat,
       longitude: lng,
@@ -170,7 +185,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
       city_id: city_id,
       phone: venue_data.phone,
       website: venue_data.website
-    }
+    }}
   end
 
   defp find_and_upsert_venue(venue_attrs, place_id) do
@@ -189,8 +204,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
   defp create_venue(attrs) do
     Logger.info("""
-    Creating new venue: #{attrs.name}
-    City ID: #{attrs.city_id}
+    🏠 Creating new venue: #{attrs.name}
     Address: #{attrs.address}
     Coordinates: #{attrs.latitude},#{attrs.longitude}
     """)

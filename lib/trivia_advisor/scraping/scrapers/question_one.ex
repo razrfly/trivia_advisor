@@ -116,25 +116,37 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   end
 
   defp fetch_venue_details(%{url: url, title: raw_title}) do
-    Logger.info("\n🔍 Processing venue: #{url}")
+    Logger.info("\n🔍 Processing venue: #{raw_title}")
 
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-             {:ok, venue_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title) do
-          venue_data
+             {:ok, extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+             venue_data = %{
+               title: extracted_data.title,
+               address: extracted_data.address,
+               phone: extracted_data.phone,
+               website: extracted_data.website,
+               name: extracted_data.title
+             },
+             {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
+          venue
         else
           {:error, reason} ->
-            Logger.error("Failed to extract venue data from #{url}: #{reason}")
+            Logger.error("""
+            ❌ Failed to process venue: #{raw_title}
+            Reason: #{inspect(reason)}
+            URL: #{url}
+            """)
             nil
         end
 
       {:ok, %HTTPoison.Response{status_code: status}} ->
-        Logger.error("HTTP #{status} when fetching venue: #{url}")
+        Logger.error("❌ HTTP #{status} when fetching venue: #{url}")
         nil
 
       {:error, error} ->
-        Logger.error("Error fetching venue #{url}: #{inspect(error)}")
+        Logger.error("❌ Error fetching venue #{url}: #{inspect(error)}")
         nil
     end
   end
