@@ -117,14 +117,28 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-             {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
-             venue_data = %{
-               name: title,
-               address: address,
-               phone: Map.get(extracted_data, :phone),
-               website: Map.get(extracted_data, :website)
-             },
-             {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
+@type venue_data :: %{
+  name: String.t(),
+  address: String.t(),
+  phone: String.t() | nil,
+  website: String.t() | nil
+}
+
+with {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+     true <- String.length(title) > 0 || {:error, :empty_title},
+     true <- String.length(address) > 0 || {:error, :empty_address},
+     venue_data = %{
+       name: title,
+       address: address,
+       phone: Map.get(extracted_data, :phone),
+       website: Map.get(extracted_data, :website)
+     } |> tap(fn data -> 
+           if is_nil(data.phone), do: Logger.info("ℹ️ No phone number for venue: #{title}")
+           if is_nil(data.website), do: Logger.info("ℹ️ No website for venue: #{title}")
+         end),
+     {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
+  ...
+end
           venue
         else
           {:ok, %{title: _title} = data} ->
