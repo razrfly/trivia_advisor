@@ -32,11 +32,14 @@ defmodule TriviaAdvisor.Locations.VenueStore do
           |> Multi.run(:city, fn _repo, %{country: country} ->
             case find_or_create_city(location_data["city"], country) do
               {:ok, city} -> {:ok, city}
-              {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]} = changeset} ->
+              {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]}} = error ->
                 # If it's a unique constraint error, try to find the existing city
-                slug = get_in(changeset.changes, [:slug])
+                city_name = get_in(location_data, ["city", "name"])
+                normalized_name = city_name |> String.trim() |> String.replace(~r/\s+/, " ")
+                slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+
                 case Repo.get_by(City, slug: slug, country_id: country.id) do
-                  nil -> {:error, {:city, changeset, location_data["city"]}}
+                  nil -> error
                   city -> {:ok, city}
                 end
               {:error, reason} ->
@@ -109,34 +112,33 @@ defmodule TriviaAdvisor.Locations.VenueStore do
       Logger.error("❌ Invalid city name: Empty or whitespace-only")
       {:error, :invalid_city_name}
     else
-      # First try to find by slug and country_id
-      case Repo.get_by(City, slug: slug, country_id: country_id) do
+      # First try to find by slug only since it's globally unique
+      case Repo.get_by(City, slug: slug) do
         nil ->
-          # Try to create, but handle unique constraint violation
           Logger.info("🏙️ Creating new city: #{normalized_name} in #{country_name}")
-
           %City{}
-          |> City.changeset(%{name: normalized_name, country_id: country_id})
+          |> City.changeset(%{
+            name: normalized_name,
+            country_id: country_id,
+            slug: slug
+          })
           |> Repo.insert()
           |> case do
-            {:ok, city} ->
-              {:ok, city}
-
-            {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]} = changeset} ->
-              Logger.info("🔄 City exists, retrieving: #{normalized_name}")
-              # If insert failed due to unique constraint, get existing record
-              case Repo.get_by(City, slug: slug, country_id: country_id) do
+            {:ok, city} -> {:ok, city}
+            {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]}} ->
+              # Double-check by slug in case of race condition
+              case Repo.get_by(City, slug: slug) do
                 nil ->
                   Logger.error("""
                   ❌ Failed to retrieve existing city after unique constraint error
                   Name: #{normalized_name}
                   Slug: #{slug}
-                  Country ID: #{country_id}
                   """)
-                  {:error, changeset}
-                city -> {:ok, city}
+                  {:error, :city_not_found}
+                city ->
+                  Logger.info("🔄 Found existing city by slug: #{city.name}")
+                  {:ok, city}
               end
-
             {:error, changeset} ->
               Logger.error("""
               ❌ Failed to create city
