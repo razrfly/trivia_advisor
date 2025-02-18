@@ -81,7 +81,7 @@ defmodule TriviaAdvisor.LocationsTest do
     test "creates new city if not found" do
       assert {:ok, city} = Locations.find_or_create_city("Manchester", "GB")
       assert city.name == "Manchester"
-      assert city.slug == "manchester-gb"
+      assert city.slug == "manchester"
 
       country = Repo.get!(Country, city.country_id)
       assert country.code == "GB"
@@ -96,7 +96,7 @@ defmodule TriviaAdvisor.LocationsTest do
 
       assert london_uk.name == "London"
       assert london_us.name == "London"
-      assert london_uk.slug == "london-gb"
+      assert london_uk.slug == "london"
       assert london_us.slug == "london-us"
 
       refute london_uk.id == london_us.id
