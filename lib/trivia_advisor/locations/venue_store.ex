@@ -104,57 +104,71 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   """
   def find_or_create_city(nil, _country), do: {:error, :missing_city}
   def find_or_create_city(%{"name" => nil}, _country), do: {:error, :invalid_city_data}
-  def find_or_create_city(%{"name" => name}, %Country{id: country_id, name: country_name}) do
+  def find_or_create_city(%{"name" => name}, %Country{id: country_id, name: country_name, code: country_code}) do
     normalized_name = name |> String.trim() |> String.replace(~r/\s+/, " ")
-    slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+    base_slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
 
     if normalized_name == "" do
       Logger.error("❌ Invalid city name: Empty or whitespace-only")
       {:error, :invalid_city_name}
     else
-      # First try to find by slug only since it's globally unique
-      case Repo.get_by(City, slug: slug) do
+      # First check if base slug exists for this country
+      case Repo.get_by(City, slug: base_slug, country_id: country_id) do
         nil ->
-          Logger.info("🏙️ Creating new city: #{normalized_name} in #{country_name}")
-          %City{}
-          |> City.changeset(%{
-            name: normalized_name,
-            country_id: country_id,
-            slug: slug
-          })
-          |> Repo.insert()
-          |> case do
-            {:ok, city} -> {:ok, city}
-            {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]}} ->
-              # Double-check by slug in case of race condition
-              case Repo.get_by(City, slug: slug) do
-                nil ->
-                  Logger.error("""
-                  ❌ Failed to retrieve existing city after unique constraint error
-                  Name: #{normalized_name}
-                  Slug: #{slug}
-                  """)
-                  {:error, :city_not_found}
-                city ->
-                  Logger.info("🔄 Found existing city by slug: #{city.name}")
-                  {:ok, city}
-              end
-            {:error, changeset} ->
-              Logger.error("""
-              ❌ Failed to create city
-              Name: #{normalized_name}
-              Error: #{inspect(changeset.errors)}
-              """)
-              {:error, changeset}
+          # Check if base slug exists for any country
+          case Repo.get_by(City, slug: base_slug) do
+            nil ->
+              # Base slug is available, use it
+              create_city(normalized_name, base_slug, country_id, country_name)
+            _existing_city ->
+              # Base slug exists in another country, append country code
+              country_specific_slug = "#{base_slug}-#{String.downcase(country_code)}"
+              create_city(normalized_name, country_specific_slug, country_id, country_name)
           end
 
         city ->
-          Logger.info("✅ Found existing city: #{normalized_name}")
+          Logger.info("✅ Found existing city: #{normalized_name} in #{country_name}")
           {:ok, city}
       end
     end
   end
   def find_or_create_city(_, _), do: {:error, :invalid_city_data}
+
+  defp create_city(name, slug, country_id, country_name) do
+    Logger.info("🏙️ Creating new city: #{name} in #{country_name} (slug: #{slug})")
+
+    %City{}
+    |> City.changeset(%{
+      name: name,
+      country_id: country_id,
+      slug: slug
+    })
+    |> Repo.insert()
+    |> case do
+      {:ok, city} -> {:ok, city}
+      {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]}} ->
+        # In case of race condition, try to find by slug
+        case Repo.get_by(City, slug: slug) do
+          nil ->
+            Logger.error("""
+            ❌ Failed to retrieve existing city after unique constraint error
+            Name: #{name}
+            Slug: #{slug}
+            """)
+            {:error, :city_not_found}
+          city ->
+            Logger.info("🔄 Found existing city by slug: #{city.name}")
+            {:ok, city}
+        end
+      {:error, changeset} ->
+        Logger.error("""
+        ❌ Failed to create city
+        Name: #{name}
+        Error: #{inspect(changeset.errors)}
+        """)
+        {:error, changeset}
+    end
+  end
 
   @doc """
   Finds or creates a venue, storing its location details.
