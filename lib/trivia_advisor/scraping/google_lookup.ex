@@ -26,41 +26,73 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   Returns {:ok, venue_details} or {:error, reason}.
   """
   def lookup_address(address, opts \\ []) do
-    with {:ok, api_key} <- get_api_key(),
-         # Extract venue name from opts or use empty string
-         venue_name = Keyword.get(opts, :venue_name, ""),
-         # Combine venue name with address for Places API lookup
-         search_text = (if venue_name == "", do: address, else: "#{venue_name}, #{address}"),
-         # Step 1: Try to get place_id from Places API using combined text
-         {:ok, place_data} <- find_place_from_text(search_text, api_key, opts),
-         {:ok, maybe_place_id} <- extract_place_id(place_data) do
+    cond do
+      # Check for missing required data
+      address == "" or is_nil(address) ->
+        Logger.error("❌ Critical error: Missing required address")
+        {:error, :missing_address}
 
-      case maybe_place_id do
-        nil ->
-          # No place_id found, use Geocoding API with just the address
-          Logger.info("No place_id found for #{address}, using Geocoding API")
-          lookup_by_geocoding(address, api_key, opts)
+      # Skip API call if requested (for existing venues)
+      Keyword.get(opts, :skip_api, false) ->
+        venue_name = Keyword.get(opts, :venue_name, "Unknown Venue")
+        Logger.info("⏭️ Skipping API query for existing venue: #{venue_name}")
+        {:ok, %{
+          "name" => venue_name,
+          "formatted_address" => address,
+          "place_id" => nil,
+          "location" => nil,
+          "phone" => nil,
+          "website" => nil,
+          "google_maps_url" => nil,
+          "types" => [],
+          "opening_hours" => nil,
+          "rating" => nil,
+          "city" => nil,
+          "state" => nil,
+          "country" => nil,
+          "postal_code" => nil,
+          "skip" => true
+        }}
 
-        place_id ->
-          # Get business details and geocoding data
-          with {:ok, place_details} <- get_place_details(place_id, api_key),
-               location = get_in(place_details, ["geometry", "location"]),
-               {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
-            merged_data = merge_api_responses(place_details, geocoding_data)
-            {:ok, normalize_business_data(merged_data)}
-          else
-            error ->
-              Logger.warning("Failed to get place details: #{inspect(error)}, falling back to Geocoding API")
+      # Normal flow with API calls
+      true ->
+        with {:ok, api_key} <- get_api_key(),
+             venue_name = Keyword.get(opts, :venue_name, ""),
+             search_text = (if venue_name == "", do: address, else: "#{venue_name}, #{address}"),
+             _ = Logger.info("📡 Querying Google Maps API with: \"#{search_text}\""),
+             {:ok, place_data} <- find_place_from_text(search_text, api_key, opts),
+             {:ok, maybe_place_id} <- extract_place_id(place_data) do
+
+          result = case maybe_place_id do
+            nil ->
+              # No place_id found, use Geocoding API with just the address
+              Logger.info("No place_id found for #{address}, using Geocoding API")
               lookup_by_geocoding(address, api_key, opts)
+
+            place_id ->
+              # Get business details and geocoding data
+              with {:ok, place_details} <- get_place_details(place_id, api_key),
+                   location = get_in(place_details, ["geometry", "location"]),
+                   {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
+                merged_data = merge_api_responses(place_details, geocoding_data)
+                _ = Logger.info("✅ Found business details for #{venue_name}")
+                {:ok, normalize_business_data(merged_data)}
+              else
+                error ->
+                  Logger.warning("Failed to get place details: #{inspect(error)}, falling back to Geocoding API")
+                  lookup_by_geocoding(address, api_key, opts)
+              end
           end
-      end
+
+          result
+        end
     end
   end
 
   defp lookup_by_geocoding(address, api_key, opts) do
     case lookup_geocode_by_address(address, api_key, opts) do
       {:ok, geocoding_data} ->
-        Logger.info("📍 Using Geocoding API for #{address} - no business details available")
+        Logger.info("📡 Using Geocoding API for #{address} - no business details available")
 
         # Extract only the fields we need, explicitly excluding place_id
         basic_data = %{
@@ -86,6 +118,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
           "postal_code" => components["postal_code"]
         })
 
+        Logger.info("✅ Found address details")
         {:ok, normalize_business_data(final_data)}
       error -> error
     end
@@ -210,7 +243,9 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   defp get_api_key do
     case System.get_env("GOOGLE_MAPS_API_KEY") do
       key when is_binary(key) and byte_size(key) > 0 -> {:ok, key}
-      _ -> {:error, :missing_api_key}
+      _ ->
+        Logger.error("❌ Critical error: Missing Google Maps API key")
+        {:error, :missing_api_key}
     end
   end
 
@@ -267,7 +302,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp handle_places_response(%{"status" => status, "error_message" => msg}) do
-    Logger.error("Google Places API error: #{status} - #{msg}")
+    Logger.error("❌ Google Places API error: #{status} - #{msg}")
     {:error, msg}
   end
 

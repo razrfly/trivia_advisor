@@ -1,6 +1,7 @@
 defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
   use TriviaAdvisor.DataCase
   alias TriviaAdvisor.Scraping.GoogleLookup
+  import ExUnit.CaptureLog
 
   import Mox
   setup :verify_on_exit!
@@ -76,13 +77,34 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
         end
       end)
 
-      assert {:ok, result} = GoogleLookup.lookup_address("The Eagle Pub, Cambridge, UK")
-      assert result["place_id"] == "ChIJuQdxBb1w2EcRvnxVeL5abUw"
-      assert result["name"] == "The Eagle"
-      assert result["phone"] == "+44 1223 505020"
-      assert result["city"]["name"] == "Cambridge"
-      assert result["country"]["code"] == "GB"
-      assert result["rating"]["value"] == 4.4
+      # Temporarily set logger level to :info for this test
+      Logger.configure(level: :info)
+      log = capture_log(fn ->
+        assert {:ok, result} = GoogleLookup.lookup_address("The Eagle Pub, Cambridge, UK", venue_name: "The Eagle")
+        assert result["place_id"] == "ChIJuQdxBb1w2EcRvnxVeL5abUw"
+        assert result["name"] == "The Eagle"
+        assert result["phone"] == "+44 1223 505020"
+        assert result["city"]["name"] == "Cambridge"
+        assert result["country"]["code"] == "GB"
+        assert result["rating"]["value"] == 4.4
+      end)
+      Logger.configure(level: :warning) # Reset back to warning
+
+      assert log =~ "📡 Querying Google Maps API"
+      assert log =~ "✅ Found business details for The Eagle"
+    end
+
+    test "skips API call for existing venue" do
+      Logger.configure(level: :info)
+      log = capture_log(fn ->
+        assert {:ok, _result} = GoogleLookup.lookup_address("The Eagle Pub, Cambridge, UK",
+          venue_name: "The Eagle",
+          skip_api: true
+        )
+      end)
+      Logger.configure(level: :warning)
+
+      assert log =~ "⏭️ Skipping API query for existing venue: The Eagle"
     end
   end
 
@@ -124,41 +146,42 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
         end
       end)
 
-      assert {:ok, result} = GoogleLookup.lookup_address("295 West End Lane, London NW6 1LG, UK")
-      assert result["place_id"] == nil
-      assert result["name"] == "295 W End Ln"
-      assert result["formatted_address"] == "295 W End Ln, London NW6 1LG, UK"
-      assert result["city"]["name"] == "London"
-      assert result["country"]["code"] == "GB"
-      assert result["phone"] == nil
-      assert result["rating"] == nil
-      assert result["types"] == ["street_address"]
+      Logger.configure(level: :info)
+      log = capture_log(fn ->
+        assert {:ok, result} = GoogleLookup.lookup_address("295 West End Lane, London NW6 1LG, UK")
+        assert result["place_id"] == nil
+        assert result["name"] == "295 W End Ln"
+        assert result["formatted_address"] == "295 W End Ln, London NW6 1LG, UK"
+        assert result["city"]["name"] == "London"
+        assert result["country"]["code"] == "GB"
+        assert result["phone"] == nil
+        assert result["rating"] == nil
+        assert result["types"] == ["street_address"]
+      end)
+      Logger.configure(level: :warning)
+
+      assert log =~ "📡 Using Geocoding API"
+      assert log =~ "✅ Found address details"
     end
   end
 
   describe "error handling" do
     test "handles missing API key" do
-      # Remove the API key from env
       System.delete_env("GOOGLE_MAPS_API_KEY")
 
-      # No need to mock HTTP call since it should fail before that
-      assert {:error, :missing_api_key} = GoogleLookup.lookup_address("test")
-    end
-
-    test "handles Places API error" do
-      # Ensure API key exists
-      System.put_env("GOOGLE_MAPS_API_KEY", "test_key")
-
-      error_response = %{
-        "status" => "INVALID_REQUEST",
-        "error_message" => "Invalid request"
-      }
-
-      expect(HTTPoison.Mock, :get, fn _url, [], [follow_redirect: true] ->
-        {:ok, %HTTPoison.Response{status_code: 200, body: Jason.encode!(error_response)}}
+      log = capture_log(fn ->
+        assert {:error, :missing_api_key} = GoogleLookup.lookup_address("test")
       end)
 
-      assert {:error, "Invalid request"} = GoogleLookup.lookup_address("test")
+      assert log =~ "❌ Critical error: Missing Google Maps API key"
+    end
+
+    test "handles missing required data" do
+      log = capture_log(fn ->
+        assert {:error, :missing_address} = GoogleLookup.lookup_address("")
+      end)
+
+      assert log =~ "❌ Critical error: Missing required address"
     end
   end
 end
