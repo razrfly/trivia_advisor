@@ -5,10 +5,9 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
   import Mox
   setup :verify_on_exit!
 
-  @mock_api_key "test_api_key"
-
   setup do
-    Application.put_env(:trivia_advisor, :google_api_key, @mock_api_key)
+    System.put_env("GOOGLE_MAPS_API_KEY", "test_api_key")
+    on_exit(fn -> System.delete_env("GOOGLE_MAPS_API_KEY") end)
     :ok
   end
 
