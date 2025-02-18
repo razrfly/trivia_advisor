@@ -7,7 +7,6 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.{Venue, City, Country}
   alias TriviaAdvisor.Scraping.GoogleLookup
-  alias Ecto.Multi
 
   require Logger
 
@@ -17,57 +16,72 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
   Returns {:ok, venue} on success or {:error, reason} on failure.
   """
-  def process_venue(venue_data) do
-    case validate_address(venue_data) do
-      {:ok, address} ->
-        with {:ok, location_data} <- GoogleLookup.lookup_address(address) do
-          Multi.new()
-          |> Multi.run(:country, fn _repo, _changes ->
-            case find_or_create_country(location_data["country"]) do
-              {:ok, country} -> {:ok, country}
-              {:error, reason} ->
-                {:error, {:country, reason, location_data["country"]}}
-            end
-          end)
-          |> Multi.run(:city, fn _repo, %{country: country} ->
-            case find_or_create_city(location_data["city"], country) do
-              {:ok, city} -> {:ok, city}
-              {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]}} = error ->
-                # If it's a unique constraint error, try to find the existing city
-                city_name = get_in(location_data, ["city", "name"])
-                normalized_name = city_name |> String.trim() |> String.replace(~r/\s+/, " ")
-                slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+  def process_venue(%{address: address} = attrs) when is_binary(address) do
+    # Check for existing venue with coordinates
+    case find_existing_venue(attrs) do
+      %{latitude: lat, longitude: lng} = existing when not is_nil(lat) and not is_nil(lng) ->
+        # Skip API call entirely if we have coordinates
+        Logger.info("✅ Using stored coordinates for venue: #{attrs.name}")
+        {:ok, existing}
 
-                case Repo.get_by(City, slug: slug, country_id: country.id) do
-                  nil -> error
-                  city -> {:ok, city}
-                end
-              {:error, reason} ->
-                {:error, {:city, reason, location_data["city"]}}
-            end
-          end)
-          |> Multi.run(:venue, fn _repo, %{city: city} ->
-            case find_or_create_venue(venue_data, location_data, city) do
-              {:ok, venue} -> {:ok, venue}
-              {:error, reason} ->
-                {:error, {:venue, reason, venue_data}}
-            end
-          end)
-          |> Repo.transaction()
-          |> case do
-            {:ok, %{venue: venue}} -> {:ok, venue}
-            {:error, _step, {component, reason, data}, _changes} ->
-              Logger.error("""
-              Failed to process #{component}
-              Reason: #{inspect(reason)}
-              Data: #{inspect(data)}
-              Venue: #{venue_data.title}
-              """)
-              {:error, reason}
-          end
+      _ ->
+        # No existing venue with coordinates, proceed with API lookup
+        lookup_opts = [venue_name: attrs.name]
+        process_new_venue(attrs, lookup_opts)
+    end
+  end
+
+  defp find_existing_venue(%{name: name} = attrs) do
+    # First try to find by place_id if available
+    venue = if attrs[:place_id] do
+      Repo.get_by(Venue, place_id: attrs.place_id)
+    end
+
+    # Then try by name and city_id if available
+    venue = venue || if attrs[:city_id] do
+      Repo.get_by(Venue, name: name, city_id: attrs.city_id)
+    end
+
+    # Finally try by name and address
+    venue = venue || Repo.get_by(Venue, name: name, address: attrs[:address])
+
+    case venue do
+      %Venue{latitude: lat, longitude: lng} = v when not is_nil(lat) and not is_nil(lng) ->
+        v
+      _ -> nil
+    end
+  end
+  defp find_existing_venue(_), do: nil
+
+  defp process_new_venue(attrs, lookup_opts) do
+    case GoogleLookup.lookup_address(attrs.address, lookup_opts) do
+      {:ok, location_data} ->
+        # Check if venue exists by place_id from Google lookup
+        existing = if location_data["place_id"] do
+          Repo.get_by(Venue, place_id: location_data["place_id"])
         end
 
-      {:error, reason} -> {:error, reason}
+        case existing do
+          %Venue{latitude: lat, longitude: lng} = venue when not is_nil(lat) and not is_nil(lng) ->
+            Logger.info("✅ Found existing venue by place_id: #{venue.name}")
+            {:ok, venue}
+
+          _ ->
+            # Get or create the city and country
+            with {:ok, country} <- find_or_create_country(location_data["country"]),
+                 {:ok, city} <- find_or_create_city(location_data["city"], country) do
+              # Structure venue data to match expected format
+              venue_data = %{
+                title: attrs.name,
+                address: attrs.address,
+                phone: attrs[:phone] || location_data["phone"],
+                website: attrs[:website] || location_data["website"]
+              }
+
+              find_or_create_venue(venue_data, location_data, city)
+            end
+        end
+      error -> error
     end
   end
 
@@ -191,37 +205,6 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   end
 
   # Private functions
-
-  defp validate_address(%{title: name, address: nil}) do
-    Logger.error("""
-    ❌ Missing address in venue data
-    Venue: #{name}
-    """)
-    {:error, :missing_address}
-  end
-  defp validate_address(%{title: name, address: address}) when is_binary(address) do
-    case String.trim(address) do
-      "" ->
-        Logger.error("""
-        ❌ Invalid address: Empty or whitespace-only
-        Venue: #{name}
-        Raw address: #{inspect(address)}
-        """)
-        {:error, :invalid_address}
-      valid_address ->
-        Logger.info("🌍 Looking up address: #{valid_address}")
-        {:ok, valid_address}
-    end
-  end
-
-  defp validate_address(venue_data) do
-    Logger.error("""
-    ❌ Invalid venue data structure
-    Expected keys: title, address
-    Got: #{inspect(venue_data)}
-    """)
-    {:error, :invalid_venue_data}
-  end
 
   defp extract_coordinates(location_data) do
     lat = get_in(location_data, ["location", "lat"])

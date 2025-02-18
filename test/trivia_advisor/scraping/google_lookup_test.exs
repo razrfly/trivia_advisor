@@ -97,14 +97,20 @@ defmodule TriviaAdvisor.Scraping.GoogleLookupTest do
     test "skips API call for existing venue" do
       Logger.configure(level: :info)
       log = capture_log(fn ->
-        assert {:ok, _result} = GoogleLookup.lookup_address("The Eagle Pub, Cambridge, UK",
+        assert {:ok, result} = GoogleLookup.lookup_address("The Eagle Pub, Cambridge, UK",
           venue_name: "The Eagle",
-          skip_api: true
+          existing_coordinates: {52.2039937, 0.1180895}  # Use existing coordinates
         )
+
+        # Verify the response structure
+        assert result["name"] == "The Eagle"
+        assert result["geometry"]["location"]["lat"] == 52.2039937
+        assert result["geometry"]["location"]["lng"] == 0.1180895
+        assert result["cached"] == true
       end)
       Logger.configure(level: :warning)
 
-      assert log =~ "⏭️ Skipping API query for existing venue: The Eagle"
+      assert log =~ "⏭️ Using existing coordinates for venue: The Eagle"
     end
   end
 

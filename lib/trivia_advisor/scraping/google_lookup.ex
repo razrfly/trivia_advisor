@@ -24,68 +24,59 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   @doc """
   Looks up venue details using both Google Places and Geocoding APIs.
   Returns {:ok, venue_details} or {:error, reason}.
+
+  If existing_coordinates is provided, skips the API call and returns cached data.
   """
-  def lookup_address(address, opts \\ []) do
-    cond do
-      # Check for missing required data
-      address == "" or is_nil(address) ->
-        Logger.error("❌ Critical error: Missing required address")
-        {:error, :missing_address}
+  def lookup_address(address, opts \\ [])
+  def lookup_address("", _opts) do
+    Logger.error("❌ Critical error: Missing required address")
+    {:error, :missing_address}
+  end
+  def lookup_address(nil, _opts), do: lookup_address("", [])
 
-      # Skip API call if requested (for existing venues)
-      Keyword.get(opts, :skip_api, false) ->
+  def lookup_address(address, opts) do
+    # Extract existing coordinates if provided
+    case Keyword.get(opts, :existing_coordinates) do
+      {lat, lng} when is_number(lat) and is_number(lng) ->
         venue_name = Keyword.get(opts, :venue_name, "Unknown Venue")
-        Logger.info("⏭️ Skipping API query for existing venue: #{venue_name}")
-        {:ok, %{
-          "name" => venue_name,
-          "formatted_address" => address,
-          "place_id" => nil,
-          "location" => nil,
-          "phone" => nil,
-          "website" => nil,
-          "google_maps_url" => nil,
-          "types" => [],
-          "opening_hours" => nil,
-          "rating" => nil,
-          "city" => nil,
-          "state" => nil,
-          "country" => nil,
-          "postal_code" => nil,
-          "skip" => true
-        }}
+        Logger.info("⏭️ Using existing coordinates for venue: #{venue_name}")
+        {:ok, build_cached_response(venue_name, address, lat, lng)}
 
-      # Normal flow with API calls
-      true ->
-        with {:ok, api_key} <- get_api_key(),
-             venue_name = Keyword.get(opts, :venue_name, ""),
-             search_text = (if venue_name == "", do: address, else: "#{venue_name}, #{address}"),
-             _ = Logger.info("📡 Querying Google Maps API with: \"#{search_text}\""),
-             {:ok, place_data} <- find_place_from_text(search_text, api_key, opts),
-             {:ok, maybe_place_id} <- extract_place_id(place_data) do
+      _ ->
+        lookup_from_api(address, opts)
+    end
+  end
 
-          result = case maybe_place_id do
-            nil ->
-              # No place_id found, use Geocoding API with just the address
-              Logger.info("No place_id found for #{address}, using Geocoding API")
+  defp lookup_from_api(address, opts) do
+    with {:ok, api_key} <- get_api_key(),
+         venue_name = Keyword.get(opts, :venue_name, ""),
+         search_text = (if venue_name == "", do: address, else: "#{venue_name}, #{address}"),
+         _ = Logger.info("📡 Querying Google Maps API with: \"#{search_text}\""),
+         {:ok, place_data} <- find_place_from_text(search_text, api_key, opts),
+         {:ok, maybe_place_id} <- extract_place_id(place_data) do
+
+      result = case maybe_place_id do
+        nil ->
+          # No place_id found, use Geocoding API with just the address
+          Logger.info("No place_id found for #{address}, using Geocoding API")
+          lookup_by_geocoding(address, api_key, opts)
+
+        place_id ->
+          # Get business details and geocoding data
+          with {:ok, place_details} <- get_place_details(place_id, api_key),
+               location = get_in(place_details, ["geometry", "location"]),
+               {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
+            merged_data = merge_api_responses(place_details, geocoding_data)
+            _ = Logger.info("✅ Found business details for #{venue_name}")
+            {:ok, normalize_business_data(merged_data)}
+          else
+            error ->
+              Logger.warning("Failed to get place details: #{inspect(error)}, falling back to Geocoding API")
               lookup_by_geocoding(address, api_key, opts)
-
-            place_id ->
-              # Get business details and geocoding data
-              with {:ok, place_details} <- get_place_details(place_id, api_key),
-                   location = get_in(place_details, ["geometry", "location"]),
-                   {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
-                merged_data = merge_api_responses(place_details, geocoding_data)
-                _ = Logger.info("✅ Found business details for #{venue_name}")
-                {:ok, normalize_business_data(merged_data)}
-              else
-                error ->
-                  Logger.warning("Failed to get place details: #{inspect(error)}, falling back to Geocoding API")
-                  lookup_by_geocoding(address, api_key, opts)
-              end
           end
+      end
 
-          result
-        end
+      result
     end
   end
 
@@ -301,9 +292,20 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     end
   end
 
+  defp handle_places_response(%{"status" => "ZERO_RESULTS"}) do
+    Logger.info("No results found in Places API, falling back to geocoding")
+    {:ok, nil}
+  end
+
   defp handle_places_response(%{"status" => status, "error_message" => msg}) do
     Logger.error("❌ Google Places API error: #{status} - #{msg}")
     {:error, msg}
+  end
+
+  # Catch-all for any other response format
+  defp handle_places_response(response) do
+    Logger.error("❌ Unexpected Places API response format: #{inspect(response)}")
+    {:ok, nil}  # Fall back to geocoding instead of failing
   end
 
   defp handle_place_details_response(%{"status" => "OK", "result" => result}) do
@@ -390,5 +392,30 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     not_street_address = "street_address" not in types
 
     has_business_type and not_street_address
+  end
+
+  defp build_cached_response(venue_name, address, lat, lng) do
+    %{
+      "name" => venue_name,
+      "formatted_address" => address,
+      "place_id" => nil,
+      "geometry" => %{
+        "location" => %{
+          "lat" => lat,
+          "lng" => lng
+        }
+      },
+      "phone" => nil,
+      "website" => nil,
+      "google_maps_url" => nil,
+      "types" => [],
+      "opening_hours" => nil,
+      "rating" => nil,
+      "city" => nil,
+      "state" => nil,
+      "country" => nil,
+      "postal_code" => nil,
+      "cached" => true
+    }
   end
 end
