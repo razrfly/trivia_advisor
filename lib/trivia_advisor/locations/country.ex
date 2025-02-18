@@ -1,12 +1,14 @@
 defmodule TriviaAdvisor.Locations.Country do
   use Ecto.Schema
   import Ecto.Changeset
+  alias TriviaAdvisor.Locations.City
 
   schema "countries" do
-    field :code, :string
     field :name, :string
+    field :code, :string
+    field :slug, :string
 
-    has_many :cities, TriviaAdvisor.Locations.City
+    has_many :cities, City
 
     timestamps(type: :utc_datetime)
   end
@@ -16,8 +18,16 @@ defmodule TriviaAdvisor.Locations.Country do
     country
     |> cast(attrs, [:code, :name])
     |> validate_required([:code, :name])
+    |> generate_slug()
     |> unique_constraint(:code)
+    |> unique_constraint(:slug)
   end
+
+  defp generate_slug(%Ecto.Changeset{valid?: true, changes: %{name: name}} = changeset) do
+    put_change(changeset, :slug, Slug.slugify(name))
+  end
+
+  defp generate_slug(changeset), do: changeset
 
   @doc """
   Fetches the currency code dynamically from the Countries library.
