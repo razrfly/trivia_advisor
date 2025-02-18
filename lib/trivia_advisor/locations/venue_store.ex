@@ -32,6 +32,13 @@ defmodule TriviaAdvisor.Locations.VenueStore do
           |> Multi.run(:city, fn _repo, %{country: country} ->
             case find_or_create_city(location_data["city"], country) do
               {:ok, city} -> {:ok, city}
+              {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]} = changeset} ->
+                # If it's a unique constraint error, try to find the existing city
+                slug = get_in(changeset.changes, [:slug])
+                case Repo.get_by(City, slug: slug, country_id: country.id) do
+                  nil -> {:error, {:city, changeset, location_data["city"]}}
+                  city -> {:ok, city}
+                end
               {:error, reason} ->
                 {:error, {:city, reason, location_data["city"]}}
             end
@@ -49,9 +56,9 @@ defmodule TriviaAdvisor.Locations.VenueStore do
             {:error, _step, {component, reason, data}, _changes} ->
               Logger.error("""
               Failed to process #{component}
-              Reason: #{Kernel.inspect(reason)}
-              Data: #{Kernel.inspect(data)}
-              Venue: #{venue_data.name}
+              Reason: #{inspect(reason)}
+              Data: #{inspect(data)}
+              Venue: #{venue_data.title}
               """)
               {:error, reason}
           end
@@ -96,17 +103,48 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   def find_or_create_city(%{"name" => nil}, _country), do: {:error, :invalid_city_data}
   def find_or_create_city(%{"name" => name}, %Country{id: country_id, name: country_name}) do
     normalized_name = name |> String.trim() |> String.replace(~r/\s+/, " ")
+    slug = normalized_name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
 
     if normalized_name == "" do
       Logger.error("❌ Invalid city name: Empty or whitespace-only")
       {:error, :invalid_city_name}
     else
-      case Repo.get_by(City, name: normalized_name, country_id: country_id) do
+      # First try to find by slug and country_id
+      case Repo.get_by(City, slug: slug, country_id: country_id) do
         nil ->
+          # Try to create, but handle unique constraint violation
           Logger.info("🏙️ Creating new city: #{normalized_name} in #{country_name}")
+
           %City{}
           |> City.changeset(%{name: normalized_name, country_id: country_id})
           |> Repo.insert()
+          |> case do
+            {:ok, city} ->
+              {:ok, city}
+
+            {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]} = changeset} ->
+              Logger.info("🔄 City exists, retrieving: #{normalized_name}")
+              # If insert failed due to unique constraint, get existing record
+              case Repo.get_by(City, slug: slug, country_id: country_id) do
+                nil ->
+                  Logger.error("""
+                  ❌ Failed to retrieve existing city after unique constraint error
+                  Name: #{normalized_name}
+                  Slug: #{slug}
+                  Country ID: #{country_id}
+                  """)
+                  {:error, changeset}
+                city -> {:ok, city}
+              end
+
+            {:error, changeset} ->
+              Logger.error("""
+              ❌ Failed to create city
+              Name: #{normalized_name}
+              Error: #{inspect(changeset.errors)}
+              """)
+              {:error, changeset}
+          end
 
         city ->
           Logger.info("✅ Found existing city: #{normalized_name}")
@@ -185,14 +223,15 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   end
 
   defp find_and_upsert_venue(venue_attrs, place_id) do
-    venue_query =
-      if place_id do
-        [place_id: place_id]
-      else
-        [name: venue_attrs.name, city_id: venue_attrs.city_id]
-      end
+    # First try to find by place_id if available
+    venue = if place_id do
+      Repo.get_by(Venue, place_id: place_id)
+    end
 
-    case Repo.get_by(Venue, venue_query) do
+    # If not found by place_id, try by name and city
+    venue = venue || Repo.get_by(Venue, name: venue_attrs.name, city_id: venue_attrs.city_id)
+
+    case venue do
       nil ->
         Logger.info("""
         🏠 Creating new venue: #{venue_attrs.name}
@@ -202,8 +241,20 @@ defmodule TriviaAdvisor.Locations.VenueStore do
         %Venue{}
         |> Venue.changeset(venue_attrs)
         |> Repo.insert()
+        |> case do
+          {:ok, venue} -> {:ok, venue}
+          {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]} = changeset} ->
+            Logger.info("🔄 Venue exists with slug, retrieving: #{venue_attrs.name}")
+            # If insert failed due to unique constraint, get existing record
+            case Repo.get_by(Venue, slug: get_in(changeset.changes, [:slug])) do
+              nil -> {:error, changeset}
+              venue -> update_venue(venue, venue_attrs)
+            end
+          {:error, changeset} -> {:error, changeset}
+        end
 
       venue ->
+        Logger.info("✅ Found existing venue: #{venue.name}")
         update_venue(venue, venue_attrs)
     end
   end
