@@ -4,17 +4,15 @@ defmodule TriviaAdvisor.Events.Event do
   alias TriviaAdvisor.Locations.{Venue, City}
   require Logger
 
-  @frequencies ~w(weekly biweekly monthly irregular)a
-
   schema "events" do
     field :name, :string
     field :day_of_week, :integer
     field :start_time, :time
-    field :frequency, Ecto.Enum, values: @frequencies, default: :weekly
+    field :frequency, Ecto.Enum, values: [:weekly, :biweekly, :monthly, :irregular]
     field :entry_fee_cents, :integer
     field :description, :string
 
-    belongs_to :venue, TriviaAdvisor.Locations.Venue
+    belongs_to :venue, Venue
     has_many :event_sources, TriviaAdvisor.Events.EventSource, on_delete: :delete_all
 
     timestamps(type: :utc_datetime)
@@ -23,10 +21,11 @@ defmodule TriviaAdvisor.Events.Event do
   @doc false
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:name, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :venue_id])
-    |> validate_required([:day_of_week, :start_time, :frequency, :venue_id])
-    |> validate_inclusion(:frequency, @frequencies) # Even though it's Ecto.Enum, keeping it
-    |> validate_entry_fee()
+    |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency,
+                   :entry_fee_cents, :description])
+    |> validate_required([:name, :venue_id, :day_of_week, :start_time, :frequency])
+    |> validate_inclusion(:day_of_week, 1..7)
+    |> foreign_key_constraint(:venue_id)
   end
 
   @doc """
@@ -117,14 +116,6 @@ defmodule TriviaAdvisor.Events.Event do
     case Float.parse(number) do
       {amount, _} when amount >= 0 -> {:ok, amount}
       _ -> :error
-    end
-  end
-
-  defp validate_entry_fee(changeset) do
-    case get_field(changeset, :entry_fee_cents) do
-      nil -> changeset
-      amount when is_integer(amount) and amount >= 0 -> changeset
-      _ -> add_error(changeset, :entry_fee_cents, "must be a non-negative integer or nil")
     end
   end
 end

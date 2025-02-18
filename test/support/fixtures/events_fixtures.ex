@@ -10,17 +10,19 @@ defmodule TriviaAdvisor.EventsFixtures do
   def event_fixture(attrs \\ %{}) do
     venue = TriviaAdvisor.LocationsFixtures.venue_fixture()
 
+    valid_attrs = %{
+      name: "some event",
+      day_of_week: 2,
+      start_time: ~T[14:00:00],
+      frequency: :weekly,
+      entry_fee_cents: 42,
+      description: "some description",
+      venue_id: venue.id
+    }
+
     {:ok, event} =
       attrs
-      |> Enum.into(%{
-        name: "some name",
-        description: "some description",
-        start_time: ~T[14:00:00],
-        day_of_week: 42,
-        frequency: "weekly",
-        entry_fee_cents: 42,
-        venue_id: venue.id
-      })
+      |> Enum.into(valid_attrs)
       |> TriviaAdvisor.Events.create_event()
 
     event
