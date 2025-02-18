@@ -122,7 +122,16 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   """
   def find_or_create_venue(venue_data, location_data, %City{id: city_id}) do
     with {:ok, lat, lng} <- extract_coordinates(location_data),
-         {:ok, venue_attrs} <- build_venue_attrs(venue_data, location_data, lat, lng, city_id) do
+         venue_attrs = %{
+           name: venue_data.title,
+           address: venue_data.address,
+           latitude: lat,
+           longitude: lng,
+           place_id: location_data["place_id"],
+           city_id: city_id,
+           phone: venue_data.phone,
+           website: venue_data.website
+         } do
       find_and_upsert_venue(venue_attrs, location_data["place_id"])
     end
   end
@@ -175,19 +184,6 @@ defmodule TriviaAdvisor.Locations.VenueStore do
     end
   end
 
-  defp build_venue_attrs(venue_data, location_data, lat, lng, city_id) do
-    {:ok, %{
-      name: venue_data.title,
-      address: venue_data.address,
-      latitude: lat,
-      longitude: lng,
-      place_id: location_data["place_id"],
-      city_id: city_id,
-      phone: venue_data.phone,
-      website: venue_data.website
-    }}
-  end
-
   defp find_and_upsert_venue(venue_attrs, place_id) do
     venue_query =
       if place_id do
@@ -197,36 +193,33 @@ defmodule TriviaAdvisor.Locations.VenueStore do
       end
 
     case Repo.get_by(Venue, venue_query) do
-      nil -> create_venue(venue_attrs)
-      venue -> update_venue(venue, venue_attrs)
+      nil ->
+        Logger.info("""
+        🏠 Creating new venue: #{venue_attrs.name}
+        Address: #{venue_attrs.address}
+        Coordinates: #{venue_attrs.latitude},#{venue_attrs.longitude}
+        """)
+        %Venue{}
+        |> Venue.changeset(venue_attrs)
+        |> Repo.insert()
+
+      venue ->
+        update_venue(venue, venue_attrs)
     end
-  end
-
-  defp create_venue(attrs) do
-    Logger.info("""
-    🏠 Creating new venue: #{attrs.name}
-    Address: #{attrs.address}
-    Coordinates: #{attrs.latitude},#{attrs.longitude}
-    """)
-
-    %Venue{}
-    |> Venue.changeset(attrs)
-    |> Repo.insert()
   end
 
   defp update_venue(venue, attrs) do
     updated_attrs = if venue.place_id, do: Map.drop(attrs, [:place_id]), else: attrs
     current_attrs = venue |> Map.from_struct() |> Map.drop([:__meta__, :inserted_at, :updated_at])
-    changes = Map.merge(current_attrs, updated_attrs)
 
-    if changes == current_attrs do
+    if Map.equal?(Map.drop(current_attrs, [:updated_at]), Map.drop(updated_attrs, [:updated_at])) do
       Logger.debug("No changes needed for venue: #{venue.name}")
       {:ok, venue}
     else
       diff = Map.drop(updated_attrs, [:place_id])
       Logger.info("""
       Updating venue #{venue.id} (#{venue.name})
-      Changes: #{Kernel.inspect(diff)}
+      Changes: #{inspect(diff)}
       """)
       venue
       |> Venue.changeset(updated_attrs)
