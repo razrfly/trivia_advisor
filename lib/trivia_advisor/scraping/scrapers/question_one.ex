@@ -23,10 +23,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           venues = scrape_feed(1, [])
 
           detailed_venues = venues
-          |> Enum.map(fn venue ->
-            Process.sleep(1000) # Be nice to their server
-            fetch_venue_details(venue)
-          end)
+          |> Enum.map(&fetch_venue_details/1)
           |> Enum.reject(&is_nil/1)
 
           venue_count = length(detailed_venues)
@@ -69,7 +66,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           venues ->
             Logger.info("Found #{length(venues)} venues on page #{page}")
             venues |> Enum.each(&log_venue/1)
-            Process.sleep(1000) # Be nice to their server
             scrape_feed(page + 1, acc ++ venues)
         end
 
@@ -123,11 +119,10 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
         with {:ok, document} <- Floki.parse_document(body),
              {:ok, extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
              venue_data = %{
-               title: extracted_data.title,
+               name: extracted_data.title,
                address: extracted_data.address,
                phone: extracted_data.phone,
-               website: extracted_data.website,
-               name: extracted_data.title
+               website: extracted_data.website
              },
              {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
           venue
