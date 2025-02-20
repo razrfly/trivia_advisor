@@ -158,7 +158,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
               time_text: extracted_data.time_text,
               description: extracted_data.description,
               fee_text: extracted_data.fee_text,
-              hero_image_url: extracted_data.hero_image_url
+              hero_image_url: extracted_data.hero_image_url,
+              source_url: url
             }
 
             case TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id) do
