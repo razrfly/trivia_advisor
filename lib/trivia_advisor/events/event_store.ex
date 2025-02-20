@@ -48,8 +48,13 @@ defmodule TriviaAdvisor.Events.EventStore do
           end
       end
 
-      # Pass source URL to upsert_event_source
-      {:ok, _source} = upsert_event_source(event.id, source_id, event_data.source_url)
+      # Pass all needed data to upsert_event_source
+      {:ok, _source} = upsert_event_source(
+        event.id,
+        source_id,
+        event_data.source_url,
+        %{event_data: event_data, attrs: attrs, venue: venue, frequency: frequency}
+      )
 
       {:ok, event}
     end)
@@ -76,8 +81,24 @@ defmodule TriviaAdvisor.Events.EventStore do
     |> Repo.update()
   end
 
-  defp upsert_event_source(event_id, source_id, source_url) do
+  defp upsert_event_source(event_id, source_id, source_url, data) do
     now = DateTime.utc_now()
+
+    # Build metadata from event data
+    metadata = %{
+      raw_title: data.event_data.raw_title,
+      clean_title: data.event_data.name,
+      address: data.venue.address,
+      time_text: data.event_data.time_text,
+      day_of_week: data.attrs.day_of_week,
+      start_time: data.attrs.start_time,
+      frequency: data.frequency,
+      fee_text: data.event_data.fee_text,
+      phone: data.venue.phone,
+      website: data.venue.website,
+      description: data.event_data.description,
+      hero_image_url: data.event_data.hero_image_url
+    }
 
     case Repo.get_by(EventSource, event_id: event_id, source_id: source_id) do
       nil ->
@@ -86,6 +107,7 @@ defmodule TriviaAdvisor.Events.EventStore do
           event_id: event_id,
           source_id: source_id,
           source_url: source_url,
+          metadata: metadata,
           last_seen_at: now
         })
         |> Repo.insert()
@@ -94,6 +116,7 @@ defmodule TriviaAdvisor.Events.EventStore do
         source
         |> EventSource.changeset(%{
           source_url: source_url,
+          metadata: metadata,
           last_seen_at: now
         })
         |> Repo.update()
