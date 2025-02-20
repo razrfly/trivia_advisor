@@ -40,6 +40,11 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
       |> Floki.attribute("src")
       |> List.first()
 
+      hero_image = case download_hero_image(hero_image_url) do
+        {:ok, image_data} -> image_data
+        _ -> nil
+      end
+
       venue_data = %{
         raw_title: raw_title,
         title: title,
@@ -52,6 +57,7 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
         phone: phone,
         website: website,
         description: description,
+        hero_image: hero_image,
         hero_image_url: hero_image_url,
         url: url
       }
@@ -131,5 +137,20 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
       Hero Image   : #{inspect(venue.hero_image_url || "Not provided")}
       Source URL   : #{inspect(venue.url)}
     """)
+  end
+
+  defp download_hero_image(nil), do: {:error, :no_image}
+  defp download_hero_image(url) do
+    case HTTPoison.get(url) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        tmp_path = Path.join(System.tmp_dir!(), "#{:crypto.strong_rand_bytes(16) |> Base.encode16()}")
+        File.write!(tmp_path, body)
+        {:ok, %{
+          path: tmp_path,
+          file_name: Path.basename(url)
+        }}
+      _ ->
+        {:error, :download_failed}
+    end
   end
 end

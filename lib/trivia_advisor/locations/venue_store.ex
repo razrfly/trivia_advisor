@@ -202,8 +202,9 @@ defmodule TriviaAdvisor.Locations.VenueStore do
            website: venue_data.website,
            postcode: location_data["postal_code"]["code"],
            metadata: extract_metadata(location_data)
-         } do
-      find_and_upsert_venue(venue_attrs, location_data["place_id"])
+         },
+         {:ok, venue} <- find_and_upsert_venue(venue_attrs, location_data["place_id"]) do
+      {:ok, venue}
     end
   end
 

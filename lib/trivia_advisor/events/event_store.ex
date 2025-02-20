@@ -6,6 +6,7 @@ defmodule TriviaAdvisor.Events.EventStore do
   import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Events.{Event, EventSource}
+  alias TriviaAdvisor.Uploaders.HeroImage
   require Logger
 
   # Import the parse functions from Event module
@@ -29,6 +30,11 @@ defmodule TriviaAdvisor.Events.EventStore do
     Repo.transaction(fn ->
       with {:ok, event} <- find_or_create_event(attrs),
            {:ok, _source} <- find_or_create_event_source(event, source_id) do
+
+        if event_data.hero_image do
+          HeroImage.store({event_data.hero_image, event})
+        end
+
         {:ok, event}
       else
         {:error, reason} -> Repo.rollback(reason)
