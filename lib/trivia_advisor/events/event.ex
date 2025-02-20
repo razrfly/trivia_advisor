@@ -3,6 +3,7 @@ defmodule TriviaAdvisor.Events.Event do
   import Ecto.Changeset
   alias TriviaAdvisor.Locations.{Venue, City}
   require Logger
+  use Waffle.Ecto.Schema
 
   schema "events" do
     field :name, :string
@@ -11,6 +12,8 @@ defmodule TriviaAdvisor.Events.Event do
     field :frequency, Ecto.Enum, values: [:weekly, :biweekly, :monthly, :irregular]
     field :entry_fee_cents, :integer
     field :description, :string
+    field :hero_image_url, :string
+    field :hero_image, TriviaAdvisor.Uploaders.HeroImage.Type
 
     belongs_to :venue, Venue
     has_many :event_sources, TriviaAdvisor.Events.EventSource, on_delete: :delete_all
@@ -22,7 +25,8 @@ defmodule TriviaAdvisor.Events.Event do
   def changeset(event, attrs) do
     event
     |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency,
-                   :entry_fee_cents, :description])
+                   :entry_fee_cents, :description, :hero_image_url])
+    |> cast_attachments(attrs, [:hero_image])
     |> validate_required([:venue_id, :day_of_week, :start_time, :frequency])
     |> validate_inclusion(:day_of_week, 1..7)
     |> foreign_key_constraint(:venue_id)
@@ -30,18 +34,39 @@ defmodule TriviaAdvisor.Events.Event do
 
   @doc """
   Parses frequency text into the correct enum value.
+  For tests:
+  - Handles "every week" and similar variations
+  - Returns :irregular for empty/nil/random text
+
+  Note: In production, frequency is determined by event_store.ex
+  which defaults everything to weekly unless explicitly stated otherwise.
   """
+  def parse_frequency(nil), do: :irregular  # Test compatibility
+  def parse_frequency(""), do: :irregular   # Test compatibility
   def parse_frequency(text) when is_binary(text) do
     text = String.trim(text) |> String.downcase()
     cond do
-      text == "" -> :irregular
-      Regex.match?(~r/\b(every\s+2\s+weeks?|bi-?weekly|fortnightly)\b/, text) -> :biweekly
-      Regex.match?(~r/\b(every\s+week|weekly|each\s+week)\b/, text) -> :weekly
-      Regex.match?(~r/\b(every\s+month|monthly)\b/, text) -> :monthly
-      true -> :irregular
+      # Bi-weekly patterns
+      String.contains?(text, ["bi-weekly", "biweekly", "fortnightly"]) or
+      Regex.match?(~r/\bevery\s+(?:2|two)\s+weeks?\b/, text) ->
+        :biweekly
+
+      # Monthly patterns
+      String.contains?(text, ["monthly", "every month"]) or
+      (String.contains?(text, ["last", "first", "second", "third", "fourth"]) and
+       String.contains?(text, ["of the month", "of every month"])) ->
+        :monthly
+
+      # Weekly patterns - handle test cases
+      String.contains?(text, ["every week", "weekly", "each week"]) ->
+        :weekly
+
+      # Random text is irregular (test compatibility)
+      true ->
+        :irregular
     end
   end
-  def parse_frequency(_), do: :irregular
+  def parse_frequency(_), do: :irregular  # Test compatibility
 
   @doc """
   Parses currency strings into cents integer based on venue's country.

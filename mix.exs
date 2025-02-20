@@ -19,7 +19,7 @@ defmodule TriviaAdvisor.MixProject do
   def application do
     [
       mod: {TriviaAdvisor.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :waffle]
     ]
   end
 
@@ -67,7 +67,9 @@ defmodule TriviaAdvisor.MixProject do
       {:countries, "~> 1.6"},
       {:mox, "~> 1.0", only: :test},
       {:money, "~> 1.12"},
-      {:decimal, "~> 2.0"}
+      {:decimal, "~> 2.0"},
+      {:waffle, "~> 1.1"},
+      {:waffle_ecto, "~> 0.0.12"}
     ]
   end
 

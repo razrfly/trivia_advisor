@@ -133,23 +133,47 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   defp fetch_venue_details(%{url: url, title: raw_title}) do
     Logger.info("\n🔍 Processing venue: #{raw_title}")
 
+    source = Repo.get_by!(Source, website_url: @base_url)
+
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-             {:ok, %{title: title, address: address} = extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
-             true <- String.length(title) > 0 || {:error, :empty_title},
-             true <- String.length(address) > 0 || {:error, :empty_address},
-             venue_data = %{
-               name: title,
-               address: address,
-               phone: Map.get(extracted_data, :phone),
-               website: Map.get(extracted_data, :website)
-             } |> tap(fn data ->
-               if is_nil(data.phone), do: Logger.info("ℹ️ No phone number for venue: #{title}")
-               if is_nil(data.website), do: Logger.info("ℹ️ No website for venue: #{title}")
-             end),
-             {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
-          venue
+             {:ok, extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+             true <- String.length(extracted_data.title) > 0 || {:error, :empty_title},
+             true <- String.length(extracted_data.address) > 0 || {:error, :empty_address} do
+
+          # First process the venue
+          venue_data = %{
+            name: extracted_data.title,
+            address: extracted_data.address,
+            phone: extracted_data.phone,
+            website: extracted_data.website
+          }
+
+          with {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
+            # Then process the event with the venue
+            event_data = %{
+              raw_title: raw_title,
+              name: venue.name,
+              time_text: extracted_data.time_text,
+              description: extracted_data.description,
+              fee_text: extracted_data.fee_text,
+              hero_image_url: extracted_data.hero_image_url
+            }
+
+            case TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id) do
+              {:ok, _event} ->
+                Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+                venue
+              {:error, reason} ->
+                Logger.error("❌ Failed to process event: #{inspect(reason)}")
+                nil
+            end
+          else
+            {:error, reason} ->
+              Logger.error("❌ Failed to process venue: #{inspect(reason)}")
+              nil
+          end
         else
           {:ok, %{title: _title} = data} ->
             Logger.error("❌ Missing required address in extracted data: #{inspect(data)}")
