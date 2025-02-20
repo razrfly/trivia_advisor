@@ -45,6 +45,9 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
         title: title,
         address: address,
         time_text: time_text,
+        day_of_week: parse_day_of_week(time_text),
+        start_time: parse_time(time_text),
+        frequency: :weekly,  # Default for now
         fee_text: fee_text,
         phone: phone,
         website: website,
@@ -86,18 +89,47 @@ defmodule TriviaAdvisor.Scraping.VenueExtractor do
     end
   end
 
+  defp parse_day_of_week(time_text) do
+    cond do
+      String.contains?(time_text, "Monday") -> 1
+      String.contains?(time_text, "Tuesday") -> 2
+      String.contains?(time_text, "Wednesday") -> 3
+      String.contains?(time_text, "Thursday") -> 4
+      String.contains?(time_text, "Friday") -> 5
+      String.contains?(time_text, "Saturday") -> 6
+      String.contains?(time_text, "Sunday") -> 7
+      true -> raise "Invalid day in time_text: #{time_text}"
+    end
+  end
+
+  defp parse_time(time_text) do
+    case Regex.run(~r/(\d{1,2}[:.]?\d{2})/, time_text) do
+      [_, time] ->
+        time
+        |> String.replace(".", ":")  # normalize separator
+        |> String.pad_leading(5, "0")  # pad single digit hours
+        |> then(fn t -> t <> ":00" end)
+        |> Time.from_iso8601!()
+      nil -> raise "Could not parse time from: #{time_text}"
+    end
+  end
+
   defp log_venue_details(venue) do
     Logger.info("""
-    Extracted Venue Data:
-      Raw Title: #{inspect(venue.raw_title)}
-      Cleaned Title: #{inspect(venue.title)}
-      Address: #{inspect(venue.address)}
-      Time: #{inspect(venue.time_text)}
-      Fee: #{inspect(venue.fee_text)}
-      Phone: #{inspect(venue.phone)}
-      Website: #{inspect(venue.website)}
-      Description: #{inspect(String.slice(venue.description || "", 0..100))}
-      Hero Image: #{inspect(venue.hero_image_url)}
+    📍 Extracted Venue Details:
+      Title (Raw)   : #{inspect(venue.raw_title)}
+      Title (Clean) : #{inspect(venue.title)}
+      Address       : #{inspect(venue.address)}
+      Time Text     : #{inspect(venue.time_text)}
+      Day of Week   : #{inspect(venue.day_of_week)}
+      Start Time    : #{inspect(venue.start_time)}
+      Frequency     : #{inspect(venue.frequency)}
+      Fee          : #{inspect(venue.fee_text)}
+      Phone        : #{inspect(venue.phone || "Not provided")}
+      Website      : #{inspect(venue.website || "Not provided")}
+      Description  : #{inspect(String.slice(venue.description || "", 0..100))}...
+      Hero Image   : #{inspect(venue.hero_image_url || "Not provided")}
+      Source URL   : #{inspect(venue.url)}
     """)
   end
 end

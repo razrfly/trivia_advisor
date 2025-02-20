@@ -22,8 +22,8 @@ defmodule TriviaAdvisor.EventsTest do
     @valid_attrs %{
       name: "some name",
       description: "some description",
-      day_of_week: 42,
       start_time: ~T[14:00:00],
+      day_of_week: 2,
       frequency: :weekly,
       entry_fee_cents: 42,
       venue_id: nil  # Will be set in the test
@@ -32,8 +32,8 @@ defmodule TriviaAdvisor.EventsTest do
     @update_attrs %{
       name: "some updated name",
       description: "some updated description",
-      day_of_week: 43,
       start_time: ~T[15:01:01],
+      day_of_week: 3,
       frequency: :monthly,
       entry_fee_cents: 43
     }
@@ -54,7 +54,7 @@ defmodule TriviaAdvisor.EventsTest do
       assert {:ok, %Event{} = event} = Events.create_event(valid_attrs)
       assert event.description == "some description"
       assert event.name == "some name"
-      assert event.day_of_week == 42
+      assert event.day_of_week == 2
       assert event.start_time == ~T[14:00:00]
       assert event.frequency == :weekly
       assert event.entry_fee_cents == 42
@@ -72,7 +72,7 @@ defmodule TriviaAdvisor.EventsTest do
       assert {:ok, %Event{} = event} = Events.update_event(event, update_attrs)
       assert event.description == "some updated description"
       assert event.name == "some updated name"
-      assert event.day_of_week == 43
+      assert event.day_of_week == 3
       assert event.start_time == ~T[15:01:01]
       assert event.frequency == :monthly  # This should now pass since we're using @update_attrs
       assert event.entry_fee_cents == 43
