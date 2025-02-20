@@ -16,11 +16,24 @@ defmodule TriviaAdvisor.Events.EventStore do
   If day_of_week changes, creates a new event instead of updating.
   """
   def process_event(venue, event_data, source_id) do
+    # Ensure upload directory exists
+    ensure_upload_dir()
+
     # Preload required associations
     venue = Repo.preload(venue, [city: :country])
 
     # Parse frequency from the raw title
     frequency = parse_event_frequency(event_data.raw_title)
+
+    # Download and attach hero image if URL is present
+    hero_image_attrs = case event_data.hero_image_url do
+      url when is_binary(url) and url != "" ->
+        case download_hero_image(url) do
+          {:ok, upload} -> %{hero_image: upload}
+          _ -> %{}
+        end
+      _ -> %{}
+    end
 
     attrs = %{
       name: event_data.raw_title,  # Keep the raw title
@@ -32,6 +45,7 @@ defmodule TriviaAdvisor.Events.EventStore do
       description: event_data.description,
       hero_image_url: event_data.hero_image_url
     }
+    |> Map.merge(hero_image_attrs)  # Merge in hero image if downloaded
 
     Repo.transaction(fn ->
       # First try to find by venue and day
@@ -162,5 +176,37 @@ defmodule TriviaAdvisor.Events.EventStore do
       true ->
         :weekly
     end
+  end
+
+  # Download image to temp file and return path
+  defp download_hero_image(url) do
+    case HTTPoison.get(url, [], follow_redirect: true) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        # Get proper extension from URL
+        extension = url |> Path.extname() |> String.downcase()
+
+        # Create temp file with proper extension
+        temp_path = Path.join(
+          System.tmp_dir!(),
+          "hero_image_#{:crypto.strong_rand_bytes(16) |> Base.encode16}#{extension}"
+        )
+
+        with :ok <- File.write(temp_path, body) do
+          # Create a proper %Plug.Upload{} struct that Waffle expects
+          {:ok, %Plug.Upload{
+            path: temp_path,
+            filename: Path.basename(url),
+            content_type: MIME.from_path(url)
+          }}
+        end
+      _ ->
+        {:error, :download_failed}
+    end
+  end
+
+  # Make sure the directory exists
+  defp ensure_upload_dir do
+    Path.join([Application.app_dir(:trivia_advisor), "priv", "static", "uploads", "events"])
+    |> File.mkdir_p!()
   end
 end
