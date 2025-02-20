@@ -8,8 +8,8 @@ defmodule TriviaAdvisor.Events.EventStore do
   alias TriviaAdvisor.Events.{Event, EventSource}
   require Logger
 
-  # Import the parse functions from Event module
-  import Event, only: [parse_frequency: 1, parse_currency: 2]
+  # Import only the parse_currency function
+  import Event, only: [parse_currency: 2]
 
   @doc """
   Process event data from a scraper, creating or updating the event and its source.
@@ -19,12 +19,15 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Preload required associations
     venue = Repo.preload(venue, [city: :country])
 
+    # Parse frequency from the raw title
+    frequency = parse_event_frequency(event_data.raw_title)
+
     attrs = %{
-      name: event_data.name,
+      name: event_data.raw_title,  # Keep the raw title
       venue_id: venue.id,
       day_of_week: parse_day_of_week(event_data.time_text),
       start_time: parse_time(event_data.time_text),
-      frequency: parse_frequency(event_data.description),
+      frequency: frequency,
       entry_fee_cents: parse_currency(event_data.fee_text, venue),
       description: event_data.description,
       hero_image_url: event_data.hero_image_url
@@ -117,6 +120,26 @@ defmodule TriviaAdvisor.Events.EventStore do
     case Regex.run(~r/\d{2}:\d{2}/, time_text) do
       [time] -> Time.from_iso8601!(time <> ":00")
       nil -> raise "Invalid time format: #{time_text}"
+    end
+  end
+
+  # Parse frequency from event title
+  defp parse_event_frequency(title) do
+    title = String.downcase(title)
+    cond do
+      # Check for explicit monthly patterns with ordinals
+      (String.contains?(title, ["first", "second", "third", "fourth", "last"]) and
+       String.contains?(title, ["of the month", "of every month"])) or
+      String.contains?(title, ["monthly"]) ->
+        :monthly
+
+      # Check for biweekly/fortnightly patterns
+      String.contains?(title, ["every other", "bi-weekly", "biweekly", "fortnightly"]) ->
+        :biweekly
+
+      # Everything else is weekly (default for pub quizzes)
+      true ->
+        :weekly
     end
   end
 end

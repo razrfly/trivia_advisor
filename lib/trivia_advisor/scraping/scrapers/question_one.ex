@@ -153,12 +153,12 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           with {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
             # Then process the event with the venue
             event_data = %{
-              name: "#{venue.name} Trivia Night",
+              raw_title: raw_title,
+              name: venue.name,
               time_text: extracted_data.time_text,
               description: extracted_data.description,
               fee_text: extracted_data.fee_text,
-              hero_image_url: extracted_data.hero_image_url,
-              hero_image: extracted_data.hero_image
+              hero_image_url: extracted_data.hero_image_url
             }
 
             case TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id) do
