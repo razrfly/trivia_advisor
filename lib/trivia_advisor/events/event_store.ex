@@ -196,7 +196,11 @@ defmodule TriviaAdvisor.Events.EventStore do
           {:ok, %Plug.Upload{
             path: temp_path,
             filename: Path.basename(url),
-            content_type: MIME.from_path(url)
+            content_type: case extension do
+              ".webp" -> "image/webp"
+              ".avif" -> "image/avif"
+              _ -> MIME.from_path(url)
+            end
           }}
         end
       _ ->

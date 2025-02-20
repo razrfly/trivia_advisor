@@ -10,12 +10,18 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
   # Whitelist file extensions
   def validate({file, _}) do
     file_extension = file.file_name |> Path.extname() |> String.downcase()
-    ~w(.jpg .jpeg .gif .png) |> Enum.member?(file_extension)
+    ~w(.jpg .jpeg .gif .png .webp .avif) |> Enum.member?(file_extension)
   end
 
   # Define a thumbnail transformation:
-  def transform(:thumb, _) do
-    {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250"}
+  def transform(:thumb, {file, _}) do
+    ext = file.file_name |> Path.extname() |> String.downcase()
+    case ext do
+      e when e in [".webp", ".avif"] ->
+        {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250 -format jpg"}
+      _ ->
+        {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250"}
+    end
   end
 
   # Override the storage directory:
@@ -28,9 +34,14 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     "/images/default-hero.jpg"
   end
 
-  # Generate a unique filename
+  # Generate a unique filename, converting webp/avif to jpg for thumbnails
   def filename(version, {file, _scope}) do
     name = Path.basename(file.file_name, Path.extname(file.file_name))
-    "#{name}_#{version}"
+    ext = Path.extname(file.file_name)
+
+    case version do
+      :thumb -> "#{name}_#{version}.jpg"  # Always use jpg for thumbnails
+      _ -> "#{name}_#{version}#{ext}"     # Keep original extension
+    end
   end
 end
