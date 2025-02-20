@@ -42,8 +42,7 @@ defmodule TriviaAdvisor.Events.EventStore do
       start_time: parse_time(event_data.time_text),
       frequency: frequency,
       entry_fee_cents: parse_currency(event_data.fee_text, venue),
-      description: event_data.description,
-      hero_image_url: event_data.hero_image_url
+      description: event_data.description
     }
     |> Map.merge(hero_image_attrs)  # Merge in hero image if downloaded
 
@@ -138,8 +137,8 @@ defmodule TriviaAdvisor.Events.EventStore do
   end
 
   defp event_changed?(event, attrs) do
-    Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description, :hero_image_url]) !=
-    Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description, :hero_image_url])
+    Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description]) !=
+    Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description])
   end
 
   defp parse_day_of_week("Monday" <> _), do: 1

@@ -12,7 +12,6 @@ defmodule TriviaAdvisor.Events.Event do
     field :frequency, Ecto.Enum, values: [:weekly, :biweekly, :monthly, :irregular]
     field :entry_fee_cents, :integer
     field :description, :string
-    field :hero_image_url, :string
     field :hero_image, TriviaAdvisor.Uploaders.HeroImage.Type
 
     belongs_to :venue, Venue
@@ -25,7 +24,7 @@ defmodule TriviaAdvisor.Events.Event do
   def changeset(event, attrs) do
     event
     |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency,
-                   :entry_fee_cents, :description, :hero_image_url])
+                   :entry_fee_cents, :description])
     |> cast_attachments(attrs, [:hero_image])
     |> validate_required([:venue_id, :day_of_week, :start_time, :frequency])
     |> validate_inclusion(:day_of_week, 1..7)
