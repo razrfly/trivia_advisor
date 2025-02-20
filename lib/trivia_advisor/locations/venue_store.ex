@@ -47,7 +47,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
     case venue do
       %Venue{latitude: lat, longitude: lng} = v when not is_nil(lat) and not is_nil(lng) ->
-        v
+        Repo.preload(v, [city: :country])
       _ -> nil
     end
   end
@@ -263,7 +263,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
         |> Venue.changeset(venue_attrs)
         |> Repo.insert()
         |> case do
-          {:ok, venue} -> {:ok, venue}
+          {:ok, venue} -> {:ok, Repo.preload(venue, [city: :country])}
           {:error, %Ecto.Changeset{errors: [slug: {_, [constraint: :unique]}]} = changeset} ->
             Logger.info("🔄 Venue exists with slug, retrieving: #{venue_attrs.name}")
             # If insert failed due to unique constraint, get existing record

@@ -6,5 +6,8 @@ defmodule TriviaAdvisor.Repo.Migrations.AddHeroImageToEvents do
       add :hero_image_url, :string
       add :hero_image, :string
     end
+
+    # Add an index for faster lookups when filtering by hero_image_url
+    create index(:events, [:hero_image_url])
   end
 end

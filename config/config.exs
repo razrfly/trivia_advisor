@@ -70,3 +70,7 @@ config :waffle,
   storage: Waffle.Storage.Local,
   storage_dir_prefix: "priv/static",
   asset_host: {:system, "ASSET_HOST"}
+
+# Add Waffle Ecto configuration
+config :waffle,
+  ecto_repos: [TriviaAdvisor.Repo]

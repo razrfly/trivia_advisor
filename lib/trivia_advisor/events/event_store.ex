@@ -6,7 +6,6 @@ defmodule TriviaAdvisor.Events.EventStore do
   import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Events.{Event, EventSource}
-  alias TriviaAdvisor.Uploaders.HeroImage
   require Logger
 
   # Import the parse functions from Event module
@@ -14,10 +13,14 @@ defmodule TriviaAdvisor.Events.EventStore do
 
   @doc """
   Process event data from a scraper, creating or updating the event and its source.
+  If day_of_week changes, creates a new event instead of updating.
   """
   def process_event(venue, event_data, source_id) do
-    # Extract required event attributes
+    # Preload required associations
+    venue = Repo.preload(venue, [city: :country])
+
     attrs = %{
+      name: event_data.name,
       venue_id: venue.id,
       day_of_week: parse_day_of_week(event_data.time_text),
       start_time: parse_time(event_data.time_text),
@@ -28,68 +31,77 @@ defmodule TriviaAdvisor.Events.EventStore do
     }
 
     Repo.transaction(fn ->
-      with {:ok, event} <- find_or_create_event(attrs),
-           {:ok, _source} <- find_or_create_event_source(event, source_id) do
+      # First try to find by venue and day
+      existing_event = find_existing_event(attrs.venue_id, attrs.day_of_week)
 
-        if event_data.hero_image do
-          HeroImage.store({event_data.hero_image, event})
-        end
+      case existing_event do
+        nil ->
+          # Create new event if none exists
+          with {:ok, event} <- create_event(attrs),
+               {:ok, _source} <- create_event_source(event, source_id) do
+            {:ok, event}
+          end
 
-        {:ok, event}
-      else
-        {:error, reason} -> Repo.rollback(reason)
+        event ->
+          # Update existing event if fields changed
+          if event_changed?(event, attrs) do
+            with {:ok, updated_event} <- update_event(event, attrs),
+                 {:ok, _source} <- update_event_source(updated_event, source_id) do
+              {:ok, updated_event}
+            end
+          else
+            # Just update the source timestamp if no changes
+            {:ok, _source} = update_event_source(event, source_id)
+            {:ok, event}
+          end
       end
     end)
   end
 
-  defp find_or_create_event(attrs) do
-    # First try to find existing event
-    case Repo.one(
+  defp find_existing_event(venue_id, day_of_week) do
+    Repo.one(
       from e in Event,
-      where: e.venue_id == ^attrs.venue_id and
-             e.day_of_week == ^attrs.day_of_week,
+      where: e.venue_id == ^venue_id and
+             e.day_of_week == ^day_of_week,
       limit: 1
-    ) do
-      nil ->
-        %Event{}
-        |> Event.changeset(attrs)
-        |> Repo.insert()
-
-      event ->
-        # Only update if there are actual changes
-        if event_changed?(event, attrs) do
-          event
-          |> Event.changeset(attrs)
-          |> Repo.update()
-        else
-          {:ok, event}
-        end
-    end
+    )
   end
 
-  defp find_or_create_event_source(event, source_id) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
+  defp create_event(attrs) do
+    %Event{}
+    |> Event.changeset(attrs)
+    |> Repo.insert()
+  end
 
+  defp update_event(event, attrs) do
+    event
+    |> Event.changeset(attrs)
+    |> Repo.update()
+  end
+
+  defp create_event_source(event, source_id) do
+    %EventSource{}
+    |> EventSource.changeset(%{
+      event_id: event.id,
+      source_id: source_id,
+      last_seen_at: DateTime.utc_now()
+    })
+    |> Repo.insert()
+  end
+
+  defp update_event_source(event, source_id) do
     case Repo.get_by(EventSource, event_id: event.id, source_id: source_id) do
-      nil ->
-        %EventSource{}
-        |> EventSource.changeset(%{
-          event_id: event.id,
-          source_id: source_id,
-          last_seen_at: now
-        })
-        |> Repo.insert()
-
+      nil -> create_event_source(event, source_id)
       source ->
         source
-        |> EventSource.changeset(%{last_seen_at: now})
+        |> EventSource.changeset(%{last_seen_at: DateTime.utc_now()})
         |> Repo.update()
     end
   end
 
   defp event_changed?(event, attrs) do
-    Map.take(event, [:day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :hero_image_url]) !=
-    Map.take(attrs, [:day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :hero_image_url])
+    Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description, :hero_image_url]) !=
+    Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description, :hero_image_url])
   end
 
   defp parse_day_of_week("Monday" <> _), do: 1
