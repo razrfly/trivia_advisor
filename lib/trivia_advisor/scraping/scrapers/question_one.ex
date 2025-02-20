@@ -36,12 +36,24 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           venue_count = length(detailed_venues)
           Logger.info("Completed scraping #{venue_count} total venues")
 
+          # Convert venues to simple maps for JSON encoding
+          venue_maps = Enum.map(detailed_venues, fn venue ->
+            %{
+              id: venue.id,
+              name: venue.name,
+              address: venue.address,
+              postcode: venue.postcode,
+              phone: venue.phone,
+              website: venue.website
+            }
+          end)
+
           ScrapeLog.update_log(log, %{
             success: true,
             event_count: venue_count,
             metadata: %{
               total_venues: venue_count,
-              venues: detailed_venues,
+              venues: venue_maps,
               completed_at: DateTime.utc_now()
             }
           })
