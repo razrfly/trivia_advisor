@@ -37,27 +37,21 @@ defmodule TriviaAdvisor.Events.EventStore do
       # First try to find by venue and day
       existing_event = find_existing_event(attrs.venue_id, attrs.day_of_week)
 
-      case existing_event do
-        nil ->
-          # Create new event if none exists
-          with {:ok, event} <- create_event(attrs),
-               {:ok, _source} <- create_event_source(event, source_id) do
-            {:ok, event}
-          end
-
+      # Process the event
+      {:ok, event} = case existing_event do
+        nil -> create_event(attrs)
         event ->
-          # Update existing event if fields changed
           if event_changed?(event, attrs) do
-            with {:ok, updated_event} <- update_event(event, attrs),
-                 {:ok, _source} <- update_event_source(updated_event, source_id) do
-              {:ok, updated_event}
-            end
+            update_event(event, attrs)
           else
-            # Just update the source timestamp if no changes
-            {:ok, _source} = update_event_source(event, source_id)
             {:ok, event}
           end
       end
+
+      # Pass source URL to upsert_event_source
+      {:ok, _source} = upsert_event_source(event.id, source_id, event_data.source_url)
+
+      {:ok, event}
     end)
   end
 
@@ -82,22 +76,26 @@ defmodule TriviaAdvisor.Events.EventStore do
     |> Repo.update()
   end
 
-  defp create_event_source(event, source_id) do
-    %EventSource{}
-    |> EventSource.changeset(%{
-      event_id: event.id,
-      source_id: source_id,
-      last_seen_at: DateTime.utc_now()
-    })
-    |> Repo.insert()
-  end
+  defp upsert_event_source(event_id, source_id, source_url) do
+    now = DateTime.utc_now()
 
-  defp update_event_source(event, source_id) do
-    case Repo.get_by(EventSource, event_id: event.id, source_id: source_id) do
-      nil -> create_event_source(event, source_id)
+    case Repo.get_by(EventSource, event_id: event_id, source_id: source_id) do
+      nil ->
+        %EventSource{}
+        |> EventSource.changeset(%{
+          event_id: event_id,
+          source_id: source_id,
+          source_url: source_url,
+          last_seen_at: now
+        })
+        |> Repo.insert()
+
       source ->
         source
-        |> EventSource.changeset(%{last_seen_at: DateTime.utc_now()})
+        |> EventSource.changeset(%{
+          source_url: source_url,
+          last_seen_at: now
+        })
         |> Repo.update()
     end
   end
