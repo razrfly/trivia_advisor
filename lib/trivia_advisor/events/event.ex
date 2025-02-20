@@ -23,7 +23,7 @@ defmodule TriviaAdvisor.Events.Event do
     event
     |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency,
                    :entry_fee_cents, :description])
-    |> validate_required([:name, :venue_id, :day_of_week, :start_time, :frequency])
+    |> validate_required([:venue_id, :day_of_week, :start_time, :frequency])
     |> validate_inclusion(:day_of_week, 1..7)
     |> foreign_key_constraint(:venue_id)
   end
