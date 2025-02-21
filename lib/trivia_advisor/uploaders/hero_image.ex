@@ -14,19 +14,19 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
   end
 
   # Define a thumbnail transformation:
-  def transform(:thumb, {file, _}) do
-    ext = file.file_name |> Path.extname() |> String.downcase()
-    case ext do
-      e when e in [".webp", ".avif"] ->
-        {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250 -format jpg"}
-      _ ->
-        {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250"}
-    end
+  def transform(:thumb, {_file, _}) do
+    {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250 -format jpg"}
   end
 
-  # Override the storage directory:
+  # Override the storage directory to use venue slug
   def storage_dir(_version, {_file, scope}) do
-    "priv/static/uploads/events/#{scope.id}"
+    venue = case scope.venue do
+      %Ecto.Association.NotLoaded{} ->
+        # Reload venue if not loaded
+        TriviaAdvisor.Repo.preload(scope, :venue).venue
+      loaded -> loaded
+    end
+    "priv/static/uploads/venues/#{venue.slug}"
   end
 
   # Provide a default URL if there hasn't been a file uploaded
@@ -37,11 +37,11 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
   # Generate a unique filename, converting webp/avif to jpg for thumbnails
   def filename(version, {file, _scope}) do
     name = Path.basename(file.file_name, Path.extname(file.file_name))
-    ext = Path.extname(file.file_name)
+   #ext = Path.extname(file.file_name)
 
     case version do
-      :thumb -> "#{name}_#{version}.jpg"  # Always use jpg for thumbnails
-      _ -> "#{name}_#{version}#{ext}"     # Keep original extension
+      :thumb -> "#{name}_#{version}"
+      _ -> "#{name}_#{version}"     # Keep original extension
     end
   end
 end
