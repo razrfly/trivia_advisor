@@ -69,7 +69,8 @@ import_config "#{config_env()}.exs"
 # Waffle configuration
 config :waffle,
   storage: Waffle.Storage.Local,
-  asset_host: "http://localhost:4000"
+  #storage_dir_prefix: "priv/static",
+  asset_host: {:system, "ASSET_HOST"}
 
 # Make sure Waffle knows about our repo
 config :waffle,

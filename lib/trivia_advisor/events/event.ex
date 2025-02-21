@@ -28,17 +28,19 @@ defmodule TriviaAdvisor.Events.Event do
     # Get the new image filename if it exists
     new_image = attrs[:hero_image] && attrs[:hero_image].filename
 
-    # Only include hero_image in cast if it's different
-    fields_to_cast = if current_image != new_image do
-      [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :hero_image]
-    else
-      [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description]
-    end
-
     event
-    |> cast(attrs, fields_to_cast)
+    |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description])
+    |> maybe_cast_hero_image(attrs, current_image, new_image)
     |> validate_required([:name, :venue_id, :day_of_week, :start_time])
     |> foreign_key_constraint(:venue_id)
+  end
+
+  defp maybe_cast_hero_image(changeset, attrs, current_image, new_image) do
+    if current_image != new_image do
+      cast_attachments(changeset, attrs, [:hero_image])
+    else
+      changeset
+    end
   end
 
   @doc """
