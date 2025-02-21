@@ -68,8 +68,13 @@ defmodule TriviaAdvisor.MixProject do
       {:mox, "~> 1.0", only: :test},
       {:money, "~> 1.12"},
       {:decimal, "~> 2.0"},
-      {:waffle, "~> 1.1"},
-      {:waffle_ecto, "~> 0.0.12"}
+      {:waffle, "~> 1.1.7"},
+      {:waffle_ecto, "~> 0.0.12"},
+      {:ex_aws, "~> 2.5"},
+      {:ex_aws_s3, "~> 2.5"},
+      {:sweet_xml, "~> 0.7"},
+      {:mogrify, "~> 0.9.3"},
+      {:mime, "~> 2.0"}
     ]
   end
 

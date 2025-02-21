@@ -66,11 +66,17 @@ config :phoenix, :json_library, Jason
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
 
+# Waffle configuration
 config :waffle,
   storage: Waffle.Storage.Local,
-  storage_dir_prefix: "priv/static",
+  #storage_dir_prefix: "priv/static",
   asset_host: {:system, "ASSET_HOST"}
 
-# Add Waffle Ecto configuration
+# Make sure Waffle knows about our repo
 config :waffle,
   ecto_repos: [TriviaAdvisor.Repo]
+
+# Add ImageMagick config for Mogrify
+config :mogrify,
+  convert_path: "convert",
+  identify_path: "identify"
