@@ -7,6 +7,18 @@
 # General application configuration
 import Config
 
+config :trivia_advisor, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  queues: [default: 10],
+  repo: TriviaAdvisor.Repo,
+  plugins: [
+    {Oban.Plugins.Cron,
+     crontab: [
+       {"0 4 * * *", TriviaAdvisor.Scraping.Jobs.QuestionOneJob} # Run at 4 AM daily
+     ]}
+  ]
+
 config :trivia_advisor,
   ecto_repos: [TriviaAdvisor.Repo],
   generators: [timestamp_type: :utc_datetime],
@@ -69,7 +81,7 @@ import_config "#{config_env()}.exs"
 # Waffle configuration
 config :waffle,
   storage: Waffle.Storage.Local,
-  #storage_dir_prefix: "priv/static",
+  # storage_dir_prefix: "priv/static",
   asset_host: {:system, "ASSET_HOST"}
 
 # Make sure Waffle knows about our repo

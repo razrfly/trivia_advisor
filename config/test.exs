@@ -1,4 +1,5 @@
 import Config
+config :trivia_advisor, Oban, testing: :manual
 
 # Configure your database
 #
@@ -28,7 +29,8 @@ config :swoosh, :api_client, false
 
 # Print only warnings and errors during test
 config :logger,
-  level: :warning,  # Only show warnings and errors
+  # Only show warnings and errors
+  level: :warning,
   handle_otp_reports: false,
   handle_sasl_reports: false
 
