@@ -74,7 +74,9 @@ defmodule TriviaAdvisor.MixProject do
       {:ex_aws_s3, "~> 2.5"},
       {:sweet_xml, "~> 0.7"},
       {:mogrify, "~> 0.9.3"},
-      {:mime, "~> 2.0"}
+      {:mime, "~> 2.0"},
+      {:oban, "~> 2.19"},
+      {:igniter, "~> 0.5", only: [:dev]}
     ]
   end
 

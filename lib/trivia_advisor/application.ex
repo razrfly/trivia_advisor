@@ -11,6 +11,7 @@ defmodule TriviaAdvisor.Application do
       TriviaAdvisorWeb.Telemetry,
       TriviaAdvisor.Repo,
       {DNSCluster, query: Application.get_env(:trivia_advisor, :dns_cluster_query) || :ignore},
+      {Oban, Application.fetch_env!(:trivia_advisor, Oban)},
       {Phoenix.PubSub, name: TriviaAdvisor.PubSub},
       # Start the Finch HTTP client for sending emails
       {Finch, name: TriviaAdvisor.Finch},
