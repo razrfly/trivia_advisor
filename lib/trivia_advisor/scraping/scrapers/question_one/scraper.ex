@@ -6,6 +6,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
   alias TriviaAdvisor.Repo
   require Logger
+  alias TriviaAdvisor.Scraping.Scrapers.QuestionOne.VenueExtractor
 
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
@@ -138,7 +139,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
-             {:ok, extracted_data} <- TriviaAdvisor.Scraping.VenueExtractor.extract_venue_data(document, url, raw_title),
+             {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, url, raw_title),
              true <- String.length(extracted_data.title) > 0 || {:error, :empty_title},
              true <- String.length(extracted_data.address) > 0 || {:error, :empty_address} do
 
