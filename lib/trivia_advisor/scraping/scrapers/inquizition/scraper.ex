@@ -1,6 +1,7 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   require Logger
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser
+  alias TriviaAdvisor.Scraping.Helpers.VenueHelpers
 
   @base_url "https://inquizition.com"
   @find_quiz_url "#{@base_url}/find-a-quiz/"
@@ -117,6 +118,17 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
         _ -> nil
       end
 
+    website =
+      store
+      |> Floki.find("a")
+      |> Enum.find(fn elem ->
+        Floki.text(elem) |> String.trim() == "Website"
+      end)
+      |> case do
+        nil -> nil
+        elem -> elem |> Floki.attribute("href") |> List.first()
+      end
+
     if title != "" do
       # Parse time data
       time_data = case TimeParser.parse_time(time_text) do
@@ -128,29 +140,22 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
 
       venue_data = %{
         raw_title: title,
-        name: title,
+        title: title,
         address: address,
         time_text: time_text,
-        fee_text: "FREE",
+        description: time_text, # Using time text as description since it includes frequency
+        fee_text: "£2.50", # Standard fee for Inquizition
         phone: phone,
+        website: website,
+        hero_image_url: nil,
+        url: "Not provided", # Individual venue URLs not available
         email: email,
         day_of_week: time_data.day_of_week,
         start_time: time_data.start_time,
         frequency: time_data.frequency
       }
 
-      Logger.info("""
-      🏠 Found venue:
-        Name: #{title}
-        Address: #{address}
-        Time: #{time_text}
-        Day: #{format_day(time_data.day_of_week)}
-        Start Time: #{time_data.start_time || "unknown"}
-        Frequency: #{time_data.frequency || "unknown"}
-        Phone: #{phone || "none"}
-        Email: #{email || "none"}
-      """)
-
+      VenueHelpers.log_venue_details(venue_data)
       venue_data
     end
   end
