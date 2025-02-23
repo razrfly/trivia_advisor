@@ -4,20 +4,15 @@ defmodule TriviaAdvisor.Scraping.Helpers.VenueHelpers do
   """
 
   require Logger
+  alias TriviaAdvisor.Scraping.Helpers.TimeParser
 
   @doc """
   Parses day of week from time text into integer (1-7, Monday-Sunday).
   """
   def parse_day_of_week(time_text) do
-    cond do
-      String.contains?(time_text, "Monday") -> 1
-      String.contains?(time_text, "Tuesday") -> 2
-      String.contains?(time_text, "Wednesday") -> 3
-      String.contains?(time_text, "Thursday") -> 4
-      String.contains?(time_text, "Friday") -> 5
-      String.contains?(time_text, "Saturday") -> 6
-      String.contains?(time_text, "Sunday") -> 7
-      true -> raise "Invalid day in time_text: #{time_text}"
+    case TimeParser.parse_day_of_week(time_text) do
+      {:ok, day} -> day
+      {:error, reason} -> raise reason
     end
   end
 
@@ -25,14 +20,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.VenueHelpers do
   Parses time string into Time struct.
   """
   def parse_time(time_text) do
-    case Regex.run(~r/(\d{1,2}[:.]?\d{2})/, time_text) do
-      [_, time] ->
-        time
-        |> String.replace(".", ":")
-        |> String.pad_leading(5, "0")
-        |> then(fn t -> t <> ":00" end)
-        |> Time.from_iso8601!()
-      nil -> raise "Could not parse time from: #{time_text}"
+    case TimeParser.parse_time(time_text) do
+      {:ok, time_str} -> Time.from_iso8601!(time_str <> ":00")
+      {:error, reason} -> raise reason
     end
   end
 
