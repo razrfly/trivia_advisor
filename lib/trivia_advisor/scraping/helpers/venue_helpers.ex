@@ -71,8 +71,18 @@ defmodule TriviaAdvisor.Scraping.Helpers.VenueHelpers do
     social_fields = if Map.has_key?(venue, :facebook), do: social_fields ++ [{"Facebook     ", venue.facebook || "Not provided"}], else: social_fields
     social_fields = if Map.has_key?(venue, :instagram), do: social_fields ++ [{"Instagram    ", venue.instagram || "Not provided"}], else: social_fields
 
+    # Add performer fields if they exist
+    performer_fields = case Map.get(venue, :performer) do
+      %{name: name, profile_image_url: image} ->
+        [
+          {"Performer    ", name},
+          {"Perf. Image ", image || "Not provided"}
+        ]
+      _ -> []
+    end
+
     # Combine all fields and format them
-    (base_fields ++ social_fields)
+    (base_fields ++ social_fields ++ performer_fields)
     |> Enum.map(fn {label, value} -> "  #{label}: #{inspect(value)}" end)
     |> Enum.join("\n")
     |> (fn text -> "📍 Extracted Venue Details:\n" <> text end).()
