@@ -1,6 +1,7 @@
 defmodule TriviaAdvisor.Locations.Venue do
   use Ecto.Schema
   import Ecto.Changeset
+  alias TriviaAdvisor.Repo
 
   schema "venues" do
     field :name, :string
@@ -36,7 +37,38 @@ defmodule TriviaAdvisor.Locations.Venue do
   defp put_slug(changeset) do
     case get_change(changeset, :name) do
       nil -> changeset
-      name -> put_change(changeset, :slug, Slug.slugify(name))
+      name ->
+        # Get city and postcode from changeset if available
+        city_name = get_in(get_change(changeset, :metadata) || %{}, ["city", "name"])
+        postcode = get_change(changeset, :postcode)
+
+        # Try different slug combinations
+        slug = cond do
+          # Try name only
+          !slug_exists?(Slug.slugify(name)) ->
+            Slug.slugify(name)
+
+          # Try name + city
+          city_name && !slug_exists?(Slug.slugify("#{name} #{city_name}")) ->
+            Slug.slugify("#{name} #{city_name}")
+
+          # Try name + city + postcode
+          city_name && postcode && !slug_exists?(Slug.slugify("#{name} #{city_name} #{postcode}")) ->
+            Slug.slugify("#{name} #{city_name} #{postcode}")
+
+          # Fallback: name + timestamp
+          true ->
+            Slug.slugify("#{name} #{System.system_time(:second)}")
+        end
+
+        put_change(changeset, :slug, slug)
+    end
+  end
+
+  defp slug_exists?(slug) do
+    case Repo.get_by(__MODULE__, slug: slug) do
+      nil -> false
+      _ -> true
     end
   end
 
