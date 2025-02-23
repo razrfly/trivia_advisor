@@ -1,6 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   require Logger
-  alias TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser
+  alias TriviaAdvisor.Scraping.Helpers.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.{Events, Repo, Scraping}
 
@@ -187,7 +187,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
 
     if title != "" do
       # Parse time data
-      parsed_time = case TimeParser.parse_time(time_text) do
+      parsed_time = case TimeParser.parse_time_text(time_text) do
         {:ok, data} -> data
         {:error, reason} ->
           Logger.warning("⚠️ Could not parse time: #{reason}")
@@ -227,15 +227,22 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
             start_time: parsed_time.start_time,
             frequency: parsed_time.frequency,
             entry_fee_cents: 250, # Standard £2.50 fee
-            description: time_text,
-            source_id: source.id
+            description: time_text
           }) do
             {:ok, event} ->
               # Use Events.create_event_source/3 to ensure last_seen_at is updated
-              case Events.create_event_source(event, "inquizition", %{
-                "description" => time_text,
-                "time_text" => time_text
-              }) do
+              source_url = "#{@find_quiz_url}##{venue.id}"
+              event_source_attrs = %{
+                event_id: event.id,
+                source_id: source.id,
+                source_url: source_url,
+                metadata: %{
+                  "description" => time_text,
+                  "time_text" => time_text
+                }
+              }
+
+              case Events.create_event_source(event_source_attrs) do
                 {:ok, _event_source} -> [ok: venue]
                 error ->
                   Logger.error("Failed to create event source: #{inspect(error)}")
