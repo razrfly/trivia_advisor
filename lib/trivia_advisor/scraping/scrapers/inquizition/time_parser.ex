@@ -3,6 +3,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser do
   Parses time text from Inquizition format into standardized format.
   """
 
+  @default_time "20:00" # Default to 8pm when we can't parse a specific time
+
   @doc """
   Parses time text like "Tuesdays, 6.30pm" into standardized format.
 
@@ -38,7 +40,18 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser do
         frequency: :weekly
       }}
     else
-      error -> {:error, "Invalid time format: #{time_text} (#{inspect(error)})"}
+      {:error, _} = error when not is_nil(time_text) ->
+        # If we can parse the day but not the time, use default time
+        case parse_day(normalized) do
+          {:ok, day} ->
+            {:ok, %{
+              day_of_week: day,
+              start_time: @default_time,
+              frequency: :weekly
+            }}
+          _ -> error
+        end
+      error -> error
     end
   end
 
