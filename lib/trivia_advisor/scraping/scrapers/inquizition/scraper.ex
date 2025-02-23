@@ -1,6 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   require Logger
-  alias TriviaAdvisor.Scraping.Helpers.TimeParser
+  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.{Events, Repo, Scraping}
 
@@ -147,9 +147,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   defp parse_venue(store) when is_tuple(store) do
     title = store |> Floki.find(".storelocator-storename") |> Floki.text() |> String.trim()
     time_text = store |> Floki.find(".storelocator-description") |> Floki.text() |> String.trim()
-
-    address =
-      store
+    address = store
       |> Floki.find(".storelocator-address")
       |> Floki.text()
       |> String.split("\n")
@@ -157,25 +155,12 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       |> Enum.reject(&(&1 == ""))
       |> Enum.join(", ")
 
-    phone =
-      store
+    phone = store
       |> Floki.find(".storelocator-phone a")
       |> Floki.text()
       |> String.trim()
 
-    # Prefix with underscore since we're not using it yet
-    _email =
-      store
-      |> Floki.find(".storelocator-email a")
-      |> Floki.attribute("href")
-      |> List.first()
-      |> case do
-        "mailto:" <> email_addr -> email_addr
-        _ -> nil
-      end
-
-    website =
-      store
+    website = store
       |> Floki.find("a")
       |> Enum.find(fn elem ->
         Floki.text(elem) |> String.trim() == "Website"
@@ -194,17 +179,29 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
           %{day_of_week: nil, start_time: nil, frequency: nil}
       end
 
-      # Log venue details
-      Logger.info("""
-      🏠 Processing venue: #{title}
-      Address: #{address}
-      Time: #{time_text}
-      Phone: #{phone}
-      Website: #{website}
-      """)
-
-      # Create venue data map
+      # Create venue data map with all extracted info
       venue_data = %{
+        raw_title: title,
+        title: title,
+        address: address,
+        time_text: time_text,
+        day_of_week: parsed_time.day_of_week,
+        start_time: parsed_time.start_time,
+        frequency: parsed_time.frequency,
+        phone: phone,
+        website: website,
+        description: time_text,
+        hero_image: nil,
+        hero_image_url: nil,
+        url: "#{@find_quiz_url}##{title}",
+        fee_text: "£2.50" # Standard fee for all Inquizition quizzes
+      }
+
+      # Log using standard format
+      VenueHelpers.log_venue_details(venue_data)
+
+      # Create simplified venue data for VenueStore
+      store_data = %{
         name: title,
         address: address,
         phone: phone,
@@ -212,7 +209,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       }
 
       # Try to find or create venue
-      case VenueStore.process_venue(venue_data) do
+      case VenueStore.process_venue(store_data) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
 
@@ -230,7 +227,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
             description: time_text
           }) do
             {:ok, event} ->
-              # Use Events.create_event_source/3 to ensure last_seen_at is updated
               source_url = "#{@find_quiz_url}##{venue.id}"
               event_source_attrs = %{
                 event_id: event.id,
