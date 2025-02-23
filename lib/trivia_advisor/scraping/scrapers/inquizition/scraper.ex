@@ -161,13 +161,4 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   end
 
   defp parse_venue(_), do: nil
-
-  defp format_day(nil), do: "unknown"
-  defp format_day(1), do: "Monday"
-  defp format_day(2), do: "Tuesday"
-  defp format_day(3), do: "Wednesday"
-  defp format_day(4), do: "Thursday"
-  defp format_day(5), do: "Friday"
-  defp format_day(6), do: "Saturday"
-  defp format_day(7), do: "Sunday"
 end
