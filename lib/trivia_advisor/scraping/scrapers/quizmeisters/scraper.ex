@@ -18,6 +18,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   def run do
     Logger.info("Starting Quizmeisters scraper")
     source = Repo.get_by!(Source, website_url: @base_url)
+    start_time = DateTime.utc_now()
 
     case ScrapeLog.create_log(source) do
       {:ok, log} ->
@@ -30,7 +31,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
 
               metadata = %{
                 "venues" => venues,
-                "started_at" => DateTime.to_iso8601(log.start_time),
+                "started_at" => DateTime.to_iso8601(start_time),
                 "completed_at" => DateTime.to_iso8601(DateTime.utc_now()),
                 "total_venues" => venue_count,
                 "scraper_version" => @version
@@ -89,22 +90,21 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   end
 
   defp parse_venue(location) do
-    # Extract opening hours from custom fields
-    opening_hours = get_in(location, ["custom_field_data", "opening_hours"]) || ""
-    {day_of_week, start_time} = parse_opening_hours(location)
+    time_text = get_trivia_time(location)
+    {day_of_week, start_time} = parse_opening_hours(time_text)
 
     venue_data = %{
       raw_title: location["name"],
       title: location["name"],
       address: location["address"],
-      time_text: get_trivia_time(location),
+      time_text: time_text,
       day_of_week: day_of_week,
       start_time: start_time,
       frequency: :weekly,
-      fee_text: nil, # Fee will be fetched from individual venue page
+      fee_text: "Free", # All Quizmeisters events are free
       phone: location["phone"],
-      website: location["url"],
-      description: nil, # Description will be fetched from individual venue page
+      website: nil, # Will be fetched from individual venue page
+      description: nil, # Will be fetched from individual venue page
       hero_image: nil,
       hero_image_url: location["image_url"],
       url: location["url"]
@@ -115,23 +115,18 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   end
 
   defp get_trivia_time(location) do
-    # Look for trivia time in custom fields or fields array
-    case get_in(location, ["custom_field_data", "trivia_time"]) do
-      nil ->
-        # Try to find trivia field in the fields array
-        fields = get_in(location, ["fields"]) || []
-        Enum.find_value(fields, "", fn field ->
-          if field["name"] == "Trivia", do: field["value"]
-        end)
-      time -> time
-    end
+    # Find trivia time in fields array
+    fields = location["fields"] || []
+    Enum.find_value(fields, "", fn field ->
+      if field["name"] in ["Trivia", "Survey Says"], do: field["pivot_field_value"]
+    end)
   end
 
-  defp parse_opening_hours(location) do
-    time_text = get_trivia_time(location)
+  defp parse_opening_hours(time_text) when is_binary(time_text) do
     case TimeParser.parse_time_text(time_text) do
       {:ok, %{day_of_week: day, start_time: time}} -> {day, time}
       {:error, _} -> {nil, nil}
     end
   end
+  defp parse_opening_hours(_), do: {nil, nil}
 end
