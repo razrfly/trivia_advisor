@@ -32,16 +32,26 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
         |> Floki.attribute("src")
         |> List.first()
 
-      # Extract website from the icon block
-      website = document
+      # Extract social links from the icon block
+      social_links = document
         |> Floki.find(".icon-block a")
-        |> Enum.find(fn el ->
-          Floki.find(el, "img[alt*='website']") |> Enum.any?()
+        |> Enum.reduce(%{website: nil, facebook: nil, instagram: nil}, fn el, acc ->
+          href = Floki.attribute(el, "href") |> List.first()
+          cond do
+            Floki.find(el, "img[alt*='website']") |> Enum.any?() ->
+              %{acc | website: href}
+            Floki.find(el, "img[alt*='facebook']") |> Enum.any?() ->
+              %{acc | facebook: href}
+            Floki.find(el, "img[alt*='instagram']") |> Enum.any?() ->
+              %{acc | instagram: href}
+            true -> acc
+          end
         end)
-        |> case do
-          nil -> nil
-          el -> Floki.attribute(el, "href") |> List.first()
-        end
+
+      # Extract performer data
+      performer = document
+        |> Floki.find(".host-info")
+        |> extract_performer()
 
       # Extract phone from the venue block
       phone = document
@@ -60,17 +70,40 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
         |> Floki.find(".on-break")
         |> Enum.any?()
 
-      {:ok, %{
+      {:ok, Map.merge(%{
         description: description,
-        website: website,
         hero_image_url: hero_image_url,
         on_break: on_break,
-        phone: phone
-      }}
+        phone: phone,
+        performer: performer
+      }, social_links)}
     rescue
       e ->
         Logger.error("Failed to extract venue data from #{url}: #{Exception.message(e)}")
         {:error, "Failed to extract venue data: #{Exception.message(e)}"}
+    end
+  end
+
+  defp extract_performer(host_info) do
+    case host_info do
+      [] -> nil
+      elements ->
+        # Get the non-placeholder image
+        profile_image_url = elements
+          |> Floki.find("img:not(.placeholder)")
+          |> Floki.attribute("src")
+          |> List.first()
+
+        # Get the host name
+        name = elements
+          |> Floki.find(".host-name")
+          |> Floki.text()
+          |> String.trim()
+
+        if name != "", do: %{
+          name: name,
+          profile_image_url: profile_image_url
+        }, else: nil
     end
   end
 

@@ -117,7 +117,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
       description: nil, # Will be fetched from individual venue page
       hero_image: nil,
       hero_image_url: nil, # Will be fetched from individual venue page
-      url: location["url"]
+      url: location["url"],
+      facebook: nil, # Will be fetched from individual venue page
+      instagram: nil # Will be fetched from individual venue page
     }
 
     VenueHelpers.log_venue_details(venue_data)
@@ -132,8 +134,21 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
         with {:ok, document} <- Floki.parse_document(body),
              {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, venue_data.url, venue_data.raw_title) do
 
+          # Process performer if present
+          performer_id = case extracted_data.performer do
+            nil -> nil
+            performer_data ->
+              case TriviaAdvisor.Events.Performer.find_or_create(Map.put(performer_data, :source_id, source.id)) do
+                {:ok, performer} -> performer.id
+                _ -> nil
+              end
+          end
+
           # Merge the extracted data with the API data
-          merged_data = Map.merge(venue_data, extracted_data)
+          merged_data = venue_data
+          |> Map.merge(extracted_data)
+          |> Map.put(:performer_id, performer_id)
+
           VenueHelpers.log_venue_details(merged_data)
           merged_data
 
