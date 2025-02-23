@@ -1,7 +1,7 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   require Logger
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser
-  alias TriviaAdvisor.Scraping.Helpers.VenueHelpers
+  alias TriviaAdvisor.Locations.VenueStore
 
   @base_url "https://inquizition.com"
   @find_quiz_url "#{@base_url}/find-a-quiz/"
@@ -108,7 +108,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       |> Floki.text()
       |> String.trim()
 
-    email =
+    # Prefix with underscore since we're not using it yet
+    _email =
       store
       |> Floki.find(".storelocator-email a")
       |> Floki.attribute("href")
@@ -130,33 +131,40 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       end
 
     if title != "" do
-      # Parse time data
-      time_data = case TimeParser.parse_time(time_text) do
+      # Parse time data - prefix with underscore since we'll use it later for events
+      _parsed_time = case TimeParser.parse_time(time_text) do
         {:ok, data} -> data
         {:error, reason} ->
           Logger.warning("⚠️ Could not parse time: #{reason}")
           %{day_of_week: nil, start_time: nil, frequency: nil}
       end
 
+      # Log venue details
+      Logger.info("""
+      🏠 Processing venue: #{title}
+      Address: #{address}
+      Time: #{time_text}
+      Phone: #{phone}
+      Website: #{website}
+      """)
+
+      # Create venue data map
       venue_data = %{
-        raw_title: title,
-        title: title,
+        name: title,
         address: address,
-        time_text: time_text,
-        description: time_text, # Using time text as description since it includes frequency
-        fee_text: "£2.50", # Standard fee for Inquizition
         phone: phone,
-        website: website,
-        hero_image_url: nil,
-        url: "Not provided", # Individual venue URLs not available
-        email: email,
-        day_of_week: time_data.day_of_week,
-        start_time: time_data.start_time,
-        frequency: time_data.frequency
+        website: website
       }
 
-      VenueHelpers.log_venue_details(venue_data)
-      venue_data
+      # Try to find or create venue
+      case VenueStore.process_venue(venue_data) do
+        {:ok, venue} ->
+          Logger.info("✅ Successfully processed venue: #{venue.name}")
+          [ok: venue]
+        error ->
+          Logger.error("❌ Failed to process venue: #{inspect(error)}")
+          nil
+      end
     end
   end
 
