@@ -9,6 +9,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   @zyte_api_url "https://api.zyte.com/v1/extract"
   @max_retries 3
   @timeout 60_000
+  @version "1.0.0"  # Add version tracking
 
   def scrape do
     # Load .env file if it exists
@@ -71,15 +72,37 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
             successful_venues = Enum.count(results, &match?([ok: _], &1))
             failed_venues = total_venues - successful_venues
 
-            # Create scrape log
+            # Extract venue details for metadata
+            venue_details = results
+              |> Enum.filter(&match?([ok: _], &1))
+              |> Enum.map(fn [ok: venue] ->
+                %{
+                  "id" => venue.id,
+                  "name" => venue.name,
+                  "phone" => venue.phone,
+                  "address" => venue.address,
+                  "website" => venue.website,
+                  "postcode" => venue.postcode
+                }
+              end)
+
+            end_time = DateTime.utc_now()
+
+            # Create scrape log with enhanced metadata
             Scraping.create_scrape_log(%{
               source_id: source.id,
               start_time: start_time,
-              end_time: DateTime.utc_now(),
+              end_time: end_time,
               total_venues: total_venues,
               successful_venues: successful_venues,
               failed_venues: failed_venues,
+              event_count: successful_venues, # Each venue has one event
               metadata: %{
+                "venues" => venue_details,
+                "started_at" => DateTime.to_iso8601(start_time),
+                "completed_at" => DateTime.to_iso8601(end_time),
+                "total_venues" => total_venues,
+                "scraper_version" => @version,
                 "retries" => retries
               }
             })
@@ -89,6 +112,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
             Total venues: #{total_venues}
             Successfully processed: #{successful_venues}
             Failed to process: #{failed_venues}
+            Scraper version: #{@version}
             """)
 
             results
