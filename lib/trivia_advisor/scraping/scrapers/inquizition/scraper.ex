@@ -2,12 +2,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   require Logger
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
+  alias TriviaAdvisor.{Events, Repo, Scraping}
 
   @base_url "https://inquizition.com"
   @find_quiz_url "#{@base_url}/find-a-quiz/"
   @zyte_api_url "https://api.zyte.com/v1/extract"
   @max_retries 3
   @timeout 60_000
+  @version "1.0.0"  # Add version tracking
 
   def scrape do
     # Load .env file if it exists
@@ -55,12 +57,65 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       {:ok, %{status_code: 200, body: response}} ->
         case Jason.decode(response) do
           {:ok, %{"browserHtml" => html}} ->
-            html
-            |> Floki.parse_document!()
-            |> Floki.find(".storelocator-store")
-            |> Enum.map(&parse_venue/1)
-            |> Enum.reject(&is_nil/1)
-            |> tap(&Logger.info("Found #{length(&1)} venues"))
+            # Get source for logging
+            source = Repo.get_by!(Scraping.Source, name: "inquizition")
+            start_time = DateTime.utc_now()
+
+            results = html
+              |> Floki.parse_document!()
+              |> Floki.find(".storelocator-store")
+              |> Enum.map(&parse_venue/1)
+              |> Enum.reject(&is_nil/1)
+
+            # Calculate statistics
+            total_venues = length(results)
+            successful_venues = Enum.count(results, &match?([ok: _], &1))
+            failed_venues = total_venues - successful_venues
+
+            # Extract venue details for metadata
+            venue_details = results
+              |> Enum.filter(&match?([ok: _], &1))
+              |> Enum.map(fn [ok: venue] ->
+                %{
+                  "id" => venue.id,
+                  "name" => venue.name,
+                  "phone" => venue.phone,
+                  "address" => venue.address,
+                  "website" => venue.website,
+                  "postcode" => venue.postcode
+                }
+              end)
+
+            end_time = DateTime.utc_now()
+
+            # Create scrape log with enhanced metadata
+            Scraping.create_scrape_log(%{
+              source_id: source.id,
+              start_time: start_time,
+              end_time: end_time,
+              total_venues: total_venues,
+              successful_venues: successful_venues,
+              failed_venues: failed_venues,
+              event_count: successful_venues, # Each venue has one event
+              metadata: %{
+                "venues" => venue_details,
+                "started_at" => DateTime.to_iso8601(start_time),
+                "completed_at" => DateTime.to_iso8601(end_time),
+                "total_venues" => total_venues,
+                "scraper_version" => @version,
+                "retries" => retries
+              }
+            })
+
+            Logger.info("""
+            📊 Scrape Summary:
+            Total venues: #{total_venues}
+            Successfully processed: #{successful_venues}
+            Failed to process: #{failed_venues}
+            Scraper version: #{@version}
+            """)
+
+            results
 
           error ->
             Logger.error("Failed to parse Zyte response: #{inspect(error)}")
@@ -131,8 +186,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       end
 
     if title != "" do
-      # Parse time data - prefix with underscore since we'll use it later for events
-      _parsed_time = case TimeParser.parse_time(time_text) do
+      # Parse time data
+      parsed_time = case TimeParser.parse_time(time_text) do
         {:ok, data} -> data
         {:error, reason} ->
           Logger.warning("⚠️ Could not parse time: #{reason}")
@@ -160,7 +215,38 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       case VenueStore.process_venue(venue_data) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
-          [ok: venue]
+
+          # Get source from seeds
+          source = Repo.get_by!(Scraping.Source, name: "inquizition")
+
+          # Create or update event
+          case Events.find_or_create_event(%{
+            name: "Inquizition Quiz at #{venue.name}",
+            venue_id: venue.id,
+            day_of_week: parsed_time.day_of_week,
+            start_time: parsed_time.start_time,
+            frequency: parsed_time.frequency,
+            entry_fee_cents: 250, # Standard £2.50 fee
+            description: time_text,
+            source_id: source.id
+          }) do
+            {:ok, event} ->
+              # Use Events.create_event_source/3 to ensure last_seen_at is updated
+              case Events.create_event_source(event, "inquizition", %{
+                "description" => time_text,
+                "time_text" => time_text
+              }) do
+                {:ok, _event_source} -> [ok: venue]
+                error ->
+                  Logger.error("Failed to create event source: #{inspect(error)}")
+                  nil
+              end
+
+            error ->
+              Logger.error("Failed to create event: #{inspect(error)}")
+              nil
+          end
+
         error ->
           Logger.error("❌ Failed to process venue: #{inspect(error)}")
           nil
