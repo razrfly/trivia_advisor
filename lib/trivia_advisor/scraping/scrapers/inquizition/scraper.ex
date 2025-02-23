@@ -1,5 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   require Logger
+  alias TriviaAdvisor.Scraping.Scrapers.Inquizition.TimeParser
 
   @base_url "https://inquizition.com"
   @find_quiz_url "#{@base_url}/find-a-quiz/"
@@ -117,6 +118,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       end
 
     if title != "" do
+      # Parse time data
+      time_data = case TimeParser.parse_time(time_text) do
+        {:ok, data} -> data
+        {:error, reason} ->
+          Logger.warning("⚠️ Could not parse time: #{reason}")
+          %{day_of_week: nil, start_time: nil, frequency: nil}
+      end
+
       venue_data = %{
         raw_title: title,
         name: title,
@@ -124,16 +133,22 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
         time_text: time_text,
         fee_text: "FREE",
         phone: phone,
-        email: email
+        email: email,
+        day_of_week: time_data.day_of_week,
+        start_time: time_data.start_time,
+        frequency: time_data.frequency
       }
 
       Logger.info("""
-      Found venue:
-        Title: #{title}
-        Time: #{time_text}
+      🏠 Found venue:
+        Name: #{title}
         Address: #{address}
-        Phone: #{phone}
-        Email: #{email}
+        Time: #{time_text}
+        Day: #{format_day(time_data.day_of_week)}
+        Start Time: #{time_data.start_time || "unknown"}
+        Frequency: #{time_data.frequency || "unknown"}
+        Phone: #{phone || "none"}
+        Email: #{email || "none"}
       """)
 
       venue_data
@@ -141,4 +156,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   end
 
   defp parse_venue(_), do: nil
+
+  defp format_day(nil), do: "unknown"
+  defp format_day(1), do: "Monday"
+  defp format_day(2), do: "Tuesday"
+  defp format_day(3), do: "Wednesday"
+  defp format_day(4), do: "Thursday"
+  defp format_day(5), do: "Friday"
+  defp format_day(6), do: "Saturday"
+  defp format_day(7), do: "Sunday"
 end
