@@ -252,12 +252,4 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
       if field["name"] in ["Trivia", "Survey Says"], do: field["pivot_field_value"]
     end)
   end
-
-  defp parse_opening_hours(time_text) when is_binary(time_text) do
-    case TimeParser.parse_time_text(time_text) do
-      {:ok, %{day_of_week: day, start_time: time}} -> {day, time}
-      {:error, _} -> {nil, nil}
-    end
-  end
-  defp parse_opening_hours(_), do: {nil, nil}
 end
