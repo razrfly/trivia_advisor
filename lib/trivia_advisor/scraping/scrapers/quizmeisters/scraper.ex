@@ -187,41 +187,23 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
               final_data = Map.put(merged_data, :venue_id, venue.id)
               VenueHelpers.log_venue_details(final_data)
 
-              # Process the event
+              # Process the event using EventStore like QuestionOne
               event_data = %{
-                name: "Quizmeisters Quiz at #{venue.name}",
-                venue_id: venue.id,
-                day_of_week: final_data.day_of_week,
-                start_time: final_data.start_time,
-                frequency: final_data.frequency,
-                entry_fee_cents: 0, # Assuming free entry
-                description: final_data.description
+                raw_title: final_data.raw_title,
+                name: venue.name,
+                time_text: format_time_text(final_data.day_of_week, final_data.start_time),
+                description: final_data.description,
+                fee_text: "Free", # All Quizmeisters events are free
+                hero_image_url: final_data.hero_image_url,
+                source_url: venue_data.url
               }
 
-              case Events.find_or_create_event(event_data) do
-                {:ok, event} ->
-                  # Create the event source
-                  event_source_attrs = %{
-                    event_id: event.id,
-                    source_id: source.id,
-                    source_url: venue_data.url,
-                    metadata: %{
-                      "description" => final_data.description,
-                      "time_text" => final_data.time_text
-                    }
-                  }
-
-                  case Events.create_event_source(event_source_attrs) do
-                    {:ok, _event_source} ->
-                      Logger.info("✅ Successfully processed event and event source for venue: #{venue.name}")
-                      final_data
-                    error ->
-                      Logger.error("Failed to create event source: #{inspect(error)}")
-                      nil
-                  end
-
-                error ->
-                  Logger.error("Failed to create event: #{inspect(error)}")
+              case TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id) do
+                {:ok, _event} ->
+                  Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+                  final_data
+                {:error, reason} ->
+                  Logger.error("❌ Failed to process event: #{inspect(reason)}")
                   nil
               end
 
@@ -251,5 +233,24 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
     Enum.find_value(fields, "", fn field ->
       if field["name"] in ["Trivia", "Survey Says"], do: field["pivot_field_value"]
     end)
+  end
+
+  defp format_time_text(day_of_week, start_time) do
+    day_name = case day_of_week do
+      1 -> "Monday"
+      2 -> "Tuesday"
+      3 -> "Wednesday"
+      4 -> "Thursday"
+      5 -> "Friday"
+      6 -> "Saturday"
+      7 -> "Sunday"
+    end
+
+    time_str = case start_time do
+      %Time{} = t -> Calendar.strftime(t, "%I:%M%p") |> String.replace("AM", "am") |> String.replace("PM", "pm")
+      t when is_binary(t) -> t
+    end
+
+    "#{day_name} #{time_str}"
   end
 end
