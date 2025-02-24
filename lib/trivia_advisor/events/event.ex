@@ -15,6 +15,7 @@ defmodule TriviaAdvisor.Events.Event do
     field :hero_image, TriviaAdvisor.Uploaders.HeroImage.Type
 
     belongs_to :venue, Venue
+    belongs_to :performer, TriviaAdvisor.Events.Performer
     has_many :event_sources, TriviaAdvisor.Events.EventSource, on_delete: :delete_all
 
     timestamps(type: :utc_datetime)
@@ -29,10 +30,11 @@ defmodule TriviaAdvisor.Events.Event do
     new_image = attrs[:hero_image] && attrs[:hero_image].filename
 
     event
-    |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description])
+    |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :performer_id])
     |> maybe_cast_hero_image(attrs, current_image, new_image)
     |> validate_required([:name, :venue_id, :day_of_week, :start_time])
     |> foreign_key_constraint(:venue_id)
+    |> foreign_key_constraint(:performer_id)
   end
 
   defp maybe_cast_hero_image(changeset, attrs, current_image, new_image) do

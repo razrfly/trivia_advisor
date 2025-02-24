@@ -7,6 +7,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor
   alias TriviaAdvisor.{Locations, Repo}
+  alias TriviaAdvisor.Events.{EventStore, Performer}
   require Logger
 
   @base_url "https://quizmeisters.com"
@@ -186,6 +187,20 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
               final_data = Map.put(merged_data, :venue_id, venue.id)
               VenueHelpers.log_venue_details(final_data)
 
+              # Process performer if present
+              performer_id = case final_data.performer do
+                %{name: name, profile_image: profile_image} when not is_nil(name) ->
+                  case Performer.find_or_create(%{
+                    name: name,
+                    profile_image_url: profile_image,
+                    source_id: source.id
+                  }) do
+                    {:ok, performer} -> performer.id
+                    _ -> nil
+                  end
+                _ -> nil
+              end
+
               # Process the event using EventStore like QuestionOne
               event_data = %{
                 raw_title: final_data.raw_title,
@@ -194,10 +209,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
                 description: final_data.description,
                 fee_text: "Free", # All Quizmeisters events are free
                 hero_image_url: final_data.hero_image_url,
-                source_url: venue_data.url
+                source_url: venue_data.url,
+                performer_id: performer_id
               }
 
-              case TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id) do
+              case EventStore.process_event(venue, event_data, source.id) do
                 {:ok, _event} ->
                   Logger.info("✅ Successfully processed event for venue: #{venue.name}")
                   final_data

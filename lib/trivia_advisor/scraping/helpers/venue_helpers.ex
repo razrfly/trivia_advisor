@@ -48,44 +48,33 @@ defmodule TriviaAdvisor.Scraping.Helpers.VenueHelpers do
   @doc """
   Logs extracted venue details in a consistent format.
   """
-  def log_venue_details(venue) do
-    # Base fields that are always logged
-    base_fields = [
-      {"Title (Raw)   ", venue.raw_title},
-      {"Title (Clean) ", venue.title},
-      {"Address       ", venue.address},
-      {"Time Text     ", venue.time_text},
-      {"Day of Week   ", venue.day_of_week},
-      {"Start Time    ", venue.start_time},
-      {"Frequency     ", venue.frequency},
-      {"Fee          ", venue.fee_text},
-      {"Phone        ", venue.phone || "Not provided"},
-      {"Website      ", venue.website || "Not provided"},
-      {"Description  ", String.slice(venue.description || "", 0..100) <> "..."},
-      {"Hero Image   ", venue.hero_image_url || "Not provided"},
-      {"Source URL   ", venue.url}
-    ]
+  def log_venue_details(venue_data) do
+    Logger.info("""
+    📍 Extracted Venue Details:
+      Title (Raw)   : #{inspect(venue_data.raw_title)}
+      Title (Clean) : #{inspect(venue_data.title)}
+      Address       : #{venue_data.address}
+      Time Text     : #{venue_data.time_text}
+      Day of Week   : #{venue_data.day_of_week}
+      Start Time    : #{venue_data.start_time}
+      Frequency     : #{venue_data.frequency}
+      Fee          : #{venue_data.fee_text}
+      Phone        : #{venue_data.phone}
+      Website      : #{venue_data.website}
+      Description  : #{String.slice(venue_data.description || "", 0..100)}...
+      Hero Image   : #{venue_data.hero_image_url}
+      Source URL   : #{venue_data.url}
+      Facebook     : #{venue_data.facebook}
+      Instagram    : #{venue_data.instagram}#{format_performer(Map.get(venue_data, :performer))}
+    """)
+  end
 
-    # Add social media fields only if they exist in the venue map
-    social_fields = []
-    social_fields = if Map.has_key?(venue, :facebook), do: social_fields ++ [{"Facebook     ", venue.facebook || "Not provided"}], else: social_fields
-    social_fields = if Map.has_key?(venue, :instagram), do: social_fields ++ [{"Instagram    ", venue.instagram || "Not provided"}], else: social_fields
+  defp format_performer(nil), do: ""
+  defp format_performer(performer) do
+    """
 
-    # Add performer fields if they exist
-    performer_fields = case Map.get(venue, :performer) do
-      %{name: name, profile_image_url: image} ->
-        [
-          {"Performer    ", name},
-          {"Perf. Image ", image || "Not provided"}
-        ]
-      _ -> []
-    end
-
-    # Combine all fields and format them
-    (base_fields ++ social_fields ++ performer_fields)
-    |> Enum.map(fn {label, value} -> "  #{label}: #{inspect(value)}" end)
-    |> Enum.join("\n")
-    |> (fn text -> "📍 Extracted Venue Details:\n" <> text end).()
-    |> Logger.info()
+      Performer     : #{performer.name}
+      Profile Image: #{performer.profile_image}
+    """
   end
 end
