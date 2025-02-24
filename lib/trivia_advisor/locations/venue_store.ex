@@ -75,7 +75,9 @@ defmodule TriviaAdvisor.Locations.VenueStore do
                 title: attrs.name,
                 address: attrs.address,
                 phone: attrs[:phone] || location_data["phone"],
-                website: attrs[:website] || location_data["website"]
+                website: attrs[:website] || location_data["website"],
+                facebook: attrs[:facebook],
+                instagram: attrs[:instagram]
               }
 
               find_or_create_venue(venue_data, location_data, city)
@@ -200,6 +202,8 @@ defmodule TriviaAdvisor.Locations.VenueStore do
            city_id: city_id,
            phone: venue_data.phone,
            website: venue_data.website,
+           facebook: venue_data.facebook,
+           instagram: venue_data.instagram,
            postcode: location_data["postal_code"]["code"],
            metadata: extract_metadata(location_data)
          },
