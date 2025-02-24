@@ -1,7 +1,6 @@
 defmodule TriviaAdvisor.Events.Performer do
   use Ecto.Schema
   import Ecto.Changeset
-  alias TriviaAdvisor.Events.Event
   alias TriviaAdvisor.Scraping.Source
 
   schema "performers" do
@@ -9,7 +8,6 @@ defmodule TriviaAdvisor.Events.Performer do
     field :profile_image_url, :string
 
     belongs_to :source, Source
-    has_many :events, Event
 
     timestamps()
   end
