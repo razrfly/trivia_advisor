@@ -23,6 +23,8 @@ defmodule TriviaAdvisor.Locations.Venue do
     timestamps(type: :utc_datetime)
   end
 
+  @url_regex ~r/^https?:\/\/[^\s\/$.?#].[^\s]*$/i
+
   @doc false
   def changeset(venue, attrs) do
     venue
@@ -30,10 +32,26 @@ defmodule TriviaAdvisor.Locations.Venue do
     |> validate_required([:name, :address, :latitude, :longitude, :city_id])
     |> validate_number(:latitude, greater_than_or_equal_to: -90, less_than_or_equal_to: 90)
     |> validate_number(:longitude, greater_than_or_equal_to: -180, less_than_or_equal_to: 180)
+    |> cleanup_url(:website)
+    |> cleanup_url(:facebook)
+    |> cleanup_url(:instagram)
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:place_id)
     |> foreign_key_constraint(:city_id)
+  end
+
+  defp cleanup_url(changeset, field) do
+    case get_change(changeset, field) do
+      nil -> changeset
+      "#" -> put_change(changeset, field, nil)
+      url ->
+        if String.match?(url, @url_regex) do
+          changeset
+        else
+          put_change(changeset, field, nil)
+        end
+    end
   end
 
   defp put_slug(changeset) do
