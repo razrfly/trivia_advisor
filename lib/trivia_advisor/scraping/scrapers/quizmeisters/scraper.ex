@@ -152,7 +152,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
     venue_data
   end
 
-  defp fetch_venue_details(venue_data, source) do
+  defp fetch_venue_details(venue_data, _source) do
     Logger.info("Processing venue: #{venue_data.title}")
 
     case HTTPoison.get(venue_data.url, [], follow_redirect: true) do
@@ -160,16 +160,27 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
         with {:ok, document} <- Floki.parse_document(body),
              {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, venue_data.url, venue_data.raw_title) do
 
-          # Process venue through VenueStore
-          case Locations.VenueStore.process_venue(venue_data) do
-            {:ok, venue} ->
-              # Merge the extracted data with the API data
-              merged_data = venue_data
-              |> Map.merge(extracted_data)
-              |> Map.put(:venue_id, venue.id)
+          # First merge the extracted data with the API data
+          merged_data = Map.merge(venue_data, extracted_data)
 
-              VenueHelpers.log_venue_details(merged_data)
-              merged_data
+          # Then process through VenueStore with social media data
+          venue_store_data = %{
+            name: merged_data.name,
+            address: merged_data.address,
+            phone: merged_data.phone,
+            website: merged_data.website,
+            facebook: merged_data.facebook,
+            instagram: merged_data.instagram,
+            latitude: merged_data.latitude,
+            longitude: merged_data.longitude,
+            postcode: merged_data.postcode
+          }
+
+          case Locations.VenueStore.process_venue(venue_store_data) do
+            {:ok, venue} ->
+              final_data = Map.put(merged_data, :venue_id, venue.id)
+              VenueHelpers.log_venue_details(final_data)
+              final_data
 
             error ->
               Logger.error("Failed to process venue: #{inspect(error)}")
