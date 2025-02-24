@@ -31,6 +31,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
         |> Floki.attribute("src")
         |> List.first()
 
+      # Extract performer info
+      performer = document
+        |> Floki.find(".host-info")
+        |> extract_performer_info()
+
       # Extract social links from the icon block
       social_links = document
         |> Floki.find(".icon-block a")
@@ -68,12 +73,38 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
         description: description,
         hero_image_url: hero_image_url,
         on_break: on_break,
-        phone: phone
+        phone: phone,
+        performer: performer
       }, social_links)}
     rescue
       e ->
         Logger.error("Failed to extract venue data from #{url}: #{Exception.message(e)}")
         {:error, "Failed to extract venue data: #{Exception.message(e)}"}
+    end
+  end
+
+  defp extract_performer_info(host_info) do
+    case host_info do
+      [] -> nil
+      elements ->
+        name = elements
+          |> Floki.find(".host-name")
+          |> Floki.text()
+          |> String.trim()
+
+        profile_image = elements
+          |> Floki.find(".host-image:not(.placeholder)")
+          |> Floki.attribute("src")
+          |> List.first()
+
+        if name != "" or profile_image do
+          %{
+            name: name,
+            profile_image: profile_image
+          }
+        else
+          nil
+        end
     end
   end
 
