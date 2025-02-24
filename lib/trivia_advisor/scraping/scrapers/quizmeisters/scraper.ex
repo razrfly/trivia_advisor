@@ -7,7 +7,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor
   alias TriviaAdvisor.{Locations, Repo}
-  alias TriviaAdvisor.Events
   require Logger
 
   @base_url "https://quizmeisters.com"
