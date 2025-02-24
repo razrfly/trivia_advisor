@@ -6,7 +6,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor
-  alias TriviaAdvisor.{Events, Repo}
+  alias TriviaAdvisor.{Locations, Repo}
   require Logger
 
   @base_url "https://quizmeisters.com"
@@ -18,6 +18,26 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   """
   def run do
     Logger.info("Starting Quizmeisters scraper")
+
+    # Check for .env file and load if present
+    if File.exists?(".env") do
+      DotenvParser.load_file(".env")
+      Logger.info("📝 Loaded .env file")
+    end
+
+    # Verify API key is available
+    case System.get_env("GOOGLE_MAPS_API_KEY") do
+      key when is_binary(key) and byte_size(key) > 0 ->
+        Logger.info("🔑 API key loaded successfully")
+        do_run()
+
+      _ ->
+        Logger.error("❌ GOOGLE_MAPS_API_KEY not found in environment")
+        System.halt(1)
+    end
+  end
+
+  defp do_run do
     source = Repo.get_by!(Source, website_url: @base_url)
     start_time = DateTime.utc_now()
 
@@ -31,6 +51,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
               Logger.info("Found #{venue_count} venues")
 
               detailed_venues = venues
+              |> Enum.map(&parse_venue/1)
+              |> Enum.reject(&is_nil/1)
               |> Enum.map(&fetch_venue_details(&1, source))
               |> Enum.reject(&is_nil/1)
 
@@ -77,8 +99,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         case Jason.decode(body) do
           {:ok, %{"results" => %{"locations" => locations}}} when is_list(locations) ->
-            venues = Enum.map(locations, &parse_venue/1)
-            {:ok, venues}
+            {:ok, locations}
 
           {:error, reason} ->
             Logger.error("Failed to parse JSON response: #{inspect(reason)}")
@@ -103,9 +124,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
     time_text = get_trivia_time(location)
     {day_of_week, start_time} = parse_opening_hours(time_text)
 
+    # Build the full venue data for logging
     venue_data = %{
       raw_title: location["name"],
       title: location["name"],
+      name: location["name"],
       address: location["address"],
       time_text: time_text,
       day_of_week: day_of_week,
@@ -119,7 +142,10 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
       hero_image_url: nil, # Will be fetched from individual venue page
       url: location["url"],
       facebook: nil, # Will be fetched from individual venue page
-      instagram: nil # Will be fetched from individual venue page
+      instagram: nil, # Will be fetched from individual venue page
+      latitude: location["lat"],
+      longitude: location["lng"],
+      postcode: location["postcode"]
     }
 
     VenueHelpers.log_venue_details(venue_data)
@@ -134,24 +160,21 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
         with {:ok, document} <- Floki.parse_document(body),
              {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, venue_data.url, venue_data.raw_title) do
 
-          # Process performer if present
-          performer_id = case extracted_data.performer do
-            nil -> nil
-            performer_data ->
-              case TriviaAdvisor.Events.Performer.find_or_create(Map.put(performer_data, :source_id, source.id)) do
-                {:ok, performer} -> performer.id
-                _ -> nil
-              end
+          # Process venue through VenueStore
+          case Locations.VenueStore.process_venue(venue_data) do
+            {:ok, venue} ->
+              # Merge the extracted data with the API data
+              merged_data = venue_data
+              |> Map.merge(extracted_data)
+              |> Map.put(:venue_id, venue.id)
+
+              VenueHelpers.log_venue_details(merged_data)
+              merged_data
+
+            error ->
+              Logger.error("Failed to process venue: #{inspect(error)}")
+              nil
           end
-
-          # Merge the extracted data with the API data
-          merged_data = venue_data
-          |> Map.merge(extracted_data)
-          |> Map.put(:performer_id, performer_id)
-
-          VenueHelpers.log_venue_details(merged_data)
-          merged_data
-
         else
           {:error, reason} ->
             Logger.error("Failed to extract venue data: #{reason}")

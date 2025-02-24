@@ -3,10 +3,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
   Extracts venue data specifically from Quizmeisters HTML structure.
   """
 
-  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   require Logger
 
-  def extract_venue_data(document, url, raw_title) do
+  def extract_venue_data(document, url, _raw_title) do
     try do
       # Extract description from the venue-specific description first
       description = document
@@ -48,11 +47,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
           end
         end)
 
-      # Extract performer data
-      performer = document
-        |> Floki.find(".host-info")
-        |> extract_performer()
-
       # Extract phone from the venue block
       phone = document
         |> Floki.find(".venue-block .paragraph")
@@ -74,36 +68,12 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
         description: description,
         hero_image_url: hero_image_url,
         on_break: on_break,
-        phone: phone,
-        performer: performer
+        phone: phone
       }, social_links)}
     rescue
       e ->
         Logger.error("Failed to extract venue data from #{url}: #{Exception.message(e)}")
         {:error, "Failed to extract venue data: #{Exception.message(e)}"}
-    end
-  end
-
-  defp extract_performer(host_info) do
-    case host_info do
-      [] -> nil
-      elements ->
-        # Get the non-placeholder image
-        profile_image_url = elements
-          |> Floki.find("img:not(.placeholder)")
-          |> Floki.attribute("src")
-          |> List.first()
-
-        # Get the host name
-        name = elements
-          |> Floki.find(".host-name")
-          |> Floki.text()
-          |> String.trim()
-
-        if name != "", do: %{
-          name: name,
-          profile_image_url: profile_image_url
-        }, else: nil
     end
   end
 
