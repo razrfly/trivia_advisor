@@ -42,7 +42,8 @@ defmodule TriviaAdvisor.Events.EventStore do
       start_time: parse_time(event_data.time_text),
       frequency: frequency,
       entry_fee_cents: parse_currency(event_data.fee_text, venue),
-      description: event_data.description
+      description: event_data.description,
+      performer_id: event_data.performer_id
     }
     |> Map.merge(hero_image_attrs)  # Merge in hero image if downloaded
 
