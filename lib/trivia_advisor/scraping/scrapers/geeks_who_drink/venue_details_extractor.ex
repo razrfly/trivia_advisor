@@ -82,32 +82,19 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
   end
 
   defp extract_start_time(document) do
-    document
-    |> Floki.find(".venueHero__time .time-moment")
+    time_text = document
+    |> Floki.find(".venueHero__time")
     |> Floki.text()
-    |> case do
-      "" ->
-        # Try to get the data-time attribute if text is empty
+    |> String.trim()
+
+    case TriviaAdvisor.Scraping.Helpers.TimeParser.parse_time_text(time_text) do
+      {:ok, %{start_time: start_time}} -> start_time
+      _ ->
+        # Fallback to data-time attribute if parsing fails
         document
         |> Floki.find(".venueHero__time .time-moment")
         |> Floki.attribute("data-time")
         |> List.first()
-      time ->
-        # Convert "7:30 pm" format to 24h time
-        case Regex.run(~r/(\d+):(\d+)\s*(am|pm)/i, time) do
-          [_, hour, min, period] ->
-            hour = String.to_integer(hour)
-            min = String.to_integer(min)
-            hour = case {hour, String.downcase(period)} do
-              {12, "am"} -> 0
-              {12, "pm"} -> 12
-              {h, "am"} -> h
-              {h, "pm"} -> h + 12
-            end
-            {:ok, dt} = DateTime.new(~D[2000-01-01], Time.new!(hour, min, 0))
-            DateTime.to_iso8601(dt)
-          _ -> nil
-        end
     end
   end
 end
