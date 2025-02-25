@@ -1,7 +1,7 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
   require Logger
   alias TriviaAdvisor.Scraping.Helpers.VenueHelpers
-  alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.{NonceExtractor, VenueExtractor}
+  alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.{NonceExtractor, VenueExtractor, VenueDetailsExtractor}
   alias HtmlEntities
 
   @base_url "https://www.geekswhodrink.com/wp-admin/admin-ajax.php"
@@ -81,6 +81,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             _ -> nil
           end
 
+        # Fetch additional details from venue page
+        additional_details =
+          case VenueDetailsExtractor.extract_additional_details(venue_data.source_url) do
+            {:ok, details} -> details
+            _ -> %{}
+          end
+
         venue_data
         |> Map.put(:raw_title, raw_title)
         |> Map.put(:day_of_week, day_of_week || "")
@@ -93,6 +100,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
         |> Map.put(:facebook, nil)
         |> Map.put(:instagram, nil)
         |> Map.put(:hero_image_url, venue_data.logo_url)
+        |> Map.merge(additional_details)
         |> tap(&VenueHelpers.log_venue_details/1)
 
       _ ->
