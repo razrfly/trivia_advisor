@@ -4,6 +4,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.{NonceExtractor, VenueExtractor, VenueDetailsExtractor}
   alias TriviaAdvisor.{Repo, Locations.VenueStore}
   alias TriviaAdvisor.Scraping.{Source, ScrapeLog}
+  alias TriviaAdvisor.Events.EventStore
   alias HtmlEntities
 
   @base_url "https://www.geekswhodrink.com/wp-admin/admin-ajax.php"
@@ -125,8 +126,31 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
       case VenueStore.process_venue(venue_attrs) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
-          # Return both the venue and the original data for event processing
-          {venue, venue_data}
+
+          # Get source for event creation
+          source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
+
+          # Create event data
+          event_data = %{
+            raw_title: "Geeks Who Drink at #{venue.name}",
+            name: venue.name,
+            time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
+            description: venue_data.description,
+            fee_text: venue_data.fee_text || "",  # Use fee_text from venue data if available
+            source_url: venue_data.url,
+            performer_id: nil,  # GWD doesn't provide performer info
+            hero_image_url: nil  # Include this but set to nil to avoid KeyError
+          }
+
+          case EventStore.process_event(venue, event_data, source.id) do
+            {:ok, _event} ->
+              Logger.info("✅ Successfully created event for venue: #{venue.name}")
+              {venue, venue_data}
+            {:error, reason} ->
+              Logger.error("❌ Failed to create event: #{inspect(reason)}")
+              nil
+          end
+
         {:error, reason} ->
           Logger.error("❌ Failed to process venue: #{inspect(reason)}")
           nil
@@ -233,7 +257,31 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
         case VenueStore.process_venue(venue_attrs) do
           {:ok, venue} ->
             Logger.info("✅ Successfully processed venue: #{venue.name}")
-            {venue, venue_data}
+
+            # Get source for event creation
+            source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
+
+            # Create event data
+            event_data = %{
+              raw_title: "Geeks Who Drink at #{venue.name}",
+              name: venue.name,
+              time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
+              description: venue_data.description,
+              fee_text: venue_data.fee_text || "",  # Use fee_text from venue data if available
+              source_url: venue_data.url,
+              performer_id: nil,  # GWD doesn't provide performer info
+              hero_image_url: nil  # Include this but set to nil to avoid KeyError
+            }
+
+            case EventStore.process_event(venue, event_data, source.id) do
+              {:ok, _event} ->
+                Logger.info("✅ Successfully created event for venue: #{venue.name}")
+                {venue, venue_data}
+              {:error, reason} ->
+                Logger.error("❌ Failed to create event: #{inspect(reason)}")
+                nil
+            end
+
           {:error, reason} ->
             Logger.error("❌ Failed to process venue: #{inspect(reason)}")
             nil
