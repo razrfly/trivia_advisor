@@ -36,7 +36,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
 
   defp extract_website(document) do
     document
-    |> Floki.find(".venueHero__address a[target='_blank']")
+    |> Floki.find(".venueHero__address a[href]:not([href*='maps.google.com'])")
     |> Floki.attribute("href")
     |> List.first()
   end
@@ -83,12 +83,31 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
 
   defp extract_start_time(document) do
     document
-    |> Floki.find(".venueHero__time span.time-moment")
-    |> Floki.attribute("data-time")
-    |> List.first()
+    |> Floki.find(".venueHero__time .time-moment")
+    |> Floki.text()
     |> case do
-      nil -> nil
-      time -> time
+      "" ->
+        # Try to get the data-time attribute if text is empty
+        document
+        |> Floki.find(".venueHero__time .time-moment")
+        |> Floki.attribute("data-time")
+        |> List.first()
+      time ->
+        # Convert "7:30 pm" format to 24h time
+        case Regex.run(~r/(\d+):(\d+)\s*(am|pm)/i, time) do
+          [_, hour, min, period] ->
+            hour = String.to_integer(hour)
+            min = String.to_integer(min)
+            hour = case {hour, String.downcase(period)} do
+              {12, "am"} -> 0
+              {12, "pm"} -> 12
+              {h, "am"} -> h
+              {h, "pm"} -> h + 12
+            end
+            {:ok, dt} = DateTime.new(~D[2000-01-01], Time.new!(hour, min, 0))
+            DateTime.to_iso8601(dt)
+          _ -> nil
+        end
     end
   end
 end
