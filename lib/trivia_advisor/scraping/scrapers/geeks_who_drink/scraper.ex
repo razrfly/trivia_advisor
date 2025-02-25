@@ -72,10 +72,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
         raw_title = venue_data.title
         venue_data = Map.update!(venue_data, :title, &HtmlEntities.decode/1)
 
+        # Parse time text for day of week
         day_of_week =
           with time_text when is_binary(time_text) and byte_size(time_text) > 3 <- venue_data.time_text,
-               {:ok, day} <- VenueHelpers.parse_day_of_week(time_text) do
-            day
+               {:ok, parsed} <- TriviaAdvisor.Scraping.Helpers.TimeParser.parse_time_text(time_text) do
+            parsed.day_of_week
           else
             _ -> nil
           end
