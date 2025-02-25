@@ -2,6 +2,8 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
   require Logger
   alias TriviaAdvisor.Scraping.Helpers.VenueHelpers
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.{NonceExtractor, VenueExtractor, VenueDetailsExtractor}
+  alias TriviaAdvisor.{Repo, Locations.VenueStore}
+  alias TriviaAdvisor.Scraping.{Source, ScrapeLog}
   alias HtmlEntities
 
   @base_url "https://www.geekswhodrink.com/wp-admin/admin-ajax.php"
@@ -25,16 +27,118 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
   }
 
   def run do
-    Logger.info("🔍 Fetching GeeksWhoDrink venues...")
+    Logger.info("Starting Geeks Who Drink scraper...")
+    source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
 
-    with {:ok, nonce} <- NonceExtractor.fetch_nonce(),
-         {:ok, venues} <- fetch_venues(nonce) do
-      Logger.info("✅ Found #{length(venues)} venues")
-      {:ok, venues}
-    else
+    case ScrapeLog.create_log(source) do
+      {:ok, log} ->
+        try do
+          Logger.info("🔍 Fetching GeeksWhoDrink venues...")
+
+          with {:ok, nonce} <- NonceExtractor.fetch_nonce(),
+               {:ok, venues} <- fetch_venues(nonce) do
+
+            # Process each venue through VenueStore
+            detailed_venues = venues
+            |> Enum.map(&process_venue/1)
+            |> Enum.reject(&is_nil/1)
+
+            venue_count = length(detailed_venues)
+            Logger.info("✅ Successfully scraped #{venue_count} venues")
+
+            # Convert venues to simple maps for JSON encoding
+            venue_maps = Enum.map(detailed_venues, fn {venue, _} ->
+              %{
+                id: venue.id,
+                name: venue.name,
+                address: venue.address,
+                postcode: venue.postcode,
+                phone: venue.phone,
+                website: venue.website
+              }
+            end)
+
+            ScrapeLog.update_log(log, %{
+              success: true,
+              event_count: venue_count,
+              metadata: %{
+                total_venues: venue_count,
+                venues: venue_maps,
+                completed_at: DateTime.utc_now()
+              }
+            })
+
+            {:ok, detailed_venues}
+          else
+            {:error, reason} ->
+              Logger.error("❌ Failed to fetch venues: #{inspect(reason)}")
+              ScrapeLog.log_error(log, reason)
+              {:error, reason}
+          end
+        rescue
+          e ->
+            Logger.error("❌ Scraper failed: #{Exception.message(e)}")
+            ScrapeLog.log_error(log, e)
+            {:error, e}
+        end
+
       {:error, reason} ->
-        Logger.error("❌ Failed to fetch venues: #{inspect(reason)}")
+        Logger.error("Failed to create scrape log: #{inspect(reason)}")
         {:error, reason}
+    end
+  end
+
+  defp process_venue(venue_data) do
+    try do
+      # Get additional details from venue page
+      additional_details =
+        case VenueDetailsExtractor.extract_additional_details(venue_data.source_url) do
+          {:ok, details} -> details
+          _ -> %{}
+        end
+
+      # Merge venue data with additional details
+      venue_data = Map.merge(venue_data, additional_details)
+      |> tap(&VenueHelpers.log_venue_details/1)
+
+      # Extract clean title
+      clean_title = HtmlEntities.decode(venue_data.title)
+
+      # Prepare data for VenueStore - ensure we have complete address for Google lookup
+      venue_attrs = %{
+        name: clean_title,
+        address: venue_data.address,  # This should be the full address including city and state
+        phone: venue_data.phone,
+        website: venue_data.website,
+        facebook: venue_data.facebook,
+        instagram: venue_data.instagram,
+        hero_image_url: venue_data.hero_image_url
+      }
+
+      Logger.info("""
+      🏢 Processing venue through VenueStore:
+        Name: #{venue_attrs.name}
+        Address: #{venue_attrs.address}
+        Website: #{venue_attrs.website}
+      """)
+
+      case VenueStore.process_venue(venue_attrs) do
+        {:ok, venue} ->
+          Logger.info("✅ Successfully processed venue: #{venue.name}")
+          # Return both the venue and the original data for event processing
+          {venue, venue_data}
+        {:error, reason} ->
+          Logger.error("❌ Failed to process venue: #{inspect(reason)}")
+          nil
+      end
+    rescue
+      e ->
+        Logger.error("""
+        ❌ Failed to process venue
+        Error: #{Exception.message(e)}
+        Venue Data: #{inspect(venue_data)}
+        """)
+        nil
     end
   end
 
@@ -70,7 +174,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
     case VenueExtractor.extract_venue_data(block) do
       {:ok, venue_data} ->
         raw_title = venue_data.title
-        venue_data = Map.update!(venue_data, :title, &HtmlEntities.decode/1)
+        clean_title = HtmlEntities.decode(venue_data.title)
 
         # Parse time text for day of week
         day_of_week =
@@ -81,27 +185,59 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             _ -> nil
           end
 
-        # Fetch additional details from venue page
+        # Get additional details from venue page
         additional_details =
           case VenueDetailsExtractor.extract_additional_details(venue_data.source_url) do
             {:ok, details} -> details
             _ -> %{}
           end
 
-        venue_data
-        |> Map.put(:raw_title, raw_title)
-        |> Map.put(:day_of_week, day_of_week || "")
-        |> Map.put(:start_time, nil)
-        |> Map.put(:frequency, :weekly)
-        |> Map.put(:description, nil)
-        |> Map.put(:phone, nil)
-        |> Map.put(:website, nil)
-        |> Map.put(:fee_text, nil)
-        |> Map.put(:facebook, nil)
-        |> Map.put(:instagram, nil)
-        |> Map.put(:hero_image_url, venue_data.logo_url)
-        |> Map.merge(additional_details)
+        # Build complete venue data
+        venue_data = %{
+          raw_title: raw_title,
+          title: clean_title,
+          address: venue_data.address,
+          time_text: venue_data.time_text,
+          day_of_week: day_of_week || "",
+          start_time: additional_details.start_time,
+          frequency: :weekly,
+          fee_text: additional_details.fee_text,
+          phone: additional_details.phone,
+          website: additional_details.website,
+          description: additional_details.description,
+          hero_image_url: venue_data.logo_url,
+          url: venue_data.source_url,
+          facebook: additional_details.facebook,
+          instagram: additional_details.instagram
+        }
         |> tap(&VenueHelpers.log_venue_details/1)
+
+        # Process through VenueStore
+        venue_attrs = %{
+          name: clean_title,
+          address: venue_data.address,
+          phone: venue_data.phone,
+          website: venue_data.website,
+          facebook: venue_data.facebook,
+          instagram: venue_data.instagram,
+          hero_image_url: venue_data.hero_image_url
+        }
+
+        Logger.info("""
+        🏢 Processing venue through VenueStore:
+          Name: #{venue_attrs.name}
+          Address: #{venue_attrs.address}
+          Website: #{venue_attrs.website}
+        """)
+
+        case VenueStore.process_venue(venue_attrs) do
+          {:ok, venue} ->
+            Logger.info("✅ Successfully processed venue: #{venue.name}")
+            {venue, venue_data}
+          {:error, reason} ->
+            Logger.error("❌ Failed to process venue: #{inspect(reason)}")
+            nil
+        end
 
       _ ->
         Logger.warning("Failed to extract venue info from block")
