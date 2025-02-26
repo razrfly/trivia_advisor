@@ -64,8 +64,8 @@ defmodule TriviaAdvisor.Scraping.Helpers.VenueHelpers do
       Description  : #{String.slice(venue_data.description || "", 0..100)}...
       Hero Image   : #{venue_data.hero_image_url}
       Source URL   : #{venue_data.url}
-      Facebook     : #{venue_data.facebook}
-      Instagram    : #{venue_data.instagram}#{format_performer(Map.get(venue_data, :performer))}
+      Facebook     : #{Map.get(venue_data, :facebook, nil)}
+      Instagram    : #{Map.get(venue_data, :instagram, nil)}#{format_performer(Map.get(venue_data, :performer))}
     """)
   end
 

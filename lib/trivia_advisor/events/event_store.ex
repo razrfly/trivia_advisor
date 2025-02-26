@@ -76,9 +76,9 @@ defmodule TriviaAdvisor.Events.EventStore do
       day_of_week: parse_day_of_week(event_data.time_text),
       start_time: parse_time(event_data.time_text),
       frequency: frequency,
-      entry_fee_cents: parse_currency(event_data.fee_text, venue),
+      entry_fee_cents: parse_currency(event_data.fee_text, venue) || 0,  # Always default to 0 if nil
       description: event_data.description,
-      performer_id: event_data.performer_id
+      performer_id: Map.get(event_data, :performer_id, nil)  # Safely access performer_id with default nil
     }
     |> Map.merge(hero_image_attrs)  # Merge in hero image if downloaded
 

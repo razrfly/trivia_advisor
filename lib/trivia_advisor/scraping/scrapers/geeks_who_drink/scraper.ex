@@ -136,7 +136,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             name: venue.name,
             time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
             description: venue_data.description,
-            fee_text: "Free",  # Set as free since GWD events are typically free
+            fee_text: "Free",  # Explicitly set as free for all GWD events
             source_url: venue_data.url,
             performer_id: nil,  # GWD doesn't provide performer info
             hero_image_url: venue_data.hero_image_url  # Pass through unchanged
@@ -267,7 +267,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
               name: venue.name,
               time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
               description: venue_data.description,
-              fee_text: "Free",
+              fee_text: "Free",  # Explicitly set as free for all GWD events
               source_url: venue_data.url,
               performer_id: nil,
               hero_image_url: venue_data.hero_image_url  # Pass through unchanged
