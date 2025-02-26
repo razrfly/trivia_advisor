@@ -1,6 +1,8 @@
 defmodule TriviaAdvisorWeb.CityLive.Show do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisor.Locations
+  alias TriviaAdvisor.Services.UnsplashService
+  require Logger
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
@@ -198,13 +200,21 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     end
   end
 
-  # Get a city image URL (could be replaced with real images from DB)
+  # Get a city image URL from Unsplash service or use a fallback
   defp get_city_image(name) do
-    case name do
-      "London" -> "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
-      "New York" -> "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
-      "Sydney" -> "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
-      _ -> nil
+    try do
+      # Try to get a cached/fetched image from the Unsplash service
+      UnsplashService.get_city_image(name)
+    rescue
+      # If the service is not yet started or there's any other error, use hardcoded fallbacks
+      e ->
+        Logger.error("Error fetching Unsplash image: #{inspect(e)}")
+        case name do
+          "London" -> "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
+          "New York" -> "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
+          "Sydney" -> "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
+          _ -> "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?q=80&w=2000" # Default urban image
+        end
     end
   end
 

@@ -1,11 +1,14 @@
 defmodule TriviaAdvisorWeb.VenueLive.Show do
   use TriviaAdvisorWeb, :live_view
+  alias TriviaAdvisor.Services.UnsplashService
+  require Logger
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # In a real app, you would fetch venue data from your database
     # For now, we'll use mock data
     venue = get_venue(id)
+    venue = Map.put(venue, :hero_image_url, get_venue_image(venue.name))
 
     {:ok,
       socket
@@ -366,4 +369,31 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   end
 
   defp format_next_date(_), do: "TBA"
+
+  # Get venue image from Unsplash service or fallback to a default
+  defp get_venue_image(venue_name) do
+    try do
+      case UnsplashService.get_venue_image(venue_name) do
+        {:ok, image_url} -> image_url
+        {:error, _reason} -> get_fallback_image(venue_name)
+      end
+    rescue
+      # If service is not started or any other error occurs
+      error ->
+        Logger.error("Failed to get venue image: #{inspect(error)}")
+        get_fallback_image(venue_name)
+    end
+  end
+
+  defp get_fallback_image(venue_name) do
+    # Fallback to hardcoded image URLs
+    cond do
+      String.contains?(venue_name, "Pub Quiz Champion") ->
+        "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
+      String.contains?(venue_name, "Scholar") ->
+        "https://images.unsplash.com/photo-1574096079513-d8259312b785?q=80&w=2000"
+      true ->
+        "https://images.unsplash.com/photo-1572116469696-31de0f17cc34?q=80&w=2000"
+    end
+  end
 end

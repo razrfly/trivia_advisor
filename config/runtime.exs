@@ -21,8 +21,8 @@ if System.get_env("PHX_SERVER") do
   config :trivia_advisor, TriviaAdvisorWeb.Endpoint, server: true
 end
 
-# Check if the .env file exists before loading it
-if File.exists?(".env") do
+# Load environment variables from .env file in dev environment
+if config_env() == :dev do
   DotenvParser.load_file(".env")
 end
 
