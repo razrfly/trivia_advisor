@@ -2,6 +2,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Services.UnsplashService
+  alias TriviaAdvisor.Repo
   require Logger
 
   @impl true
@@ -221,7 +222,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   # Get venues for a city from the database
   defp get_venues_for_city(city_id) do
     try do
+      # Get venues with preloaded events
       venues = Locations.list_venues_by_city_id(city_id)
+               |> Repo.preload(events: [:performer])
 
       # Format the venue data for display
       Enum.map(venues, fn venue ->
@@ -233,8 +236,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           start_time: get_venue_start_time(venue),
           entry_fee: get_venue_entry_fee(venue),
           description: get_venue_description(venue),
-          hero_image_url: get_venue_image(venue.name),
-          rating: get_venue_rating(venue)
+          hero_image_url: get_venue_image(venue),
+          rating: get_venue_rating(venue),
+          events: venue.events  # Add events to the map for potential use in the UI
         }
       end)
     rescue
@@ -279,10 +283,44 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   end
 
   # Get a venue image URL
-  defp get_venue_image(name) do
-    # For now, use placeholder images
-    # In the future, this can connect to an image service or use venue-specific images
-    "https://placehold.co/600x400?text=#{URI.encode(name)}"
+  defp get_venue_image(venue) do
+    # First try to get an image from the venue's events (most events should have hero images)
+    event_image = if Enum.any?(venue.events) do
+      # Find first event with a hero image
+      venue.events
+      |> Enum.find_value(fn event ->
+        if event.hero_image && event.hero_image.file_name do
+          image_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+          # Remove the /priv/static prefix if it exists
+          String.replace(image_url, ~r{^/priv/static}, "")
+        end
+      end)
+    end
+
+    # Check for hero_image_url in metadata
+    metadata_image = venue.metadata["hero_image_url"] ||
+                     venue.metadata["hero_image"] ||
+                     venue.metadata["image_url"] ||
+                     venue.metadata["image"]
+
+    # Check if venue has a field for hero_image directly
+    venue_image = Map.get(venue, :hero_image_url) ||
+                  Map.get(venue, :hero_image) ||
+                  Map.get(venue, :image_url) ||
+                  Map.get(venue, :image)
+
+    # Use the first available image or fall back to placeholder
+    cond do
+      is_binary(event_image) && String.trim(event_image) != "" ->
+        event_image
+      is_binary(metadata_image) && String.trim(metadata_image) != "" ->
+        metadata_image
+      is_binary(venue_image) && String.trim(venue_image) != "" ->
+        venue_image
+      true ->
+        # Fallback to placeholder
+        "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
+    end
   end
 
   # Extract rating from venue
