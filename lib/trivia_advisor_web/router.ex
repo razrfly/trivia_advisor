@@ -18,7 +18,7 @@ defmodule TriviaAdvisorWeb.Router do
     pipe_through :browser
 
     live "/", HomeLive.Index, :index
-    live "/cities/:id", CityLive.Show, :show
+    live "/cities/:slug", CityLive.Show, :show
     live "/venues/:id", VenueLive.Show, :show
   end
 

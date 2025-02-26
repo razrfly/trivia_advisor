@@ -93,8 +93,16 @@ defmodule TriviaAdvisorWeb.Components.UI.CitySearch do
   def handle_event("select-city", %{"id" => id, "name" => name}, socket) do
     IO.inspect({id, name}, label: "SELECTED CITY")
 
+    # Get the selected city from results to include all data (including slug)
+    selected_city = Enum.find(socket.assigns.results, fn city ->
+      city.id == id && city.name == name
+    end)
+
+    # Fallback to basic data if not found in results
+    city_data = selected_city || %{id: id, name: name, slug: String.downcase(name) |> String.replace(~r/[^a-z0-9]+/, "-")}
+
     # Send the selected city to the parent
-    send(self(), {:city_selected, %{id: id, name: name}})
+    send(self(), {:city_selected, city_data})
 
     {:noreply,
       socket
@@ -112,7 +120,8 @@ defmodule TriviaAdvisorWeb.Components.UI.CitySearch do
       select: %{
         id: c.id,
         name: c.name,
-        country_name: co.name
+        country_name: co.name,
+        slug: c.slug
       },
       order_by: [asc: c.name],
       limit: 5

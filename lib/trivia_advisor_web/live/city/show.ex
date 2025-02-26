@@ -1,23 +1,38 @@
 defmodule TriviaAdvisorWeb.CityLive.Show do
   use TriviaAdvisorWeb, :live_view
+  alias TriviaAdvisor.Locations
 
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
-    # In a real app, you would fetch city and venue data from your database
-    # For now, we'll use mock data
-    {:ok,
-      socket
-      |> assign(:page_title, "City Details")
-      |> assign(:city, get_city(id))
-      |> assign(:venues, get_venues_for_city(id))}
+  def mount(%{"slug" => slug}, _session, socket) do
+    # Fetch the city by slug
+    case get_city_data(slug) do
+      {:ok, city_data} ->
+        {:ok,
+         socket
+         |> assign(:page_title, "#{city_data.name} - Trivia Venues")
+         |> assign(:city, city_data)
+         |> assign(:venues, get_venues_for_city(city_data.id))}
+
+      {:error, _} ->
+        {:ok,
+         socket
+         |> assign(:page_title, "City Not Found")
+         |> assign(:city, %{
+           id: nil,
+           name: "Unknown City",
+           country_name: "Unknown Country",
+           venue_count: 0,
+           image_url: nil
+         })
+         |> assign(:venues, [])}
+    end
   end
 
   @impl true
-  def handle_params(%{"id" => id}, _, socket) do
+  def handle_params(%{"slug" => slug}, _, socket) do
     {:noreply,
      socket
-     |> assign(:page_title, "#{socket.assigns.city.name} - Trivia Venues")
-     |> assign(:id, id)}
+     |> assign(:slug, slug)}
   end
 
   @impl true
@@ -42,69 +57,66 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         </div>
       </div>
 
-      <div class="mx-auto max-w-7xl px-4 py-8">
-        <div class="mb-8">
-          <h2 class="text-2xl font-bold text-gray-900">Trivia Venues in <%= @city.name %></h2>
-          <p class="mt-2 text-gray-600">Discover the best pub quizzes and trivia nights in <%= @city.name %>.</p>
-        </div>
+      <!-- Main Content -->
+      <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+        <!-- Venues Section -->
+        <div>
+          <h2 class="mb-6 text-2xl font-bold text-gray-900">Trivia Venues in <%= @city.name %></h2>
+          <p class="mb-8 text-lg text-gray-600">Discover the best pub quizzes and trivia nights in <%= @city.name %>.</p>
 
-        <!-- Venue List -->
-        <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          <%= for venue <- @venues do %>
-            <div class="flex flex-col overflow-hidden rounded-lg border bg-white shadow">
-              <div class="relative h-48 overflow-hidden">
-                <img
-                  src={venue.hero_image_url || "https://placehold.co/600x400?text=#{venue.name}"}
-                  alt={venue.name}
-                  class="h-full w-full object-cover"
-                />
-
-                <!-- Entry fee badge -->
-                <%= if venue.entry_fee_cents do %>
-                  <div class="absolute right-2 top-2 rounded-full bg-indigo-600 px-2 py-1 text-xs font-medium text-white">
-                    $<%= :erlang.float_to_binary(venue.entry_fee_cents / 100, [decimals: 2]) %>
+          <%= if length(@venues) > 0 do %>
+            <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              <%= for venue <- @venues do %>
+                <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition hover:shadow">
+                  <div class="relative h-48">
+                    <img
+                      src={venue.hero_image_url || "https://placehold.co/600x400?text=#{venue.name}"}
+                      alt={venue.name}
+                      class="h-full w-full object-cover"
+                    />
+                    <div class="absolute right-2 top-2 rounded bg-white p-1 text-yellow-400">
+                      <%= if venue.rating do %>
+                        <div class="flex items-center">
+                          <span class="mr-1 text-sm font-bold"><%= venue.rating %></span>
+                          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118l-2.8-2.034c-.783-.57-.38-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z" />
+                          </svg>
+                        </div>
+                      <% else %>
+                        <div class="flex items-center">
+                          <span class="mr-1 text-sm font-medium text-gray-600">New</span>
+                        </div>
+                      <% end %>
+                    </div>
                   </div>
-                <% else %>
-                  <div class="absolute right-2 top-2 rounded-full bg-green-600 px-2 py-1 text-xs font-medium text-white">
-                    Free
-                  </div>
-                <% end %>
-              </div>
-
-              <div class="flex flex-1 flex-col p-4">
-                <h3 class="mb-1 text-lg font-semibold text-gray-900">
-                  <a href={~p"/venues/#{venue.id}"} class="hover:text-indigo-600"><%= venue.name %></a>
-                </h3>
-
-                <div class="mb-2 flex items-center text-sm text-gray-600">
-                  <svg class="mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                    <path fill-rule="evenodd" d="M9.69 18.933l.003.001C9.89 19.02 10 19 10 19s.11.02.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.018.008.006.003zM10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" clip-rule="evenodd" />
-                  </svg>
-                  <span><%= venue.address %></span>
-                </div>
-
-                <p class="mb-4 flex-1 text-sm text-gray-600 line-clamp-3">
-                  <%= venue.description %>
-                </p>
-
-                <div class="mt-auto flex items-center justify-between">
-                  <div class="flex">
-                    <%= for i <- 1..5 do %>
-                      <svg
-                        class={"h-4 w-4 #{if i <= (venue.rating || 0), do: "text-yellow-400", else: "text-gray-300"}"}
-                        xmlns="http://www.w3.org/2000/svg"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                  <div class="p-4">
+                    <h3 class="mb-1 text-lg font-bold text-gray-900"><%= venue.name %></h3>
+                    <p class="mb-2 text-sm text-gray-600"><%= venue.address %></p>
+                    <div class="mb-3 flex items-center text-sm text-gray-600">
+                      <span class="font-medium text-indigo-600"><%= format_day(venue.day_of_week) %>s</span>
+                      <span class="mx-2">•</span>
+                      <span><%= venue.start_time %></span>
+                      <span class="mx-2">•</span>
+                      <span><%= venue.entry_fee %></span>
+                    </div>
+                    <p class="mb-4 text-sm text-gray-600 line-clamp-3"><%= venue.description %></p>
+                    <a
+                      href={~p"/venues/#{venue.id}"}
+                      class="mt-2 inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                    >
+                      View details
+                      <svg class="ml-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd" />
                       </svg>
-                    <% end %>
+                    </a>
                   </div>
-                  <span class="text-sm text-gray-600">
-                    <%= format_day(venue.day_of_week) %> at <%= venue.start_time %>
-                  </span>
                 </div>
-              </div>
+              <% end %>
+            </div>
+          <% else %>
+            <div class="rounded-lg border border-gray-200 bg-white p-8 text-center">
+              <h3 class="mb-2 text-lg font-semibold text-gray-900">No venues found</h3>
+              <p class="text-gray-600">We couldn't find any trivia venues in <%= @city.name %>.</p>
             </div>
           <% end %>
         </div>
@@ -113,121 +125,131 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     """
   end
 
-  # Mock data functions for demonstration
-  defp get_city(id) do
-    # This would normally come from your database
-    case id do
-      "1" -> %{
+  # Get city data using either the database or mock data
+  defp get_city_data(slug) do
+    # Try to get the city from the database first
+    case Locations.get_city_by_slug(slug) do
+      %{} = city ->
+        # If found, format the data for display
+        {:ok, %{
+          id: city.id,
+          name: city.name,
+          slug: city.slug,
+          country_name: city.country.name,
+          venue_count: get_venue_count_for_city(city.id),
+          image_url: get_city_image(city.name)
+        }}
+
+      nil ->
+        # If not found in database, try mock data
+        case get_mock_city_by_slug(slug) do
+          nil -> {:error, :not_found}
+          city_data -> {:ok, city_data}
+        end
+    end
+  end
+
+  # Get mock city data by slug (for development only)
+  defp get_mock_city_by_slug(slug) do
+    mock_cities = [
+      %{
         id: "1",
         name: "London",
+        slug: "london",
         country_name: "United Kingdom",
         venue_count: 120,
         image_url: "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
-      }
-      "2" -> %{
+      },
+      %{
         id: "2",
         name: "New York",
+        slug: "new-york",
         country_name: "United States",
         venue_count: 87,
         image_url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
-      }
-      "3" -> %{
+      },
+      %{
         id: "3",
         name: "Sydney",
+        slug: "sydney",
         country_name: "Australia",
         venue_count: 45,
         image_url: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
       }
-      _ -> %{
-        id: id,
-        name: "Unknown City",
-        country_name: "Unknown Country",
-        venue_count: 0,
-        image_url: nil
-      }
-    end
+    ]
+
+    Enum.find(mock_cities, fn city -> city.slug == slug end)
   end
 
-  defp get_venues_for_city(city_id) do
-    # This would normally come from your database
+  # Count venues for a city (replace with real DB query)
+  defp get_venue_count_for_city(city_id) do
+    # Replace this with a real database count query in production
     case city_id do
-      "1" -> [
-        %{
-          id: "1",
-          name: "The Pub Quiz Champion",
-          address: "123 Main St, London",
-          day_of_week: 4, # Thursday
-          start_time: "7:30 PM",
-          entry_fee_cents: 500,
-          description: "Join us every Thursday for our legendary pub quiz. Six rounds of trivia, picture rounds, and music. Great prizes and a fun atmosphere!",
-          hero_image_url: "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000",
-          rating: 4.5
-        },
-        %{
-          id: "5",
-          name: "The Crown Trivia",
-          address: "22 Queen's Road, London",
-          day_of_week: 2, # Tuesday
-          start_time: "8:00 PM",
-          entry_fee_cents: 300,
-          description: "A lively pub quiz with a focus on pop culture, sports, and general knowledge. Cash prizes and fun guaranteed!",
-          hero_image_url: "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?q=80&w=2000",
-          rating: 4.0
-        },
-        %{
-          id: "6",
-          name: "Quiz & Pint",
-          address: "54 Camden High Street, London",
-          day_of_week: 3, # Wednesday
-          start_time: "7:00 PM",
-          entry_fee_cents: nil,
-          description: "Free entry quiz with 5 rounds of challenging questions. Special drink deals for all participants!",
-          hero_image_url: "https://images.unsplash.com/photo-1600431521340-491eca880813?q=80&w=2000",
-          rating: 4.3
-        }
-      ]
-      "2" -> [
-        %{
-          id: "7",
-          name: "NYC Trivia Kings",
-          address: "420 Broadway, New York",
-          day_of_week: 2, # Tuesday
-          start_time: "8:00 PM",
-          entry_fee_cents: 400,
-          description: "New York's favorite trivia night with NYC-themed questions and regular challenges.",
-          hero_image_url: "https://images.unsplash.com/photo-1574096079513-d8259312b785?q=80&w=2000",
-          rating: 4.7
-        },
-        %{
-          id: "8",
-          name: "Brooklyn Quiz Co.",
-          address: "67 Williamsburg Ave, New York",
-          day_of_week: 4, # Thursday
-          start_time: "7:30 PM",
-          entry_fee_cents: 500,
-          description: "Hipster trivia with craft beer pairings and local Brooklyn-themed questions.",
-          hero_image_url: "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000",
-          rating: 4.2
-        }
-      ]
-      "3" -> [
-        %{
-          id: "9",
-          name: "Aussie Trivia Masters",
-          address: "32 Bondi Road, Sydney",
-          day_of_week: 3, # Wednesday
-          start_time: "7:00 PM",
-          entry_fee_cents: 1000,
-          description: "The ultimate Australian trivia experience with questions about local culture, sports, and history.",
-          hero_image_url: "https://images.unsplash.com/photo-1600431521340-491eca880813?q=80&w=2000",
-          rating: 4.6
-        }
-      ]
-      _ -> []
+      "1" -> 120
+      "2" -> 87
+      "3" -> 45
+      _ ->
+        # If we have real data, try to count real venues
+        try do
+          Locations.count_venues_by_city_id(city_id)
+        rescue
+          _ -> 0
+        end
     end
   end
 
-  defp format_day(day) when is_integer(day) do
+  # Get a city image URL (could be replaced with real images from DB)
+  defp get_city_image(name) do
+    case name do
+      "London" -> "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
+      "New York" -> "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
+      "Sydney" -> "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
+      _ -> nil
+    end
+  end
+
+  # Get venues for a city (currently using mock data)
+  defp get_venues_for_city(_city_id) do
+    # This would normally come from your database
+    # For now, we'll use mock data
+    [
+      %{
+        id: "1",
+        name: "The Crown & Anchor",
+        address: "123 Main St, London",
+        day_of_week: 2,
+        start_time: "8:00 PM",
+        entry_fee: "£2",
+        description: "A traditional pub quiz with a mix of general knowledge, music, and picture rounds. Prizes include bar tabs and merchandise.",
+        hero_image_url: "https://images.unsplash.com/photo-1546726747-421c6d69c929?q=80&w=600",
+        rating: 4.7
+      },
+      %{
+        id: "2",
+        name: "The Shakespeare",
+        address: "456 High St, London",
+        day_of_week: 3,
+        start_time: "7:30 PM",
+        entry_fee: "Free",
+        description: "Our Wednesday night quiz is popular with locals and visitors alike. Five rounds of trivia with bonus rounds throughout.",
+        hero_image_url: "https://images.unsplash.com/photo-1572116469696-31de0f17cc34?q=80&w=600",
+        rating: 4.5
+      },
+      %{
+        id: "3",
+        name: "The Red Lion",
+        address: "789 Park Ln, London",
+        day_of_week: 4,
+        start_time: "8:30 PM",
+        entry_fee: "£3",
+        description: "A challenging quiz night featuring specialized rounds each week. Teams of up to 6 people allowed.",
+        hero_image_url: "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?q=80&w=600",
+        rating: 4.8
+      }
+    ]
+  end
+
+  defp format_day(day) do
     case day do
       1 -> "Monday"
       2 -> "Tuesday"
@@ -239,6 +261,4 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       _ -> "Unknown"
     end
   end
-
-  defp format_day(_), do: "TBA"
 end

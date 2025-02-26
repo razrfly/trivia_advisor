@@ -134,6 +134,42 @@ defmodule TriviaAdvisor.Locations do
   def get_city!(id), do: Repo.get!(City, id)
 
   @doc """
+  Gets a single city by slug.
+
+  Returns nil if no city exists with the given slug.
+
+  ## Examples
+
+      iex> get_city_by_slug("london")
+      %City{}
+
+      iex> get_city_by_slug("nonexistent-city")
+      nil
+
+  """
+  def get_city_by_slug(slug) when is_binary(slug) do
+    Repo.get_by(City, slug: slug)
+    |> Repo.preload(:country)
+  end
+
+  @doc """
+  Counts the number of venues for a specific city.
+
+  ## Examples
+
+      iex> count_venues_by_city_id(123)
+      5
+
+  """
+  def count_venues_by_city_id(city_id) do
+    query = from v in TriviaAdvisor.Locations.Venue,
+            where: v.city_id == ^city_id,
+            select: count(v.id)
+
+    Repo.one(query) || 0
+  end
+
+  @doc """
   Creates a city.
 
   ## Examples

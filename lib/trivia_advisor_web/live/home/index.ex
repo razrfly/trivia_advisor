@@ -27,11 +27,14 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
   @impl true
   def handle_info({:city_selected, city}, socket) do
     # In a real app, you would redirect to the city page
-    # For now, we'll just print the selected city
     IO.inspect(city, label: "Selected city")
 
-    # Redirect to city page
-    {:noreply, push_navigate(socket, to: ~p"/cities/#{city.id}")}
+    # Redirect to city page using slug
+    # If city has a slug field, use it; otherwise generate a slug from the name
+    city_slug = Map.get(city, :slug) ||
+                String.downcase(city.name) |> String.replace(~r/[^a-z0-9]+/, "-")
+
+    {:noreply, push_navigate(socket, to: ~p"/cities/#{city_slug}")}
   end
 
   @impl true
@@ -315,21 +318,24 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
         name: "London",
         country_name: "United Kingdom",
         venue_count: 120,
-        image_url: "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
+        image_url: "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000",
+        slug: "london"
       },
       %{
         id: "2",
         name: "New York",
         country_name: "United States",
         venue_count: 87,
-        image_url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
+        image_url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000",
+        slug: "new-york"
       },
       %{
         id: "3",
         name: "Sydney",
         country_name: "Australia",
         venue_count: 45,
-        image_url: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
+        image_url: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000",
+        slug: "sydney"
       }
     ]
   end

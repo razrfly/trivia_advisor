@@ -18,7 +18,7 @@ defmodule TriviaAdvisorWeb.Components.UI.CityCard do
           <span class="text-sm"><%= @city.country_name %></span>
         </div>
         <a
-          href={~p"/cities/#{@city.id}"}
+          href={~p"/cities/#{@city.slug || String.downcase(@city.name) |> String.replace(~r/[^a-z0-9]+/, "-")}"}
           class="mt-2 inline-flex items-center text-sm font-medium text-white hover:underline"
         >
           Explore venues
