@@ -17,8 +17,10 @@ defmodule TriviaAdvisor.Application do
       {Finch, name: TriviaAdvisor.Finch},
       # Start the Unsplash service for image caching
       {TriviaAdvisor.Services.UnsplashService, []},
-      # Start a worker by calling: TriviaAdvisor.Worker.start_link(arg)
-      # {TriviaAdvisor.Worker, arg},
+      # Start Google Places service for venue image fetching
+      {TriviaAdvisor.Services.GooglePlacesService, []},
+      # Start the Google Place Image Store service
+      {TriviaAdvisor.Services.GooglePlaceImageStore, []},
       # Start to serve requests, typically the last entry
       TriviaAdvisorWeb.Endpoint
     ]

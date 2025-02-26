@@ -309,18 +309,29 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                   Map.get(venue, :image_url) ||
                   Map.get(venue, :image)
 
-    # Use the first available image or fall back to placeholder
-    cond do
-      is_binary(event_image) && String.trim(event_image) != "" ->
-        event_image
-      is_binary(metadata_image) && String.trim(metadata_image) != "" ->
-        metadata_image
-      is_binary(venue_image) && String.trim(venue_image) != "" ->
-        venue_image
-      true ->
-        # Fallback to placeholder
-        "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
+    # Check for stored Google Place images
+    google_place_image = if Enum.any?(venue.google_place_images) do
+      TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
+    else
+      # Try to get image from Google Places API if venue has a place_id
+      if venue.place_id && venue.place_id != "" do
+        # Try to fetch and store the Google Place images
+        try do
+          case TriviaAdvisor.Services.GooglePlaceImageStore.process_venue_images(venue) do
+            {:ok, updated_venue} ->
+              TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(updated_venue)
+            _ ->
+              # Fallback to direct API call if processing fails
+              TriviaAdvisor.Services.GooglePlacesService.get_venue_image(venue.id)
+          end
+        rescue
+          _ -> nil
+        end
+      end
     end
+
+    # Use the first available image or fall back to placeholder
+    event_image || google_place_image || metadata_image || venue_image || "/images/default-venue.jpg"
   end
 
   # Extract rating from venue

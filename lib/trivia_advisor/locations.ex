@@ -521,4 +521,23 @@ defmodule TriviaAdvisor.Locations do
     |> preload(:city)
     |> Repo.all()
   end
+
+  @doc """
+  Loads all important relationships for a venue.
+
+  ## Examples
+
+      iex> load_venue_relations(venue)
+      %Venue{...}
+
+  """
+  def load_venue_relations(venue) do
+    Repo.preload(venue, [
+      :city,
+      events: [
+        :performer,
+        :event_sources
+      ]
+    ])
+  end
 end

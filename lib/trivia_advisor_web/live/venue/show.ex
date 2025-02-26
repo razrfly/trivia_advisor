@@ -1,19 +1,30 @@
 defmodule TriviaAdvisorWeb.VenueLive.Show do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisor.Services.UnsplashService
+  alias TriviaAdvisor.Services.GooglePlacesService
+  alias TriviaAdvisor.Locations
   require Logger
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
-    # In a real app, you would fetch venue data from your database
-    # For now, we'll use mock data
-    venue = get_venue(id)
-    venue = Map.put(venue, :hero_image_url, get_venue_image(venue.name))
+    # Get venue from database instead of mock data
+    case get_venue(id) do
+      {:ok, venue} ->
+        # Add hero_image_url to venue
+        venue = Map.put(venue, :hero_image_url, get_venue_image(venue))
 
-    {:ok,
-      socket
-      |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
-      |> assign(:venue, venue)}
+        {:ok,
+          socket
+          |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
+          |> assign(:venue, venue)}
+
+      {:error, _reason} ->
+        {:ok,
+          socket
+          |> assign(:page_title, "Venue Not Found - TriviaAdvisor")
+          |> assign(:venue, nil)
+          |> put_flash(:error, "Venue not found")}
+    end
   end
 
   @impl true
@@ -29,52 +40,20 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     <div>
       <!-- Venue Hero Section -->
       <div class="relative">
-        <div class="h-64 overflow-hidden sm:h-80 lg:h-96">
-          <img
-            src={@venue.hero_image_url || "https://placehold.co/1200x400?text=#{@venue.name}"}
-            alt={@venue.name}
-            class="h-full w-full object-cover"
-          />
-        </div>
-        <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-        <div class="absolute bottom-0 w-full p-4 text-white sm:p-6">
-          <div class="mx-auto max-w-7xl">
-            <div class="flex items-center justify-between">
-              <h1 class="text-3xl font-bold sm:text-4xl md:text-5xl"><%= @venue.name %></h1>
-              <div class="flex gap-2">
-                <button class="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-sm backdrop-blur-sm hover:bg-white/30">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-5 w-5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
-                  </svg>
-                  Save
-                </button>
-                <button class="flex items-center gap-1 rounded-full bg-white/20 px-3 py-1 text-sm backdrop-blur-sm hover:bg-white/30">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-5 w-5">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.217 10.907a2.25 2.25 0 1 0 0 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186 9.566-5.314m-9.566 7.5 9.566 5.314m0 0a2.25 2.25 0 1 0 3.935-2.186 2.25 2.25 0 0 0-3.935-2.186zm0-12.814a2.25 2.25 0 1 0 3.933-2.185 2.25 2.25 0 0 0-3.933 2.185Z" />
-                  </svg>
-                  Share
-                </button>
-              </div>
-            </div>
-            <div class="mt-2 flex items-center">
-              <div class="flex">
-                <%= for i <- 1..5 do %>
-                  <svg
-                    class={"h-5 w-5 #{if i <= (@venue.rating || 0), do: "text-yellow-400", else: "text-gray-300"}"}
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                  </svg>
-                <% end %>
-              </div>
-              <span class="ml-2 text-white/90"><%= @venue.rating %> (<%= @venue.review_count || 0 %> reviews)</span>
-              <span class="mx-2">•</span>
-              <span class="text-white/90"><%= @venue.address %></span>
-            </div>
+        <%= if @venue do %>
+          <div class="h-64 overflow-hidden sm:h-80 lg:h-96">
+            <img
+              src={@venue.hero_image_url || "https://placehold.co/1200x400?text=#{@venue.name}"}
+              alt={@venue.name}
+              class="h-full w-full object-cover"
+            />
           </div>
-        </div>
+          <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+        <% else %>
+          <div class="flex h-64 items-center justify-center bg-gray-200 sm:h-80 lg:h-96">
+            <p class="text-2xl font-semibold text-gray-500">Venue not found</p>
+          </div>
+        <% end %>
       </div>
 
       <div class="mx-auto max-w-7xl px-4 py-8">
@@ -245,78 +224,16 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   # Helper functions
   defp get_venue(id) do
-    # This would normally come from your database
-    case id do
-      "1" -> %{
-        id: "1",
-        name: "The Pub Quiz Champion",
-        address: "123 Main St, London",
-        city_id: "1",
-        city_name: "London",
-        country_name: "United Kingdom",
-        day_of_week: 4, # Thursday
-        start_time: "7:30 PM",
-        entry_fee_cents: 500,
-        frequency: "Weekly",
-        description: "Join us every Thursday for our legendary pub quiz. Six rounds of trivia, picture rounds, and music. Great prizes and a fun atmosphere! Our quizmaster has been running this quiz for over 5 years and creates challenging but fair questions across a range of topics. Teams of up to 6 people are welcome, and we recommend booking a table in advance as it gets busy.",
-        hero_image_url: "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000",
-        rating: 4.5,
-        review_count: 28,
-        phone: "020-1234-5678",
-        website: "https://example.com/pub-quiz-champion",
-        reviews: [
-          %{
-            user_name: "Jane Smith",
-            date: "March 15, 2023",
-            rating: 5,
-            comment: "Amazing quiz night! The questions were challenging but fair, and the atmosphere was fantastic. Will definitely be coming back!"
-          },
-          %{
-            user_name: "John Doe",
-            date: "February 22, 2023",
-            rating: 4,
-            comment: "Really enjoyed the variety of questions. The music round was particularly fun. Only suggestion would be to improve the sound system."
-          }
-        ]
-      }
-      "2" -> %{
-        id: "2",
-        name: "Quiz Night at The Scholar",
-        address: "456 High St, Manchester",
-        city_id: "4",
-        city_name: "Manchester",
-        country_name: "United Kingdom",
-        day_of_week: 2, # Tuesday
-        start_time: "8:00 PM",
-        entry_fee_cents: 300,
-        frequency: "Weekly",
-        description: "Tuesday night is quiz night! Form teams of up to 6 people and test your knowledge across a variety of categories. Our quizzes feature general knowledge, sports, entertainment, and special themed rounds that change every week.",
-        hero_image_url: "https://images.unsplash.com/photo-1574096079513-d8259312b785?q=80&w=2000",
-        rating: 4.2,
-        review_count: 15,
-        phone: "0161-987-6543",
-        website: "https://example.com/scholar-pub",
-        reviews: []
-      }
-      _ -> %{
-        id: id,
-        name: "Unknown Venue",
-        address: "Unknown Address",
-        city_id: nil,
-        city_name: "Unknown City",
-        country_name: "Unknown Country",
-        day_of_week: nil,
-        start_time: nil,
-        entry_fee_cents: nil,
-        frequency: nil,
-        description: "No information available for this venue.",
-        hero_image_url: nil,
-        rating: nil,
-        review_count: 0,
-        phone: nil,
-        website: nil,
-        reviews: []
-      }
+    try do
+      # Try to get venue from database
+      venue = Locations.get_venue!(id)
+      |> Locations.load_venue_relations()
+
+      {:ok, venue}
+    rescue
+      e ->
+        Logger.error("Failed to get venue: #{inspect(e)}")
+        {:error, :not_found}
     end
   end
 
@@ -370,18 +287,38 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   defp format_next_date(_), do: "TBA"
 
-  # Get venue image from Unsplash service or fallback to a default
-  defp get_venue_image(venue_name) do
+  # Get venue image - updated to use the full venue instead of just the name
+  defp get_venue_image(venue) do
     try do
-      case UnsplashService.get_venue_image(venue_name) do
-        {:ok, image_url} -> image_url
-        {:error, _reason} -> get_fallback_image(venue_name)
+      # First check for stored Google Place images
+      if Enum.any?(venue.google_place_images) do
+        TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
+      else
+        # First try Unsplash
+        case UnsplashService.get_venue_image(venue.name) do
+          {:ok, image_url} ->
+            image_url
+          {:error, _reason} ->
+            # Then try to fetch and store Google Places images if venue has place_id
+            if venue.place_id && venue.place_id != "" do
+              case TriviaAdvisor.Services.GooglePlaceImageStore.process_venue_images(venue) do
+                {:ok, updated_venue} ->
+                  TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(updated_venue)
+                _ ->
+                  # Fallback to direct API call if processing fails
+                  GooglePlacesService.get_venue_image(venue.id) || get_fallback_image(venue.name)
+              end
+            else
+              # Fall back to hardcoded images
+              get_fallback_image(venue.name)
+            end
+        end
       end
     rescue
       # If service is not started or any other error occurs
       error ->
         Logger.error("Failed to get venue image: #{inspect(error)}")
-        get_fallback_image(venue_name)
+        get_fallback_image(venue.name)
     end
   end
 
