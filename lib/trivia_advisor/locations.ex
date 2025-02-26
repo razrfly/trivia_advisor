@@ -523,6 +523,85 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
+  Find venues near a city within a specified radius.
+  Uses PostGIS to calculate distances.
+
+  ## Options
+    * `:radius_km` - search radius in kilometers (default: 50)
+    * `:limit` - maximum number of venues to return (default: 100)
+    * `:load_relations` - whether to preload relations (default: true)
+
+  ## Examples
+
+      iex> find_venues_near_city(city, radius_km: 25)
+      [%{venue: %Venue{}, distance_km: 12.5}, ...]
+
+  """
+  def find_venues_near_city(%City{} = city, opts \\ []) do
+    find_venues_near_coordinates(City.coordinates(city), opts)
+  end
+
+  @doc """
+  Find venues near specific coordinates within a specified radius.
+  Uses PostGIS to calculate distances.
+
+  ## Options
+    * `:radius_km` - search radius in kilometers (default: 50)
+    * `:limit` - maximum number of venues to return (default: 100)
+    * `:load_relations` - whether to preload relations (default: true)
+
+  ## Examples
+
+      iex> find_venues_near_coordinates({-37.8136, 144.9631}, radius_km: 25)
+      [%{venue: %Venue{}, distance_km: 12.5}, ...]
+
+  """
+  def find_venues_near_coordinates({lat, lng}, opts \\ []) when is_number(lat) and is_number(lng) do
+    radius_km = Keyword.get(opts, :radius_km, 50)
+    limit = Keyword.get(opts, :limit, 100)
+    load_relations = Keyword.get(opts, :load_relations, true)
+
+    # Apply preloads first if requested
+    venue_query = if load_relations do
+      from v in Venue, preload: [:city, :events]
+    else
+      Venue
+    end
+
+    # PostGIS query using ST_DWithin for efficient distance filtering
+    query = from v in venue_query,
+      select: %{
+        venue: v,
+        distance_km: fragment(
+          "ST_Distance(
+            ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+            ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography
+          ) / 1000.0",
+          ^lng, ^lat, v.longitude, v.latitude
+        )
+      },
+      where: fragment(
+        "ST_DWithin(
+          ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+          ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography,
+          ?
+        )",
+        ^lng, ^lat, v.longitude, v.latitude, ^(radius_km * 1000)
+      ),
+      order_by: fragment(
+        "ST_Distance(
+          ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+          ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography
+        )",
+        ^lng, ^lat, v.longitude, v.latitude
+      ),
+      limit: ^limit
+
+    # Run the query
+    Repo.all(query)
+  end
+
+  @doc """
   Loads all important relationships for a venue.
 
   ## Examples
