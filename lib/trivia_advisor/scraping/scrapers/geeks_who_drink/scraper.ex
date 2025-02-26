@@ -136,10 +136,10 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             name: venue.name,
             time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
             description: venue_data.description,
-            fee_text: venue_data.fee_text || "",  # Use fee_text from venue data if available
+            fee_text: "Free",  # Set as free since GWD events are typically free
             source_url: venue_data.url,
             performer_id: nil,  # GWD doesn't provide performer info
-            hero_image_url: nil  # Include this but set to nil to avoid KeyError
+            hero_image_url: venue_data.hero_image_url  # Pass through unchanged
           }
 
           case EventStore.process_event(venue, event_data, source.id) do
@@ -229,7 +229,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
           phone: additional_details.phone,
           website: additional_details.website,
           description: additional_details.description,
-          hero_image_url: venue_data.logo_url,
+          hero_image_url: venue_data.logo_url,  # Use original URL without modification
           url: venue_data.source_url,
           facebook: additional_details.facebook,
           instagram: additional_details.instagram
@@ -267,10 +267,10 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
               name: venue.name,
               time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
               description: venue_data.description,
-              fee_text: venue_data.fee_text || "",  # Use fee_text from venue data if available
+              fee_text: "Free",
               source_url: venue_data.url,
-              performer_id: nil,  # GWD doesn't provide performer info
-              hero_image_url: nil  # Include this but set to nil to avoid KeyError
+              performer_id: nil,
+              hero_image_url: venue_data.hero_image_url  # Pass through unchanged
             }
 
             case EventStore.process_event(venue, event_data, source.id) do
