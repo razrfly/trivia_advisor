@@ -17,7 +17,9 @@ defmodule TriviaAdvisorWeb.Router do
   scope "/", TriviaAdvisorWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", HomeLive.Index, :index
+    live "/cities/:id", CityLive.Show, :show
+    live "/venues/:id", VenueLive.Show, :show
   end
 
   # Other scopes may use custom stacks.
