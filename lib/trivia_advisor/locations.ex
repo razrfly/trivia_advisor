@@ -505,4 +505,20 @@ defmodule TriviaAdvisor.Locations do
       end
     end)
   end
+
+  @doc """
+  Lists all venues for a specific city.
+
+  ## Examples
+
+      iex> list_venues_by_city_id(123)
+      [%Venue{}, ...]
+
+  """
+  def list_venues_by_city_id(city_id) do
+    Venue
+    |> where([v], v.city_id == ^city_id)
+    |> preload(:city)
+    |> Repo.all()
+  end
 end

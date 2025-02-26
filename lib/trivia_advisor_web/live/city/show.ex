@@ -218,45 +218,90 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     end
   end
 
-  # Get venues for a city (currently using mock data)
-  defp get_venues_for_city(_city_id) do
-    # This would normally come from your database
-    # For now, we'll use mock data
-    [
-      %{
-        id: "1",
-        name: "The Crown & Anchor",
-        address: "123 Main St, London",
-        day_of_week: 2,
-        start_time: "8:00 PM",
-        entry_fee: "£2",
-        description: "A traditional pub quiz with a mix of general knowledge, music, and picture rounds. Prizes include bar tabs and merchandise.",
-        hero_image_url: "https://images.unsplash.com/photo-1546726747-421c6d69c929?q=80&w=600",
-        rating: 4.7
-      },
-      %{
-        id: "2",
-        name: "The Shakespeare",
-        address: "456 High St, London",
-        day_of_week: 3,
-        start_time: "7:30 PM",
-        entry_fee: "Free",
-        description: "Our Wednesday night quiz is popular with locals and visitors alike. Five rounds of trivia with bonus rounds throughout.",
-        hero_image_url: "https://images.unsplash.com/photo-1572116469696-31de0f17cc34?q=80&w=600",
-        rating: 4.5
-      },
-      %{
-        id: "3",
-        name: "The Red Lion",
-        address: "789 Park Ln, London",
-        day_of_week: 4,
-        start_time: "8:30 PM",
-        entry_fee: "£3",
-        description: "A challenging quiz night featuring specialized rounds each week. Teams of up to 6 people allowed.",
-        hero_image_url: "https://images.unsplash.com/photo-1575444758702-4a6b9222336e?q=80&w=600",
-        rating: 4.8
-      }
-    ]
+  # Get venues for a city from the database
+  defp get_venues_for_city(city_id) do
+    try do
+      venues = Locations.list_venues_by_city_id(city_id)
+
+      # Format the venue data for display
+      Enum.map(venues, fn venue ->
+        %{
+          id: venue.id,
+          name: venue.name,
+          address: venue.address,
+          day_of_week: get_venue_day_of_week(venue),
+          start_time: get_venue_start_time(venue),
+          entry_fee: get_venue_entry_fee(venue),
+          description: get_venue_description(venue),
+          hero_image_url: get_venue_image(venue.name),
+          rating: get_venue_rating(venue)
+        }
+      end)
+    rescue
+      e ->
+        Logger.error("Error fetching venues for city #{city_id}: #{inspect(e)}")
+        # Return empty list on error
+        []
+    end
+  end
+
+  # Extract day of week from venue (implement event handling later)
+  defp get_venue_day_of_week(_venue) do
+    # For now, assign a random day between 1-7 for demo purposes
+    # In a real app, this would come from the venue's events
+    Enum.random(1..7)
+  end
+
+  # Extract start time from venue (implement event handling later)
+  defp get_venue_start_time(_venue) do
+    # For now, generate a random time for demo purposes
+    # In a real app, this would come from the venue's events
+    hour = Enum.random(6..9)
+    "#{hour}:00 PM"
+  end
+
+  # Extract entry fee from venue (implement event handling later)
+  defp get_venue_entry_fee(_venue) do
+    # For now, assign random entry fee for demo purposes
+    # In a real app, this would come from the venue's events
+    case Enum.random(1..3) do
+      1 -> "Free"
+      2 -> "£2"
+      3 -> "£3"
+    end
+  end
+
+  # Extract description from venue
+  defp get_venue_description(venue) do
+    # Use venue description if available, otherwise generate a generic one
+    venue.metadata["description"] ||
+    "A trivia night at #{venue.name}. Join us for a fun evening of questions, prizes, and drinks."
+  end
+
+  # Get a venue image URL
+  defp get_venue_image(name) do
+    # For now, use placeholder images
+    # In the future, this can connect to an image service or use venue-specific images
+    "https://placehold.co/600x400?text=#{URI.encode(name)}"
+  end
+
+  # Extract rating from venue
+  defp get_venue_rating(venue) do
+    # Use metadata rating if available, otherwise generate a random one
+    case venue.metadata["rating"] do
+      nil ->
+        # Generate random rating if not available
+        (3.5 + :rand.uniform() * 1.5) |> Float.round(1)
+      rating when is_number(rating) ->
+        # Use the rating directly if it's a number
+        rating
+      %{"value" => value} when is_number(value) ->
+        # Extract the value from map if it's in that format
+        value
+      _ ->
+        # Fallback for any other format
+        (3.5 + :rand.uniform() * 1.5) |> Float.round(1)
+    end
   end
 
   defp format_day(day) do
