@@ -8,6 +8,8 @@ defmodule TriviaAdvisor.Locations.City do
   schema "cities" do
     field :name, :string
     field :slug, :string
+    field :latitude, :decimal
+    field :longitude, :decimal
 
     belongs_to :country, Country
     has_many :venues, Venue
@@ -18,8 +20,10 @@ defmodule TriviaAdvisor.Locations.City do
   @doc false
   def changeset(city, attrs) do
     city
-    |> cast(attrs, [:name, :country_id])
+    |> cast(attrs, [:name, :country_id, :latitude, :longitude])
     |> validate_required([:name, :country_id])
+    |> validate_number(:latitude, greater_than_or_equal_to: -90, less_than_or_equal_to: 90)
+    |> validate_number(:longitude, greater_than_or_equal_to: -180, less_than_or_equal_to: 180)
     |> foreign_key_constraint(:country_id)
     |> generate_slug()
     |> unique_constraint(:slug)
@@ -47,4 +51,14 @@ defmodule TriviaAdvisor.Locations.City do
 
     Repo.exists?(query)
   end
+
+  @doc """
+  Helper function to get coordinates as a tuple
+  Returns nil if coordinates are not set
+  """
+  def coordinates(%__MODULE__{latitude: lat, longitude: lng})
+    when not is_nil(lat) and not is_nil(lng) do
+    {Decimal.to_float(lat), Decimal.to_float(lng)}
+  end
+  def coordinates(_), do: nil
 end

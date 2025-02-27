@@ -15,8 +15,12 @@ defmodule TriviaAdvisor.Application do
       {Phoenix.PubSub, name: TriviaAdvisor.PubSub},
       # Start the Finch HTTP client for sending emails
       {Finch, name: TriviaAdvisor.Finch},
-      # Start a worker by calling: TriviaAdvisor.Worker.start_link(arg)
-      # {TriviaAdvisor.Worker, arg},
+      # Start the Unsplash service for image caching
+      {TriviaAdvisor.Services.UnsplashService, []},
+      # Start Google Places service for venue image fetching
+      {TriviaAdvisor.Services.GooglePlacesService, []},
+      # Start the Google Place Image Store service
+      {TriviaAdvisor.Services.GooglePlaceImageStore, []},
       # Start to serve requests, typically the last entry
       TriviaAdvisorWeb.Endpoint
     ]

@@ -17,7 +17,15 @@ defmodule TriviaAdvisorWeb.Router do
   scope "/", TriviaAdvisorWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", HomeLive.Index, :index
+    live "/cities/:slug", CityLive.Show, :show
+    live "/cities", CityLive.Index, :index
+    live "/venues/:slug", VenueLive.Show, :show
+
+    # Admin route for image cache management (only in dev)
+    if Mix.env() == :dev do
+      live "/dev/cache", DevLive.Cache, :index
+    end
   end
 
   # Other scopes may use custom stacks.
