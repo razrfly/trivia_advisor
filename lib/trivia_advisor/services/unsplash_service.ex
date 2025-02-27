@@ -132,12 +132,13 @@ defmodule TriviaAdvisor.Services.UnsplashService do
       access_key ->
         # Customize search query based on type
         query = case type do
-          "city" -> "#{name} skyline cityscape panorama landscape" # Improved for scenic city views
+          "city" -> "#{name} city skyline cityscape"
           "venue" -> "#{name} pub bar interior"
           _ -> "#{name}"
         end
 
-        url = "https://api.unsplash.com/photos/random?query=#{URI.encode(query)}&orientation=landscape&client_id=#{access_key}"
+        # Use search endpoint instead of random for more relevant results
+        url = "https://api.unsplash.com/search/photos?query=#{URI.encode(query)}&orientation=landscape&per_page=30&client_id=#{access_key}"
 
         Logger.info("Fetching #{type} image from Unsplash for #{name}")
 
@@ -145,7 +146,22 @@ defmodule TriviaAdvisor.Services.UnsplashService do
           {:ok, %{status_code: 200, body: body}} ->
             case Jason.decode(body) do
               {:ok, data} ->
-                get_in(data, ["urls", "regular"]) || fallback_image(name)
+                # Get the first result, or a random one from top results
+                results = Map.get(data, "results", [])
+
+                if length(results) > 0 do
+                  # Pick a result - either first or random from top 5
+                  result = if length(results) >= 5 do
+                    Enum.random(Enum.take(results, 5))
+                  else
+                    List.first(results)
+                  end
+
+                  get_in(result, ["urls", "regular"]) || fallback_image(name)
+                else
+                  Logger.warning("No image results for #{name}")
+                  fallback_image(name)
+                end
               _ ->
                 Logger.error("Failed to parse Unsplash API response")
                 fallback_image(name)
