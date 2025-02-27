@@ -6,9 +6,9 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   require Logger
 
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
-    # Get venue from database instead of mock data
-    case get_venue(id) do
+  def mount(%{"slug" => slug}, _session, socket) do
+    # Get venue from database by slug instead of id
+    case get_venue_by_slug(slug) do
       {:ok, venue} ->
         # Add hero_image_url to venue
         venue = Map.put(venue, :hero_image_url, get_venue_image(venue))
@@ -28,10 +28,10 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   end
 
   @impl true
-  def handle_params(%{"id" => id}, _, socket) do
+  def handle_params(%{"slug" => slug}, _, socket) do
     {:noreply,
      socket
-     |> assign(:id, id)}
+     |> assign(:slug, slug)}
   end
 
   @impl true
@@ -65,17 +65,17 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
               <div class="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
                 <div>
                   <h3 class="text-sm font-medium text-gray-500">Quiz Day</h3>
-                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= format_day(@venue.day_of_week) %></p>
+                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= format_day(get_day_of_week(@venue)) %></p>
                 </div>
                 <div>
                   <h3 class="text-sm font-medium text-gray-500">Start Time</h3>
-                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= @venue.start_time %></p>
+                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= get_start_time(@venue) %></p>
                 </div>
                 <div>
                   <h3 class="text-sm font-medium text-gray-500">Entry Fee</h3>
                   <p class="mt-1 text-lg font-semibold text-gray-900">
-                    <%= if @venue.entry_fee_cents do %>
-                      $<%= :erlang.float_to_binary(@venue.entry_fee_cents / 100, [decimals: 2]) %>
+                    <%= if get_entry_fee_cents(@venue) do %>
+                      $<%= :erlang.float_to_binary(get_entry_fee_cents(@venue) / 100, [decimals: 2]) %>
                     <% else %>
                       Free
                     <% end %>
@@ -83,7 +83,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                 </div>
                 <div>
                   <h3 class="text-sm font-medium text-gray-500">Frequency</h3>
-                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= @venue.frequency || "Weekly" %></p>
+                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= get_frequency(@venue) %></p>
                 </div>
               </div>
             </div>
@@ -92,7 +92,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
             <div class="mb-8 overflow-hidden rounded-lg border bg-white p-6 shadow-sm">
               <h2 class="mb-4 text-xl font-bold text-gray-900">About This Trivia Night</h2>
               <div class="prose prose-indigo max-w-none">
-                <p><%= @venue.description %></p>
+                <p><%= get_venue_description(@venue) %></p>
               </div>
             </div>
 
@@ -105,9 +105,9 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                 </button>
               </div>
 
-              <%= if length(@venue.reviews || []) > 0 do %>
+              <%= if length(get_venue_reviews(@venue)) > 0 do %>
                 <div class="divide-y divide-gray-200">
-                  <%= for review <- @venue.reviews do %>
+                  <%= for review <- get_venue_reviews(@venue) do %>
                     <div class="py-4">
                       <div class="mb-2 flex items-center">
                         <div class="flex">
@@ -196,10 +196,10 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                   </div>
                   <div class="ml-3">
                     <h3 class="text-sm font-medium text-indigo-800">
-                      <%= format_day(@venue.day_of_week) %>, <%= format_next_date(@venue.day_of_week) %>
+                      <%= format_day(get_day_of_week(@venue)) %>, <%= format_next_date(get_day_of_week(@venue)) %>
                     </h3>
                     <div class="mt-2 text-sm text-indigo-700">
-                      <p>Starts at <%= @venue.start_time %></p>
+                      <p>Starts at <%= get_start_time(@venue) %></p>
                     </div>
                     <div class="mt-4">
                       <div class="-mx-2 -my-1.5 flex">
@@ -223,17 +223,45 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   end
 
   # Helper functions
-  defp get_venue(id) do
+  defp get_venue_by_slug(slug) do
     try do
-      # Try to get venue from database
-      venue = Locations.get_venue!(id)
+      # Try to get venue from database using slug
+      venue = Locations.get_venue_by_slug(slug)
       |> Locations.load_venue_relations()
 
-      {:ok, venue}
+      if venue do
+        {:ok, venue}
+      else
+        {:error, :not_found}
+      end
     rescue
       e ->
         Logger.error("Failed to get venue: #{inspect(e)}")
         {:error, :not_found}
+    end
+  end
+
+  # Helper to get day of week from venue events
+  defp get_day_of_week(venue) do
+    # Get the day of week from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :day_of_week)
+    else
+      # Default value if no events
+      1 # Monday as default
+    end
+  end
+
+  # Helper to get start time from venue events
+  defp get_start_time(venue) do
+    # Get the start time from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :start_time, "7:00 PM") # Default time if not found
+    else
+      # Default value if no events
+      "7:00 PM"
     end
   end
 
@@ -287,6 +315,12 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   defp format_next_date(_), do: "TBA"
 
+  # Helper to get reviews from venue or return empty list if they don't exist
+  defp get_venue_reviews(venue) do
+    # Return empty list if venue has no reviews field
+    Map.get(venue, :reviews, [])
+  end
+
   # Get venue image - updated to use the full venue instead of just the name
   defp get_venue_image(venue) do
     try do
@@ -331,6 +365,40 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         "https://images.unsplash.com/photo-1574096079513-d8259312b785?q=80&w=2000"
       true ->
         "https://images.unsplash.com/photo-1572116469696-31de0f17cc34?q=80&w=2000"
+    end
+  end
+
+  # Helper to get entry fee cents from venue events
+  defp get_entry_fee_cents(venue) do
+    # Get the entry fee from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :entry_fee_cents)
+    else
+      nil # Free by default
+    end
+  end
+
+  # Helper to get frequency from venue events
+  defp get_frequency(venue) do
+    # Get the frequency from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :frequency, "Weekly") # Default to weekly if not found
+    else
+      "Weekly" # Default value if no events
+    end
+  end
+
+  # Helper to get description from venue events
+  defp get_venue_description(venue) do
+    # Get the description from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :description, "No description available.") # Default message if not found
+    else
+      # If no events, check if description is in metadata
+      venue.metadata["description"] || "No description available for this trivia night."
     end
   end
 end

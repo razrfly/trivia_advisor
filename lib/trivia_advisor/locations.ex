@@ -266,6 +266,24 @@ defmodule TriviaAdvisor.Locations do
   def get_venue!(id), do: Repo.get!(Venue, id)
 
   @doc """
+  Gets a single venue by slug.
+
+  Returns nil if no venue exists with the given slug.
+
+  ## Examples
+
+      iex> get_venue_by_slug("some-venue-slug")
+      %Venue{}
+
+      iex> get_venue_by_slug("nonexistent-venue")
+      nil
+
+  """
+  def get_venue_by_slug(slug) when is_binary(slug) do
+    Repo.get_by(Venue, slug: slug)
+  end
+
+  @doc """
   Creates a venue.
 
   ## Examples

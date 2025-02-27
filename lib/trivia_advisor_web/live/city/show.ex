@@ -169,7 +169,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                   <% end %>
 
                   <a
-                    href={~p"/venues/#{venue.id}"}
+                    href={~p"/venues/#{venue.slug}"}
                     class="mt-2 inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-800"
                   >
                     View details
@@ -238,6 +238,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           venue: %{
             id: venue.id,
             name: venue.name,
+            slug: venue.slug,
             address: venue.address,
             description: get_venue_description(venue),
             hero_image_url: get_venue_image(venue),
