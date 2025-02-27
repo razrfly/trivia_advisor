@@ -13,16 +13,21 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         # Add hero_image_url to venue
         venue = Map.put(venue, :hero_image_url, get_venue_image(venue))
 
+        # Get nearby venues
+        nearby_venues = get_nearby_venues(venue, 5)
+
         {:ok,
           socket
           |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
-          |> assign(:venue, venue)}
+          |> assign(:venue, venue)
+          |> assign(:nearby_venues, nearby_venues)}
 
       {:error, _reason} ->
         {:ok,
           socket
           |> assign(:page_title, "Venue Not Found - TriviaAdvisor")
           |> assign(:venue, nil)
+          |> assign(:nearby_venues, [])
           |> put_flash(:error, "Venue not found")}
     end
   end
@@ -38,25 +43,65 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   def render(assigns) do
     ~H"""
     <div>
-      <!-- Venue Hero Section -->
-      <div class="relative">
-        <%= if @venue do %>
-          <div class="h-64 overflow-hidden sm:h-80 lg:h-96">
-            <img
-              src={@venue.hero_image_url || "https://placehold.co/1200x400?text=#{@venue.name}"}
-              alt={@venue.name}
-              class="h-full w-full object-cover"
-            />
-          </div>
-          <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-        <% else %>
-          <div class="flex h-64 items-center justify-center bg-gray-200 sm:h-80 lg:h-96">
-            <p class="text-2xl font-semibold text-gray-500">Venue not found</p>
-          </div>
-        <% end %>
-      </div>
-
       <div class="mx-auto max-w-7xl px-4 py-8">
+        <!-- Venue Title -->
+        <h1 class="mb-6 text-3xl font-bold text-gray-900"><%= @venue.name %></h1>
+
+        <!-- Photo Gallery -->
+        <div class="mb-8 overflow-hidden rounded-lg">
+          <div class="flex flex-wrap">
+            <%= if @venue && venue_has_images?(@venue) do %>
+              <div class="w-1/2 p-1">
+                <img
+                  src={get_venue_image_at_position(@venue, 0)}
+                  alt={@venue.name}
+                  class="h-96 w-full object-cover rounded-tl-lg rounded-bl-lg"
+                />
+              </div>
+              <div class="w-1/2">
+                <div class="flex flex-wrap">
+                  <div class="w-1/2 p-1">
+                    <img
+                      src={get_venue_image_at_position(@venue, 1)}
+                      alt={@venue.name}
+                      class="h-48 w-full object-cover rounded-tr-lg"
+                    />
+                  </div>
+                  <div class="w-1/2 p-1">
+                    <img
+                      src={get_venue_image_at_position(@venue, 2)}
+                      alt={@venue.name}
+                      class="h-48 w-full object-cover"
+                    />
+                  </div>
+                  <div class="w-1/2 p-1">
+                    <img
+                      src={get_venue_image_at_position(@venue, 3)}
+                      alt={@venue.name}
+                      class="h-48 w-full object-cover"
+                    />
+                  </div>
+                  <div class="w-1/2 p-1">
+                    <img
+                      src={get_venue_image_at_position(@venue, 4)}
+                      alt={@venue.name}
+                      class="h-48 w-full object-cover rounded-br-lg"
+                    />
+                  </div>
+                </div>
+              </div>
+            <% else %>
+              <div class="w-full p-1">
+                <img
+                  src={@venue.hero_image_url || "https://placehold.co/1200x400?text=#{@venue.name}"}
+                  alt={@venue.name}
+                  class="h-96 w-full object-cover rounded-lg"
+                />
+              </div>
+            <% end %>
+          </div>
+        </div>
+
         <div class="grid gap-8 md:grid-cols-3">
           <!-- Main Content -->
           <div class="md:col-span-2">
@@ -94,6 +139,47 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
               <div class="prose prose-indigo max-w-none">
                 <p><%= get_venue_description(@venue) %></p>
               </div>
+            </div>
+
+            <!-- Nearby Venues -->
+            <div class="mb-8 overflow-hidden rounded-lg border bg-white p-6 shadow-sm">
+              <div class="mb-4 flex items-center justify-between">
+                <h2 class="text-xl font-bold text-gray-900">Nearby Trivia Venues</h2>
+              </div>
+
+              <%= if length(@nearby_venues) > 0 do %>
+                <div class="space-y-4">
+                  <%= for venue_info <- @nearby_venues do %>
+                    <div class="flex items-center space-x-4 rounded-lg border p-4 transition hover:bg-gray-50">
+                      <div class="h-16 w-16 flex-shrink-0 overflow-hidden rounded-md">
+                        <img
+                          src={venue_info.venue.hero_image_url || get_venue_image(venue_info.venue) || "https://placehold.co/100x100?text=#{venue_info.venue.name}"}
+                          alt={venue_info.venue.name}
+                          class="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div class="flex-1 min-w-0">
+                        <a href={~p"/venues/#{venue_info.venue.slug}"} class="block text-lg font-medium text-gray-900 hover:text-indigo-600">
+                          <%= venue_info.venue.name %>
+                        </a>
+                        <p class="text-sm text-gray-500"><%= venue_info.venue.address %></p>
+                        <p class="text-sm text-gray-500">
+                          <span class="font-medium text-indigo-600"><%= format_distance(venue_info.distance_km) %></span> away
+                        </p>
+                      </div>
+                      <div>
+                        <span class="inline-flex rounded-full bg-indigo-100 px-2 py-1 text-xs font-semibold text-indigo-800">
+                          <%= format_day(get_day_of_week(venue_info.venue)) %>s
+                        </span>
+                      </div>
+                    </div>
+                  <% end %>
+                </div>
+              <% else %>
+                <div class="py-8 text-center text-gray-500">
+                  <p>No nearby venues found.</p>
+                </div>
+              <% end %>
             </div>
 
             <!-- Reviews -->
@@ -399,6 +485,84 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     else
       # If no events, check if description is in metadata
       venue.metadata["description"] || "No description available for this trivia night."
+    end
+  end
+
+  # Get nearby venues
+  defp get_nearby_venues(venue, limit) do
+    if venue.latitude && venue.longitude do
+      # Convert Decimal values to floats
+      lat = to_float(venue.latitude)
+      lng = to_float(venue.longitude)
+
+      coords = {lat, lng}
+
+      # Find nearby venues
+      nearby_venues = TriviaAdvisor.Locations.find_venues_near_coordinates(coords,
+        radius_km: 25,
+        limit: limit + 1, # Get one extra to filter out the current venue
+        load_relations: true
+      )
+
+      # Filter out the current venue and limit to specified number
+      nearby_venues
+      |> Enum.reject(fn %{venue: nearby} -> nearby.id == venue.id end)
+      |> Enum.take(limit)
+      |> Enum.map(fn %{venue: nearby, distance_km: distance} ->
+        # Add hero_image_url to each venue
+        updated_venue = Map.put(nearby, :hero_image_url, get_venue_image(nearby))
+        %{venue: updated_venue, distance_km: distance}
+      end)
+    else
+      []
+    end
+  end
+
+  # Helper to convert Decimal to float
+  defp to_float(%Decimal{} = decimal), do: Decimal.to_float(decimal)
+  defp to_float(value), do: value
+
+  # Check if venue has multiple Google Place images
+  defp venue_has_images?(venue) do
+    venue.google_place_images && is_list(venue.google_place_images) && length(venue.google_place_images) >= 5
+  end
+
+  # Get venue image at a specific position
+  defp get_venue_image_at_position(venue, position) do
+    if venue.google_place_images && length(venue.google_place_images) > position do
+      image_data = Enum.find(venue.google_place_images, fn img -> img["position"] == position end) ||
+                  Enum.at(venue.google_place_images, position)
+
+      if image_data do
+        if image_data["local_path"] do
+          ensure_full_url(image_data["local_path"])
+        else
+          image_data["original_url"]
+        end
+      else
+        get_fallback_image(venue.name)
+      end
+    else
+      get_fallback_image(venue.name)
+    end
+  end
+
+  # Format distance for display
+  defp format_distance(distance_km) when is_float(distance_km) do
+    cond do
+      distance_km < 1 -> "#{round(distance_km * 1000)} m"
+      true -> "#{:erlang.float_to_binary(distance_km, [decimals: 1])} km"
+    end
+  end
+  defp format_distance(_), do: "Unknown distance"
+
+  # Helper to ensure URL is a full URL
+  defp ensure_full_url(path) do
+    if String.starts_with?(path, "http") do
+      path
+    else
+      # Simplistic approach - in a real app use your app's URL config
+      "#{TriviaAdvisorWeb.Endpoint.url()}#{path}"
     end
   end
 end
