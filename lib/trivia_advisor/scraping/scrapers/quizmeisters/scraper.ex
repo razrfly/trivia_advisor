@@ -73,6 +73,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
               ScrapeLog.update_log(log, %{
                 success: true,
                 total_venues: venue_count,
+                event_count: successful_venues,
                 metadata: metadata
               })
 
