@@ -563,7 +563,13 @@ defmodule TriviaAdvisor.Locations do
 
     # Apply preloads first if requested
     venue_query = if load_relations do
-      from v in Venue, preload: [:city, :events]
+      from v in Venue, preload: [
+        :city,
+        events: [
+          :performer,
+          event_sources: [:source]
+        ]
+      ]
     else
       Venue
     end
@@ -615,7 +621,7 @@ defmodule TriviaAdvisor.Locations do
       :city,
       events: [
         :performer,
-        :event_sources
+        event_sources: [:source]
       ]
     ])
   end

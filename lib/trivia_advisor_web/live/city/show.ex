@@ -154,6 +154,20 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                     <span><%= get_venue_entry_fee(venue) %></span>
                   </div>
                   <p class="mb-4 text-sm text-gray-600 line-clamp-3"><%= get_venue_description(venue) %></p>
+
+                  <%= if venue.last_seen_at do %>
+                    <div class="flex items-center mt-2 mb-2 text-xs text-gray-500">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 mr-1">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                      </svg>
+                      <span>Updated <%= time_ago(venue.last_seen_at) %></span>
+                      <%= if venue.source_name do %>
+                        <span class="mx-1">•</span>
+                        <span>Source: <%= venue.source_name %></span>
+                      <% end %>
+                    </div>
+                  <% end %>
+
                   <a
                     href={~p"/venues/#{venue.id}"}
                     class="mt-2 inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-800"
@@ -213,10 +227,13 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   defp get_venues_near_city(city, radius) do
     try do
       # Get venues near the city within the specified radius
-      results = Locations.find_venues_near_city(city, radius_km: radius)
+      results = Locations.find_venues_near_city(city, radius_km: radius, load_relations: true)
 
       # Format the venue data for display
       Enum.map(results, fn %{venue: venue, distance_km: distance} ->
+        # Extract event source data if available
+        event_source_data = get_event_source_data(venue)
+
         %{
           venue: %{
             id: venue.id,
@@ -225,7 +242,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
             description: get_venue_description(venue),
             hero_image_url: get_venue_image(venue),
             rating: get_venue_rating(venue),
-            events: Map.get(venue, :events, [])
+            events: Map.get(venue, :events, []),
+            last_seen_at: event_source_data[:last_seen_at],
+            source_name: event_source_data[:source_name]
           },
           distance_km: distance
         }
@@ -237,6 +256,66 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         []
     end
   end
+
+  # Extract event source data from venue
+  defp get_event_source_data(venue) do
+    events = Map.get(venue, :events, [])
+
+    if Enum.any?(events) do
+      # Get first event with event_sources
+      event = Enum.find(events, fn event ->
+        Map.get(event, :event_sources) &&
+        is_list(event.event_sources) &&
+        Enum.any?(event.event_sources)
+      end)
+
+      if event do
+        # Get most recent event source
+        event_source = event.event_sources
+          |> Enum.sort_by(& &1.last_seen_at, {:desc, DateTime})
+          |> List.first()
+
+        if event_source do
+          %{
+            last_seen_at: event_source.last_seen_at,
+            source_name: get_source_name(event_source)
+          }
+        else
+          %{}
+        end
+      else
+        %{}
+      end
+    else
+      %{}
+    end
+  end
+
+  # Get source name from event source
+  defp get_source_name(event_source) do
+    if Map.has_key?(event_source, :source) && !is_nil(event_source.source) do
+      event_source.source.name
+    else
+      "Unknown Source"
+    end
+  end
+
+  # Format time ago in words
+  defp time_ago(datetime) when is_struct(datetime) do
+    now = DateTime.utc_now()
+    diff = DateTime.diff(now, datetime, :second)
+
+    cond do
+      diff < 60 -> "just now"
+      diff < 3600 -> "#{div(diff, 60)} minutes ago"
+      diff < 86400 -> "#{div(diff, 3600)} hours ago"
+      diff < 604800 -> "#{div(diff, 86400)} days ago"
+      diff < 2592000 -> "#{div(diff, 604800)} weeks ago"
+      diff < 31536000 -> "#{div(diff, 2592000)} months ago"
+      true -> "#{div(diff, 31536000)} years ago"
+    end
+  end
+  defp time_ago(_), do: nil
 
   # Get mock city data by slug (for development only)
   defp get_mock_city_by_slug(slug) do
