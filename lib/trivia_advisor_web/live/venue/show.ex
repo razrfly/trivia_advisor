@@ -16,11 +16,17 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         # Get nearby venues
         nearby_venues = get_nearby_venues(venue, 5)
 
+        # Get country and city data for breadcrumbs
+        country = get_country(venue)
+        city = get_city(venue)
+
         {:ok,
           socket
           |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
           |> assign(:venue, venue)
-          |> assign(:nearby_venues, nearby_venues)}
+          |> assign(:nearby_venues, nearby_venues)
+          |> assign(:country, country)
+          |> assign(:city, city)}
 
       {:error, _reason} ->
         {:ok,
@@ -28,6 +34,8 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
           |> assign(:page_title, "Venue Not Found - TriviaAdvisor")
           |> assign(:venue, nil)
           |> assign(:nearby_venues, [])
+          |> assign(:country, nil)
+          |> assign(:city, nil)
           |> put_flash(:error, "Venue not found")}
     end
   end
@@ -44,6 +52,33 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     ~H"""
     <div>
       <div class="mx-auto max-w-7xl px-4 py-8">
+        <!-- Breadcrumbs -->
+        <%= if @venue && @country && @city do %>
+          <nav class="mb-4">
+            <ol class="flex items-center space-x-1 text-sm text-gray-500">
+              <li class="text-gray-700 font-medium">
+                <%= @country.name %>
+              </li>
+              <li class="flex items-center">
+                <svg class="h-5 w-5 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+                </svg>
+              </li>
+              <li>
+                <a href={"/cities/#{@city.slug}"} class="hover:text-indigo-600">
+                  <%= @city.name %>
+                </a>
+              </li>
+              <li class="flex items-center">
+                <svg class="h-5 w-5 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
+                </svg>
+              </li>
+              <li class="font-medium text-gray-900"><%= @venue.name %></li>
+            </ol>
+          </nav>
+        <% end %>
+
         <!-- Venue Title -->
         <h1 class="mb-6 text-3xl font-bold text-gray-900"><%= @venue.name %></h1>
 
@@ -108,27 +143,48 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
             <!-- Key Details -->
             <div class="mb-8 overflow-hidden rounded-lg border bg-white p-6 shadow-sm">
               <div class="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <div>
-                  <h3 class="text-sm font-medium text-gray-500">Quiz Day</h3>
+                <div class="flex flex-col">
+                  <h3 class="mb-2 flex items-center text-sm font-medium text-gray-500">
+                    <svg class="mr-1.5 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2zm-1 5.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H4.75z" clip-rule="evenodd" />
+                    </svg>
+                    Quiz Day
+                  </h3>
                   <p class="mt-1 text-lg font-semibold text-gray-900"><%= format_day(get_day_of_week(@venue)) %></p>
                 </div>
-                <div>
-                  <h3 class="text-sm font-medium text-gray-500">Start Time</h3>
-                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= get_start_time(@venue) %></p>
+                <div class="flex flex-col">
+                  <h3 class="mb-2 flex items-center text-sm font-medium text-gray-500">
+                    <svg class="mr-1.5 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd" />
+                    </svg>
+                    Start Time
+                  </h3>
+                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= format_time(get_start_time(@venue)) %></p>
                 </div>
-                <div>
-                  <h3 class="text-sm font-medium text-gray-500">Entry Fee</h3>
+                <div class="flex flex-col">
+                  <h3 class="mb-2 flex items-center text-sm font-medium text-gray-500">
+                    <svg class="mr-1.5 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M10.75 10.818v2.614A3.13 3.13 0 0011.888 13c.482-.315.612-.648.612-.875 0-.227-.13-.56-.612-.875a3.13 3.13 0 00-1.138-.432zM8.33 8.62c.053.055.115.11.184.164.208.16.46.284.736.363V6.603a2.45 2.45 0 00-.35.13c-.14.065-.27.143-.386.233-.377.292-.514.627-.514.909 0 .184.058.39.202.592.037.051.08.102.128.152z" />
+                      <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-6a.75.75 0 01.75.75v.316a3.78 3.78 0 011.653.713c.426.33.744.74.925 1.2a.75.75 0 01-1.395.55 1.35 1.35 0 00-.447-.563 2.187 2.187 0 00-.736-.363V9.3c.698.093 1.383.32 1.959.696.787.514 1.29 1.27 1.29 2.13 0 .86-.504 1.616-1.29 2.13-.576.377-1.261.603-1.96.696v.299a.75.75 0 11-1.5 0v-.3c-.697-.092-1.382-.318-1.958-.695-.482-.315-.857-.717-1.078-1.188a.75.75 0 111.359-.636c.08.173.245.376.54.569.313.205.706.353 1.138.432v-2.748a3.782 3.782 0 01-1.653-.713C6.9 9.433 6.5 8.681 6.5 7.875c0-.805.4-1.558 1.097-2.096a3.78 3.78 0 011.653-.713V4.75A.75.75 0 0110 4z" clip-rule="evenodd" />
+                    </svg>
+                    Entry Fee
+                  </h3>
                   <p class="mt-1 text-lg font-semibold text-gray-900">
                     <%= if get_entry_fee_cents(@venue) do %>
-                      $<%= :erlang.float_to_binary(get_entry_fee_cents(@venue) / 100, [decimals: 2]) %>
+                      <%= format_currency(get_entry_fee_cents(@venue), get_country_currency(@venue)) %>
                     <% else %>
                       Free
                     <% end %>
                   </p>
                 </div>
-                <div>
-                  <h3 class="text-sm font-medium text-gray-500">Frequency</h3>
-                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= get_frequency(@venue) %></p>
+                <div class="flex flex-col">
+                  <h3 class="mb-2 flex items-center text-sm font-medium text-gray-500">
+                    <svg class="mr-1.5 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                      <path fill-rule="evenodd" d="M5.75 2a.75.75 0 01.75.75V4h7V2.75a.75.75 0 011.5 0V4h.25A2.75 2.75 0 0118 6.75v8.5A2.75 2.75 0 0115.25 18H4.75A2.75 2.75 0 012 15.25v-8.5A2.75 2.75 0 014.75 4H5V2.75A.75.75 0 015.75 2zm-1 5.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H4.75z" clip-rule="evenodd" />
+                    </svg>
+                    Frequency
+                  </h3>
+                  <p class="mt-1 text-lg font-semibold text-gray-900 capitalize"><%= get_frequency(@venue) %></p>
                 </div>
               </div>
             </div>
@@ -314,6 +370,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       # Try to get venue from database using slug
       venue = Locations.get_venue_by_slug(slug)
       |> Locations.load_venue_relations()
+      |> TriviaAdvisor.Repo.preload(city: :country)
 
       if venue do
         {:ok, venue}
@@ -565,4 +622,116 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       "#{TriviaAdvisorWeb.Endpoint.url()}#{path}"
     end
   end
+
+  # Helper to get country information
+  defp get_country(venue) do
+    cond do
+      # Check if city exists
+      is_nil(venue.city) ->
+        %{name: "Unknown", slug: "unknown"}
+
+      # Check if city.country is loaded (not an Ecto.Association.NotLoaded struct)
+      is_struct(venue.city.country, Ecto.Association.NotLoaded) ->
+        %{name: "Unknown", slug: "unknown"}
+
+      # If city.country is properly loaded
+      venue.city.country ->
+        venue.city.country
+
+      # Fallback
+      true ->
+        %{name: "Unknown", slug: "unknown"}
+    end
+  end
+
+  # Helper to get city information
+  defp get_city(venue) do
+    if venue.city && !is_struct(venue.city, Ecto.Association.NotLoaded) do
+      venue.city
+    else
+      # Fallback if city is not available or not loaded
+      %{name: "Unknown", slug: "unknown"}
+    end
+  end
+
+  # Helper to format time in a more friendly way (e.g., 7:30 PM)
+  defp format_time(%Time{} = time) do
+    # Convert Time struct to 12-hour format with AM/PM
+    hour = time.hour
+    am_pm = if hour >= 12, do: "PM", else: "AM"
+    hour_12 = cond do
+      hour == 0 -> 12
+      hour > 12 -> hour - 12
+      true -> hour
+    end
+
+    "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm} (local time)"
+  end
+
+  defp format_time(time_str) when is_binary(time_str) do
+    case Regex.run(~r/(\d{1,2}):?(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i, time_str) do
+      [_, hour, minute, _, am_pm] when am_pm in ["AM", "PM", "am", "pm"] ->
+        "#{hour}:#{minute} #{String.upcase(am_pm)} (local time)"
+      [_, hour, minute, _, nil] ->
+        # Try to convert 24-hour time to 12-hour time
+        {hour_int, _} = Integer.parse(hour)
+        am_pm = if hour_int >= 12, do: "PM", else: "AM"
+        hour_12 = cond do
+          hour_int == 0 -> "12"
+          hour_int > 12 -> "#{hour_int - 12}"
+          true -> "#{hour_int}"
+        end
+        "#{hour_12}:#{minute} #{am_pm} (local time)"
+      _ ->
+        # If we can't parse the time, return it as-is
+        time_str
+    end
+  end
+
+  # Catch-all clause for non-string, non-Time inputs
+  defp format_time(time) do
+    # Try to convert to string and format
+    "#{time} (local time)"
+  end
+
+  # Helper to get country's currency
+  defp get_country_currency(venue) do
+    country = get_country(venue)
+
+    cond do
+      # Check if currency code is stored in country data
+      country && Map.has_key?(country, :currency_code) && country.currency_code ->
+        country.currency_code
+      # UK
+      country && country.name == "United Kingdom" ->
+        "GBP"
+      # For US
+      country && country.name == "United States" ->
+        "USD"
+      # For Euro countries
+      country && country.name in ["France", "Germany", "Italy", "Spain", "Ireland"] ->
+        "EUR"
+      # Default to USD if we don't know
+      true ->
+        "USD"
+    end
+  end
+
+  # Helper to format currency with proper symbol
+  defp format_currency(amount_cents, currency_code) when is_number(amount_cents) do
+    amount = amount_cents / 100
+
+    symbol = case currency_code do
+      "USD" -> "$"
+      "GBP" -> "£"
+      "EUR" -> "€"
+      "AUD" -> "A$"
+      "CAD" -> "C$"
+      "JPY" -> "¥"
+      _ -> "$" # Default to USD
+    end
+
+    "#{symbol}#{:erlang.float_to_binary(amount, [decimals: 2])}"
+  end
+  defp format_currency(_, _), do: "Free"
 end
