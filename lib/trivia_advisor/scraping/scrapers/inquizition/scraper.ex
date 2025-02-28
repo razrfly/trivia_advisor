@@ -3,6 +3,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.{Events, Repo, Scraping}
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @base_url "https://inquizition.com"
   @find_quiz_url "#{@base_url}/find-a-quiz/"
@@ -18,11 +19,27 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       Logger.info("📝 Loaded .env file")
     end
 
-    # Verify API key is available
+    # Verify Zyte API key is available
     case System.get_env("ZYTE_API_KEY") do
       key when is_binary(key) and byte_size(key) > 0 ->
         Logger.info("🔑 Zyte API key loaded successfully")
-        do_scrape(key)
+
+        # Also verify Google Maps API key is available
+        case System.get_env("GOOGLE_MAPS_API_KEY") do
+          google_key when is_binary(google_key) and byte_size(google_key) > 0 ->
+            Logger.info("🔑 Google Maps API key loaded successfully")
+
+            # Explicitly set Google API key in Application config
+            Application.put_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, [
+              google_maps_api_key: google_key
+            ])
+
+            do_scrape(key)
+
+          _ ->
+            Logger.error("❌ GOOGLE_MAPS_API_KEY not found in environment")
+            []
+        end
 
       _ ->
         Logger.error("❌ ZYTE_API_KEY not found in environment")
@@ -212,6 +229,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       case VenueStore.process_venue(store_data) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+          # Check if we should fetch Google Place images using the centralized function
+          venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
           # Get source from seeds
           source = Repo.get_by!(Scraping.Source, name: "inquizition")

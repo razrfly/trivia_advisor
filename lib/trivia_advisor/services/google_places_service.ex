@@ -134,6 +134,13 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
   end
 
   defp get_google_api_key do
-    Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+    # First try to get from environment variable directly
+    case System.get_env("GOOGLE_MAPS_API_KEY") do
+      key when is_binary(key) and byte_size(key) > 0 ->
+        key
+      _ ->
+        # Fall back to application config
+        Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+    end
   end
 end

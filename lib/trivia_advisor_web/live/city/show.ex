@@ -460,22 +460,6 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     # Check for stored Google Place images
     google_place_image = if Map.get(venue, :google_place_images) && Enum.any?(venue.google_place_images) do
       TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
-    else
-      # Try to get image from Google Places API if venue has a place_id
-      if Map.get(venue, :place_id) && venue.place_id != "" do
-        # Try to fetch and store the Google Place images
-        try do
-          case TriviaAdvisor.Services.GooglePlaceImageStore.process_venue_images(venue) do
-            {:ok, updated_venue} ->
-              TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(updated_venue)
-            _ ->
-              # Fallback to direct API call if processing fails
-              TriviaAdvisor.Services.GooglePlacesService.get_venue_image(venue.id)
-          end
-        rescue
-          _ -> nil
-        end
-      end
     end
 
     # Use the first available image or fall back to placeholder

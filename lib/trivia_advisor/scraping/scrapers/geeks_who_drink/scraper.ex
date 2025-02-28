@@ -5,6 +5,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
   alias TriviaAdvisor.{Repo, Locations.VenueStore}
   alias TriviaAdvisor.Scraping.{Source, ScrapeLog}
   alias TriviaAdvisor.Events.EventStore
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
   alias HtmlEntities
 
   @base_url "https://www.geekswhodrink.com/wp-admin/admin-ajax.php"
@@ -126,6 +127,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
       case VenueStore.process_venue(venue_attrs) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+          # Check if we should fetch Google Place images using the centralized function
+          venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
           # Get source for event creation
           source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
@@ -257,6 +261,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
         case VenueStore.process_venue(venue_attrs) do
           {:ok, venue} ->
             Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+            # Check if we should fetch Google Place images using the centralized function
+            venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
             # Get source for event creation
             source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
