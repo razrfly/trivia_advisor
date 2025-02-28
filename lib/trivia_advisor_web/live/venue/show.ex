@@ -781,10 +781,10 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     size = "600x400"
 
     # Zoom level (higher numbers = more zoomed in)
-    zoom = 14
+    zoom = 18
 
-    # Use the Mapbox Streets style
-    style = "mapbox/streets-v12"
+    # Use custom Mapbox style instead of default streets style
+    style = "holden/cm7pbsjwv004401sc5z5ldatr"
 
     # Construct the URL
     "https://api.mapbox.com/styles/v1/#{style}/static/#{marker}/#{lng},#{lat},#{zoom}/#{size}?access_token=#{token}"
