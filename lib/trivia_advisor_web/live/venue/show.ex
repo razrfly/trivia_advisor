@@ -23,13 +23,17 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         country = get_country(venue)
         city = get_city(venue)
 
+        # Get Mapbox access token from config
+        mapbox_token = Application.get_env(:trivia_advisor, :mapbox)[:access_token] || ""
+
         {:ok,
           socket
           |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
           |> assign(:venue, venue)
           |> assign(:nearby_venues, nearby_venues)
           |> assign(:country, country)
-          |> assign(:city, city)}
+          |> assign(:city, city)
+          |> assign(:mapbox_token, mapbox_token)}
 
       {:error, _reason} ->
         {:ok,
@@ -39,6 +43,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
           |> assign(:nearby_venues, [])
           |> assign(:country, nil)
           |> assign(:city, nil)
+          |> assign(:mapbox_token, "")
           |> put_flash(:error, "Venue not found")}
     end
   end
@@ -255,15 +260,27 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
             <!-- Map -->
             <div class="mb-8 overflow-hidden rounded-lg border bg-white p-6 shadow-sm">
               <h3 class="mb-4 text-lg font-semibold text-gray-900">Location</h3>
-              <div class="h-64 overflow-hidden rounded-md bg-gray-200">
-                <!-- Placeholder for map -->
-                <div class="flex h-full w-full items-center justify-center">
-                  <p class="text-gray-500">Map View</p>
-                </div>
+              <div class="h-64 overflow-hidden rounded-md">
+                <%= if @venue && @venue.latitude && @venue.longitude do %>
+                  <img
+                    src={get_static_map_url(@venue, @mapbox_token)}
+                    alt="Map of #{@venue.name}"
+                    class="h-full w-full object-cover"
+                  />
+                <% else %>
+                  <div class="flex h-full w-full items-center justify-center bg-gray-200">
+                    <p class="text-gray-500">Map not available</p>
+                  </div>
+                <% end %>
               </div>
               <div class="mt-4">
                 <p class="text-gray-600"><%= @venue.address %></p>
-                <a href="#" class="mt-2 inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-700">
+                <a
+                  href={get_directions_url(@venue)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="mt-2 inline-flex items-center text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                >
                   Get directions
                   <svg class="ml-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd" />
@@ -751,4 +768,40 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     "#{symbol}#{:erlang.float_to_binary(amount, [decimals: 2])}"
   end
   defp format_currency(_, _), do: "Free"
+
+  # Helper to generate a Mapbox static map URL
+  defp get_static_map_url(venue, token) when is_binary(token) and byte_size(token) > 0 do
+    # Convert Decimal to float if needed
+    {lat, lng} = {to_float(venue.latitude), to_float(venue.longitude)}
+
+    # Create a marker pin at the venue's coordinates
+    marker = "pin-l-star+f74e4e(#{lng},#{lat})"
+
+    # Size of the map image
+    size = "600x400"
+
+    # Zoom level (higher numbers = more zoomed in)
+    zoom = 14
+
+    # Use the Mapbox Streets style
+    style = "mapbox/streets-v12"
+
+    # Construct the URL
+    "https://api.mapbox.com/styles/v1/#{style}/static/#{marker}/#{lng},#{lat},#{zoom}/#{size}?access_token=#{token}"
+  end
+
+  # Fallback if token is missing
+  defp get_static_map_url(venue, _token) do
+    "https://placehold.co/600x400?text=Map+for+#{URI.encode(venue.name)}"
+  end
+
+  # Create a directions URL to Google Maps
+  defp get_directions_url(venue) do
+    # Convert Decimal to float if needed
+    lat = to_float(venue.latitude)
+    lng = to_float(venue.longitude)
+
+    # Use Google Maps directions URL with coordinates
+    "https://www.google.com/maps/dir/?api=1&destination=#{lat},#{lng}&destination_place_id=#{venue.place_id}"
+  end
 end
