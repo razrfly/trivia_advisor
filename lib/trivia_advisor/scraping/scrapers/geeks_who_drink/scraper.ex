@@ -134,11 +134,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
           # Get source for event creation
           source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
 
+          # Format day and time from the extracted details
+          time_text = format_event_time(venue_data, additional_details)
+
           # Create event data
           event_data = %{
             raw_title: "Geeks Who Drink at #{venue.name}",
             name: venue.name,
-            time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
+            time_text: time_text,  # Use formatted time text
             description: venue_data.description,
             fee_text: "Free",  # Explicitly set as free for all GWD events
             source_url: venue_data.url,
@@ -167,6 +170,74 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
         Venue Data: #{inspect(venue_data)}
         """)
         nil
+    end
+  end
+
+  defp format_event_time(venue_data, additional_details) do
+    # Log inputs for debugging
+    Logger.debug("""
+    📅 Format Event Time:
+      venue_data.time_text: #{inspect(venue_data.time_text)}
+      venue_data.day_of_week: #{inspect(venue_data.day_of_week)}
+      additional_details.start_time: #{inspect(additional_details.start_time)}
+    """)
+
+    # Extract day of week from venue data if available
+    day_name = case venue_data.time_text do
+      time_text when is_binary(time_text) and byte_size(time_text) > 3 ->
+        case TriviaAdvisor.Scraping.Helpers.TimeParser.parse_day_of_week(time_text) do
+          {:ok, day_of_week} ->
+            day_to_string(day_of_week)
+          _ ->
+            # Default to Tuesday if day extraction fails
+            "Tuesday"
+        end
+      _ ->
+        # Default day
+        "Tuesday"
+    end
+
+    # Extract time from additional details if available
+    time = cond do
+      # If start_time is available as a formatted string
+      is_binary(additional_details.start_time) && String.match?(additional_details.start_time, ~r/\d{2}:\d{2}/) ->
+        Logger.debug("📅 Using start_time from additional_details: #{additional_details.start_time}")
+        additional_details.start_time
+
+      # If we can extract time from the venue time_text
+      is_binary(venue_data.time_text) and byte_size(venue_data.time_text) > 3 ->
+        Logger.debug("📅 Attempting to parse time from venue_data.time_text: #{venue_data.time_text}")
+        case TriviaAdvisor.Scraping.Helpers.TimeParser.parse_time(venue_data.time_text) do
+          {:ok, time_str} ->
+            Logger.debug("📅 Successfully parsed time: #{time_str}")
+            time_str
+          _ ->
+            Logger.debug("📅 Failed to parse time, using default")
+            "20:00"  # Default time
+        end
+
+      # Default fallback
+      true ->
+        Logger.debug("📅 No valid time source found, using default time")
+        "20:00"
+    end
+
+    # Format: "Day HH:MM"
+    formatted_time = "#{day_name} #{time}"
+    Logger.debug("📅 Final formatted time: #{formatted_time}")
+    formatted_time
+  end
+
+  defp day_to_string(day_of_week) do
+    case day_of_week do
+      1 -> "Monday"
+      2 -> "Tuesday"
+      3 -> "Wednesday"
+      4 -> "Thursday"
+      5 -> "Friday"
+      6 -> "Saturday"
+      7 -> "Sunday"
+      _ -> "Tuesday" # Fallback
     end
   end
 
@@ -268,11 +339,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             # Get source for event creation
             source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
 
-            # Create event data
+            # Format the event time correctly
+            time_text = format_event_time(venue_data, additional_details)
+
+            # Create event data with the correct time info
             event_data = %{
               raw_title: "Geeks Who Drink at #{venue.name}",
               name: venue.name,
-              time_text: "Tuesday 20:00",  # Format as "Day HH:MM" which EventStore expects
+              time_text: time_text,
               description: venue_data.description,
               fee_text: "Free",  # Explicitly set as free for all GWD events
               source_url: venue_data.url,

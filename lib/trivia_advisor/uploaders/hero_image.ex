@@ -10,39 +10,38 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
   # Whitelist file extensions
   def validate({file, _}) do
     file_extension = file.file_name |> Path.extname() |> String.downcase()
-    ~w(.jpg .jpeg .gif .png .webp .avif) |> Enum.member?(file_extension)
+    Enum.member?(~w(.jpg .jpeg .gif .png .webp .avif), file_extension)
   end
 
   # Define a thumbnail transformation:
-  def transform(:thumb, {_file, _}) do
-    {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250 -format jpg"}
+  def transform(:thumb, _) do
+    {:convert, "-thumbnail 300x300^ -gravity center -extent 300x300"}
   end
 
-  # Override the storage directory to use venue slug
+  # Temporary storage_dir when venue not loaded
   def storage_dir(_version, {_file, scope}) when is_nil(scope), do: "uploads/venues/temp"
+
+  # Final storage_dir after venue loaded
   def storage_dir(_version, {_file, scope}) do
-    venue = case scope.venue do
-      %Ecto.Association.NotLoaded{} ->
-        # Reload venue if not loaded
-        TriviaAdvisor.Repo.preload(scope, :venue).venue
-      loaded -> loaded
+    scope = TriviaAdvisor.Venues.maybe_preload_venue(scope)
+
+    if not is_nil(scope.venue) do
+      venue = scope.venue
+      "uploads/venues/#{venue.slug}"
+    else
+      "uploads/venues/temp"
     end
-    "uploads/venues/#{venue.slug}"
   end
 
   # Provide a default URL if there hasn't been a file uploaded
   def default_url(_version, _scope) do
-    "/images/default-hero.jpg"
+    "https://placehold.co/600x400/png"
   end
 
   # Generate a unique filename, converting webp/avif to jpg for thumbnails
   def filename(version, {file, _scope}) do
-    name = Path.basename(file.file_name, Path.extname(file.file_name))
-   #ext = Path.extname(file.file_name)
-
-    case version do
-      :thumb -> "#{name}_#{version}"
-      _ -> "#{name}_#{version}"     # Keep original extension
-    end
+    file_name = Path.rootname(file.file_name)
+    file_extension = Path.extname(file.file_name)
+    "#{version}_#{file_name}#{file_extension}"
   end
 end

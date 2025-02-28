@@ -81,7 +81,7 @@ import_config "#{config_env()}.exs"
 # Waffle configuration
 config :waffle,
   storage: Waffle.Storage.Local,
-  # storage_dir_prefix: "priv/static",
+  storage_dir_prefix: "priv/static",
   asset_host: {:system, "ASSET_HOST"},
   base_url: "/uploads"
 
