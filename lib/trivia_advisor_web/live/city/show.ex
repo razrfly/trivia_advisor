@@ -118,11 +118,13 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
               <% venue = venue_data.venue %>
               <div class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm transition hover:shadow">
                 <div class="relative h-48">
-                  <img
-                    src={venue.hero_image_url || get_venue_image(venue)}
-                    alt={venue.name}
-                    class="h-full w-full object-cover"
-                  />
+                  <a href={~p"/venues/#{venue.slug}"}>
+                    <img
+                      src={venue.hero_image_url || get_venue_image(venue)}
+                      alt={venue.name}
+                      class="h-full w-full object-cover"
+                    />
+                  </a>
                   <div class="absolute right-2 top-2 rounded bg-white p-1 text-yellow-400">
                     <%= if venue.rating do %>
                       <div class="flex items-center">
@@ -139,7 +141,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                   </div>
                 </div>
                 <div class="p-4">
-                  <h3 class="mb-1 text-lg font-bold text-gray-900"><%= venue.name %></h3>
+                  <a href={~p"/venues/#{venue.slug}"} class="hover:text-indigo-600">
+                    <h3 class="mb-1 text-lg font-bold text-gray-900"><%= venue.name %></h3>
+                  </a>
                   <p class="mb-2 text-sm text-gray-600">
                     <%= venue.address %>
                     <span class="mt-1 block text-xs font-medium text-indigo-600">
@@ -350,35 +354,75 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     Enum.find(mock_cities, fn city -> city.slug == slug end)
   end
 
-  # Extract day of week from venue (implement event handling later)
-  defp get_venue_day_of_week(_venue) do
-    # For now, assign a random day between 1-7 for demo purposes
-    # In a real app, this would come from the venue's events
-    Enum.random(1..7)
+  # Extract day of week from venue
+  defp get_venue_day_of_week(venue) do
+    # Get the day of week from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :day_of_week, 1) # Default to Monday if not found
+    else
+      # Default value if no events
+      1 # Monday as default
+    end
   end
 
-  # Extract start time from venue (implement event handling later)
-  defp get_venue_start_time(_venue) do
-    # For now, generate a random time for demo purposes
-    # In a real app, this would come from the venue's events
-    hour = Enum.random(6..9)
-    "#{hour}:00 PM"
+  # Extract start time from venue
+  defp get_venue_start_time(venue) do
+    # Get the start time from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      time = Map.get(event, :start_time)
+
+      if is_struct(time, Time) do
+        # Format Time struct properly
+        hour = time.hour
+        am_pm = if hour >= 12, do: "PM", else: "AM"
+        hour_12 = cond do
+          hour == 0 -> 12
+          hour > 12 -> hour - 12
+          true -> hour
+        end
+        "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm}"
+      else
+        # Default time if not a Time struct
+        "7:00 PM"
+      end
+    else
+      # Default value if no events
+      "7:00 PM"
+    end
   end
 
-  # Extract entry fee from venue (implement event handling later)
-  defp get_venue_entry_fee(_venue) do
-    # For now, assign random entry fee for demo purposes
-    # In a real app, this would come from the venue's events
-    case Enum.random(1..3) do
-      1 -> "Free"
-      2 -> "£2"
-      3 -> "£3"
+  # Extract entry fee from venue
+  defp get_venue_entry_fee(venue) do
+    # Get the entry fee from the first event if available
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      fee_cents = Map.get(event, :entry_fee_cents)
+
+      if fee_cents do
+        # Format as currency with pound symbol
+        "£#{:erlang.float_to_binary(fee_cents / 100, [decimals: 2])}"
+      else
+        # Free if no fee specified
+        "Free"
+      end
+    else
+      # Default value if no events
+      "Free"
     end
   end
 
   # Extract description from venue
   defp get_venue_description(venue) do
-    # Use direct description if available, then try metadata, then fallback to generic
+    # First try to get description from events
+    event_description = if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      Map.get(event, :description)
+    end
+
+    # Use direct description if available, then try event description, then metadata, then fallback to generic
+    event_description ||
     Map.get(venue, :description) ||
     (if Map.has_key?(venue, :metadata), do: venue.metadata["description"]) ||
     "A trivia night at #{venue.name}. Join us for a fun evening of questions, prizes, and drinks."

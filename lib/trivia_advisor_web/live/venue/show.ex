@@ -3,7 +3,10 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   alias TriviaAdvisor.Services.UnsplashService
   alias TriviaAdvisor.Services.GooglePlacesService
   alias TriviaAdvisor.Locations
+  alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
   require Logger
+
+  import ImageGallery
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
@@ -49,6 +52,9 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, :get_venue_image_at_position, &get_venue_image_at_position/2)
+    assigns = assign(assigns, :count_available_images, &count_available_images/1)
+
     ~H"""
     <div>
       <div class="mx-auto max-w-7xl px-4 py-8">
@@ -83,59 +89,23 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         <h1 class="mb-6 text-3xl font-bold text-gray-900"><%= @venue.name %></h1>
 
         <!-- Photo Gallery -->
-        <div class="mb-8 overflow-hidden rounded-lg">
-          <div class="flex flex-wrap">
-            <%= if @venue && venue_has_images?(@venue) do %>
-              <div class="w-1/2 p-1">
-                <img
-                  src={get_venue_image_at_position(@venue, 0)}
-                  alt={@venue.name}
-                  class="h-96 w-full object-cover rounded-tl-lg rounded-bl-lg"
-                />
-              </div>
-              <div class="w-1/2">
-                <div class="flex flex-wrap">
-                  <div class="w-1/2 p-1">
-                    <img
-                      src={get_venue_image_at_position(@venue, 1)}
-                      alt={@venue.name}
-                      class="h-48 w-full object-cover rounded-tr-lg"
-                    />
-                  </div>
-                  <div class="w-1/2 p-1">
-                    <img
-                      src={get_venue_image_at_position(@venue, 2)}
-                      alt={@venue.name}
-                      class="h-48 w-full object-cover"
-                    />
-                  </div>
-                  <div class="w-1/2 p-1">
-                    <img
-                      src={get_venue_image_at_position(@venue, 3)}
-                      alt={@venue.name}
-                      class="h-48 w-full object-cover"
-                    />
-                  </div>
-                  <div class="w-1/2 p-1">
-                    <img
-                      src={get_venue_image_at_position(@venue, 4)}
-                      alt={@venue.name}
-                      class="h-48 w-full object-cover rounded-br-lg"
-                    />
-                  </div>
-                </div>
-              </div>
-            <% else %>
-              <div class="w-full p-1">
-                <img
-                  src={@venue.hero_image_url || "https://placehold.co/1200x400?text=#{@venue.name}"}
-                  alt={@venue.name}
-                  class="h-96 w-full object-cover rounded-lg"
-                />
-              </div>
-            <% end %>
+        <%= if @venue do %>
+          <.gallery
+            venue={@venue}
+            get_venue_image_at_position={@get_venue_image_at_position}
+            count_available_images={@count_available_images}
+          />
+        <% else %>
+          <div class="mb-8 overflow-hidden rounded-lg">
+            <div class="w-full p-1">
+              <img
+                src={"https://placehold.co/1200x400?text=Venue Not Found"}
+                alt="Venue Not Found"
+                class="h-96 w-full object-cover rounded-lg"
+              />
+            </div>
           </div>
-        </div>
+        <% end %>
 
         <div class="grid gap-8 md:grid-cols-3">
           <!-- Main Content -->
@@ -579,73 +549,75 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   defp to_float(%Decimal{} = decimal), do: Decimal.to_float(decimal)
   defp to_float(value), do: value
 
-  # Check if venue has multiple images from any source
-  defp venue_has_images?(venue) do
-    google_images_count = if venue.google_place_images && is_list(venue.google_place_images), do: length(venue.google_place_images), else: 0
-    event_images_count = if venue.events && Enum.any?(venue.events) do
+  # Count real available images (no fallbacks)
+  defp count_available_images(venue) do
+    # Count Google images
+    google_images_count = if venue.google_place_images && is_list(venue.google_place_images),
+      do: length(venue.google_place_images),
+      else: 0
+
+    # Count event hero image
+    event_image_count = if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      # Check for hero_image instead of images
-      if event.hero_image, do: 1, else: 0
+      if event.hero_image && event.hero_image.file_name, do: 1, else: 0
     else
       0
     end
 
-    total_images = google_images_count + event_images_count
-    total_images >= 2  # Show gallery layout if we have at least 2 images
+    # Return total
+    google_images_count + event_image_count
   end
 
-  # Get venue image at a specific position, prioritizing event images then Google images
+  # Modified version to never return nil and properly combine all image sources
   defp get_venue_image_at_position(venue, position) do
-    # First get the event and its hero image if available
-    event_image_url = nil
-    event = nil
-
-    if venue.events && Enum.any?(venue.events) do
+    # Get the event and its hero image if available
+    {_event, event_image_url} = if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      event_image_url = if event.hero_image && event.hero_image.file_name,
+      image_url = if event.hero_image && event.hero_image.file_name,
         do: TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event}),
         else: nil
+      {event, image_url}
+    else
+      {nil, nil}
     end
 
-    # Get Google images if available
-    google_images = if venue.google_place_images && is_list(venue.google_place_images),
-      do: venue.google_place_images,
-      else: []
+    # Get Google images if available (ensuring they're valid)
+    google_images = if venue.google_place_images && is_list(venue.google_place_images) do
+      venue.google_place_images
+      |> Enum.filter(fn img -> is_map(img) end)
+    else
+      []
+    end
 
-    cond do
-      # If position is 0 and we have an event image, use it for the main image
-      position == 0 && event_image_url ->
-        event_image_url
+    # Combine all available images with hero image first
+    all_images = []
 
-      # For positions > 0, or if no event image available, use Google images
-      position < length(google_images) + (if event_image_url, do: 0, else: 1) ->
-        # Adjust position if we used an event image for position 0
-        google_position = if event_image_url && position > 0,
-          do: position - 1,
-          else: position
+    # Add hero image first if available
+    all_images = if event_image_url, do: [event_image_url | all_images], else: all_images
 
-        image_data = Enum.at(google_images, google_position)
+    # Add all Google images
+    google_image_urls = google_images
+    |> Enum.map(fn image_data ->
+      cond do
+        Map.has_key?(image_data, "local_path") && image_data["local_path"] ->
+          ensure_full_url(image_data["local_path"])
+        Map.has_key?(image_data, "original_url") && image_data["original_url"] ->
+          image_data["original_url"]
+        true ->
+          nil
+      end
+    end)
+    |> Enum.filter(fn url -> url != nil end)
 
-        if image_data do
-          if is_map(image_data) && Map.has_key?(image_data, "local_path") && image_data["local_path"] do
-            ensure_full_url(image_data["local_path"])
-          else
-            # Original URL as a fallback
-            if is_map(image_data) && Map.has_key?(image_data, "original_url") do
-              image_data["original_url"]
-            else
-              # Last resort fallback for this position - pub generic image
-              "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
-            end
-          end
-        else
-          # Fallback if we can't get a Google image at this position
-          "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
-        end
+    all_images = all_images ++ google_image_urls
 
-      # Fallback for any other case - this shouldn't happen often
-      true ->
-        "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
+    # Now get the image at the requested position
+    if position < length(all_images) do
+      Enum.at(all_images, position)
+    else
+      # If no image exists for this position, use a placeholder
+      # to ensure src attribute is never missing
+      "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
     end
   end
 

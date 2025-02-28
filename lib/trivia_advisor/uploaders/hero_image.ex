@@ -19,7 +19,7 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
   end
 
   # Override the storage directory to use venue slug
-  def storage_dir(_version, {_file, scope}) when is_nil(scope), do: "priv/static/uploads/venues/temp"
+  def storage_dir(_version, {_file, scope}) when is_nil(scope), do: "uploads/venues/temp"
   def storage_dir(_version, {_file, scope}) do
     venue = case scope.venue do
       %Ecto.Association.NotLoaded{} ->
@@ -27,7 +27,7 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
         TriviaAdvisor.Repo.preload(scope, :venue).venue
       loaded -> loaded
     end
-    "priv/static/uploads/venues/#{venue.slug}"
+    "uploads/venues/#{venue.slug}"
   end
 
   # Provide a default URL if there hasn't been a file uploaded
