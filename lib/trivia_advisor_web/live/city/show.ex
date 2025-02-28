@@ -401,8 +401,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       fee_cents = Map.get(event, :entry_fee_cents)
 
       if fee_cents do
-        # Format as currency with pound symbol
-        "£#{:erlang.float_to_binary(fee_cents / 100, [decimals: 2])}"
+        # Format the currency using the same approach as venue show page
+        format_currency(fee_cents, get_country_currency(venue))
       else
         # Free if no fee specified
         "Free"
@@ -412,6 +412,75 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       "Free"
     end
   end
+
+  # Helper to get country's currency code
+  defp get_country_currency(venue) do
+    # Try to get country code from venue -> city -> country
+    country_code = cond do
+      # If venue has loaded city with country association
+      is_map(venue) && Map.has_key?(venue, :city) && is_map(venue.city) &&
+      Map.has_key?(venue.city, :country) && is_map(venue.city.country) &&
+      Map.has_key?(venue.city.country, :code) && venue.city.country.code ->
+        venue.city.country.code
+
+      # Try to get country from metadata
+      is_map(venue) && Map.has_key?(venue, :metadata) && venue.metadata &&
+      is_map(venue.metadata) && Map.has_key?(venue.metadata, "country_code") ->
+        venue.metadata["country_code"]
+
+      true -> "GB" # Default to UK if not found
+    end
+
+    # Convert country code to currency code
+    case country_code do
+      "US" -> "USD"
+      "CA" -> "CAD"
+      "AU" -> "AUD"
+      "NZ" -> "NZD"
+      "JP" -> "JPY"
+      "IE" -> "EUR"
+      "DE" -> "EUR"
+      "FR" -> "EUR"
+      "ES" -> "EUR"
+      "IT" -> "EUR"
+      "AT" -> "EUR"
+      "BE" -> "EUR"
+      "FI" -> "EUR"
+      "GR" -> "EUR"
+      "PT" -> "EUR"
+      "BR" -> "BRL"
+      "MX" -> "MXN"
+      "IN" -> "INR"
+      "ZA" -> "ZAR"
+      "SG" -> "SGD"
+      # Default to GBP for UK and unknown countries
+      _ -> "GBP"
+    end
+  end
+
+  # Helper to format currency with proper symbol
+  defp format_currency(amount_cents, currency_code) when is_number(amount_cents) do
+    amount = amount_cents / 100
+
+    symbol = case currency_code do
+      "USD" -> "$"
+      "GBP" -> "£"
+      "EUR" -> "€"
+      "AUD" -> "A$"
+      "CAD" -> "C$"
+      "NZD" -> "NZ$"
+      "JPY" -> "¥"
+      "BRL" -> "R$"
+      "MXN" -> "Mex$"
+      "INR" -> "₹"
+      "ZAR" -> "R"
+      "SGD" -> "S$"
+      _ -> "£" # Default to GBP
+    end
+
+    "#{symbol}#{:erlang.float_to_binary(amount, [decimals: 2])}"
+  end
+  defp format_currency(_, _), do: "Free"
 
   # Extract description from venue
   defp get_venue_description(venue) do
