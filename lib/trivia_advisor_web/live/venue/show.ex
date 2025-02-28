@@ -579,28 +579,73 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   defp to_float(%Decimal{} = decimal), do: Decimal.to_float(decimal)
   defp to_float(value), do: value
 
-  # Check if venue has multiple Google Place images
+  # Check if venue has multiple images from any source
   defp venue_has_images?(venue) do
-    venue.google_place_images && is_list(venue.google_place_images) && length(venue.google_place_images) >= 5
+    google_images_count = if venue.google_place_images && is_list(venue.google_place_images), do: length(venue.google_place_images), else: 0
+    event_images_count = if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      # Check for hero_image instead of images
+      if event.hero_image, do: 1, else: 0
+    else
+      0
+    end
+
+    total_images = google_images_count + event_images_count
+    total_images >= 2  # Show gallery layout if we have at least 2 images
   end
 
-  # Get venue image at a specific position
+  # Get venue image at a specific position, prioritizing event images then Google images
   defp get_venue_image_at_position(venue, position) do
-    if venue.google_place_images && length(venue.google_place_images) > position do
-      image_data = Enum.find(venue.google_place_images, fn img -> img["position"] == position end) ||
-                  Enum.at(venue.google_place_images, position)
+    # First get the event and its hero image if available
+    event_image_url = nil
+    event = nil
 
-      if image_data do
-        if image_data["local_path"] do
-          ensure_full_url(image_data["local_path"])
+    if venue.events && Enum.any?(venue.events) do
+      event = List.first(venue.events)
+      event_image_url = if event.hero_image && event.hero_image.file_name,
+        do: TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event}),
+        else: nil
+    end
+
+    # Get Google images if available
+    google_images = if venue.google_place_images && is_list(venue.google_place_images),
+      do: venue.google_place_images,
+      else: []
+
+    cond do
+      # If position is 0 and we have an event image, use it for the main image
+      position == 0 && event_image_url ->
+        event_image_url
+
+      # For positions > 0, or if no event image available, use Google images
+      position < length(google_images) + (if event_image_url, do: 0, else: 1) ->
+        # Adjust position if we used an event image for position 0
+        google_position = if event_image_url && position > 0,
+          do: position - 1,
+          else: position
+
+        image_data = Enum.at(google_images, google_position)
+
+        if image_data do
+          if is_map(image_data) && Map.has_key?(image_data, "local_path") && image_data["local_path"] do
+            ensure_full_url(image_data["local_path"])
+          else
+            # Original URL as a fallback
+            if is_map(image_data) && Map.has_key?(image_data, "original_url") do
+              image_data["original_url"]
+            else
+              # Last resort fallback for this position - pub generic image
+              "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
+            end
+          end
         else
-          image_data["original_url"]
+          # Fallback if we can't get a Google image at this position
+          "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
         end
-      else
-        get_fallback_image(venue.name)
-      end
-    else
-      get_fallback_image(venue.name)
+
+      # Fallback for any other case - this shouldn't happen often
+      true ->
+        "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
     end
   end
 
