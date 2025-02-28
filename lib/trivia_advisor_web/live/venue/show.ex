@@ -4,9 +4,17 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   alias TriviaAdvisor.Services.GooglePlacesService
   alias TriviaAdvisor.Locations
   alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
+  alias TriviaAdvisorWeb.Helpers.FormatHelpers
   require Logger
 
   import ImageGallery
+  import FormatHelpers, only: [
+    has_event_source?: 1,
+    format_last_updated: 1,
+    format_active_since: 1,
+    get_source_name: 1,
+    format_day_of_week: 1
+  ]
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
@@ -139,7 +147,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                 <div class="flex flex-col">
                   <h3 class="mb-2 flex items-center text-sm font-medium text-gray-500">
                     <svg class="mr-1.5 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M10.75 10.818v2.614A3.13 3.13 0 0011.888 13c.482-.315.612-.648.612-.875 0-.227-.13-.56-.612-.875a3.13 3.13 0 00-1.138-.432zM8.33 8.62c.053.055.115.11.184.164.208.16.46.284.736.363V6.603a2.45 2.45 0 00-.35.13c-.14.065-.27.143-.386.233-.377.292-.514.627-.514.909 0 .184.058.39.202.592.037.051.08.102.128.152z" />
+                      <path d="M10.75 10.818v2.614A3.13 3.13 0 0011.888 13c.482-.315.612-.648.612-.875 0-.227-.13-.56-.612-.875a3.13 3.13 0 00-1.138-.432zM8.33 8.62c.053.055.115.11.184.164.208.208.46.284.736.363V6.603a2.45 2.45 0 00-.35.13c-.14.065-.27.143-.386.233-.377.292-.514.627-.514.909 0 .184.058.39.202.592.037.051.08.102.128.152z" />
                       <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-6a.75.75 0 01.75.75v.316a3.78 3.78 0 011.653.713c.426.33.744.74.925 1.2a.75.75 0 01-1.395.55 1.35 1.35 0 00-.447-.563 2.187 2.187 0 00-.736-.363V9.3c.698.093 1.383.32 1.959.696.787.514 1.29 1.27 1.29 2.13 0 .86-.504 1.616-1.29 2.13-.576.377-1.261.603-1.96.696v.299a.75.75 0 11-1.5 0v-.3c-.697-.092-1.382-.318-1.958-.695-.482-.315-.857-.717-1.078-1.188a.75.75 0 111.359-.636c.08.173.245.376.54.569.313.205.706.353 1.138.432v-2.748a3.782 3.782 0 01-1.653-.713C6.9 9.433 6.5 8.681 6.5 7.875c0-.805.4-1.558 1.097-2.096a3.78 3.78 0 011.653-.713V4.75A.75.75 0 0110 4z" clip-rule="evenodd" />
                     </svg>
                     Entry Fee
@@ -170,6 +178,17 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
               <div class="prose prose-indigo max-w-none">
                 <p><%= get_venue_description(@venue) %></p>
               </div>
+
+              <!-- Event Source Info -->
+              <%= if has_event_source?(@venue) do %>
+                <div class="mt-4 flex items-center space-x-1 text-sm text-gray-500">
+                  <span>Updated <%= format_last_updated(@venue) %></span>
+                  <span>•</span>
+                  <span>Active since <%= format_active_since(@venue) %></span>
+                  <span>•</span>
+                  <span>Source: <%= get_source_name(@venue) %></span>
+                </div>
+              <% end %>
             </div>
 
             <!-- Nearby Venues -->
@@ -394,21 +413,6 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       "7:00 PM"
     end
   end
-
-  defp format_day(day) when is_integer(day) do
-    case day do
-      1 -> "Monday"
-      2 -> "Tuesday"
-      3 -> "Wednesday"
-      4 -> "Thursday"
-      5 -> "Friday"
-      6 -> "Saturday"
-      7 -> "Sunday"
-      _ -> "Unknown"
-    end
-  end
-
-  defp format_day(_), do: "TBA"
 
   defp format_next_date(day_of_week) when is_integer(day_of_week) do
     today = Date.utc_today()
@@ -781,7 +785,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     size = "600x400"
 
     # Zoom level (higher numbers = more zoomed in)
-    zoom = 18
+    zoom = 19
 
     # Use custom Mapbox style instead of default streets style
     style = "holden/cm7pbsjwv004401sc5z5ldatr"
@@ -804,4 +808,11 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     # Use Google Maps directions URL with coordinates
     "https://www.google.com/maps/dir/?api=1&destination=#{lat},#{lng}&destination_place_id=#{venue.place_id}"
   end
+
+  # Helper to format day name from day of week number
+  defp format_day(day) when is_integer(day) do
+    format_day_of_week(day)
+  end
+
+  defp format_day(_), do: "TBA"
 end

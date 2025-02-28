@@ -75,6 +75,7 @@ defmodule TriviaAdvisor.MixProject do
       {:sweet_xml, "~> 0.7"},
       {:mogrify, "~> 0.9.3"},
       {:mime, "~> 2.0"},
+      {:timex, "~> 3.7"},
       {:oban, "~> 2.19"},
       {:igniter, "~> 0.5", only: [:dev]}
     ]
