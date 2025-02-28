@@ -25,6 +25,12 @@ defmodule TriviaAdvisorWeb.Endpoint do
     gzip: false,
     only: TriviaAdvisorWeb.static_paths()
 
+  # Serve uploaded files
+  plug Plug.Static,
+    at: "/uploads",
+    from: {:trivia_advisor, "priv/static/uploads"},
+    gzip: false
+
   # Code reloading can be explicitly enabled under the
   # :code_reloader configuration of your endpoint.
   if code_reloading? do
