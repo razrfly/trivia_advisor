@@ -28,6 +28,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           |> assign(:city, city_data)
           |> assign(:radius, @default_radius)
           |> assign(:radius_options, @radius_options)
+          |> assign(:selected_suburbs, [])
+          |> assign(:suburbs, get_suburbs(city_data.city))
 
         # Get venues for the city using spatial search
         {:ok, assign(socket, :venues, get_venues_near_city(city_data.city, @default_radius))}
@@ -43,7 +45,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
            venue_count: 0,
            image_url: nil
          })
-         |> assign(:venues, [])}
+         |> assign(:venues, [])
+         |> assign(:selected_suburbs, [])
+         |> assign(:suburbs, [])}
     end
   end
 
@@ -63,6 +67,68 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
     {:noreply, socket
       |> assign(:radius, radius)
+      |> assign(:venues, venues)}
+  end
+
+  @impl true
+  def handle_event("select-suburb", %{"suburb-id" => suburb_id}, socket) do
+    suburb_id = String.to_integer(suburb_id)
+
+    # Find the selected suburb data from the suburbs list
+    suburb = Enum.find(socket.assigns.suburbs, fn %{city: city} -> city.id == suburb_id end)
+
+    # Only proceed if the suburb exists and is not already selected
+    if suburb && suburb_id not in socket.assigns.selected_suburbs do
+      selected_suburbs = [suburb_id | socket.assigns.selected_suburbs]
+
+      # Filter venues based on selected suburbs
+      venues = filter_venues_by_suburbs(
+        socket.assigns.city.city,
+        socket.assigns.radius,
+        selected_suburbs,
+        socket.assigns.suburbs
+      )
+
+      {:noreply, socket
+        |> assign(:selected_suburbs, selected_suburbs)
+        |> assign(:venues, venues)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("remove-suburb", %{"suburb-id" => suburb_id}, socket) do
+    suburb_id = String.to_integer(suburb_id)
+
+    # Remove the suburb from the selected list
+    selected_suburbs = Enum.reject(socket.assigns.selected_suburbs, fn id -> id == suburb_id end)
+
+    # If no suburbs are selected, show all venues within radius
+    # Otherwise, filter venues based on remaining selected suburbs
+    venues = if Enum.empty?(selected_suburbs) do
+      get_venues_near_city(socket.assigns.city.city, socket.assigns.radius)
+    else
+      filter_venues_by_suburbs(
+        socket.assigns.city.city,
+        socket.assigns.radius,
+        selected_suburbs,
+        socket.assigns.suburbs
+      )
+    end
+
+    {:noreply, socket
+      |> assign(:selected_suburbs, selected_suburbs)
+      |> assign(:venues, venues)}
+  end
+
+  @impl true
+  def handle_event("clear-suburbs", _params, socket) do
+    # Clear all suburb filters and show all venues within radius
+    venues = get_venues_near_city(socket.assigns.city.city, socket.assigns.radius)
+
+    {:noreply, socket
+      |> assign(:selected_suburbs, [])
       |> assign(:venues, venues)}
   end
 
@@ -111,12 +177,56 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           </div>
         </div>
 
-        <p class="mb-8 text-lg text-gray-600">
+        <p class="mb-4 text-lg text-gray-600">
           Discover the best pub quizzes and trivia nights near <%= @city.name %>.
           <%= if @radius != 0 do %>
             Showing venues within <%= @radius %> km.
           <% end %>
         </p>
+
+        <%= if length(@suburbs) > 0 do %>
+          <div class="mb-6">
+            <div class="flex justify-between items-center mb-3">
+              <h3 class="text-sm font-medium text-gray-700">Filter by suburb:</h3>
+              <%= if length(@selected_suburbs) > 0 do %>
+                <button
+                  phx-click="clear-suburbs"
+                  class="text-sm text-indigo-600 hover:text-indigo-800"
+                >
+                  Clear filters
+                </button>
+              <% end %>
+            </div>
+
+            <div class="flex flex-wrap gap-2">
+              <%= for suburb <- @suburbs do %>
+                <% is_selected = suburb.city.id in @selected_suburbs %>
+                <%= if is_selected do %>
+                  <button
+                    phx-click="remove-suburb"
+                    phx-value-suburb-id={suburb.city.id}
+                    class="inline-flex items-center rounded-full bg-indigo-100 py-1.5 pl-3 pr-2 text-sm font-medium text-indigo-700 hover:bg-indigo-200"
+                  >
+                    <%= suburb.city.name %> (<%= suburb.venue_count %>)
+                    <span class="ml-1 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full text-indigo-500 hover:bg-indigo-200 hover:text-indigo-600">
+                      <svg class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z"></path>
+                      </svg>
+                    </span>
+                  </button>
+                <% else %>
+                  <button
+                    phx-click="select-suburb"
+                    phx-value-suburb-id={suburb.city.id}
+                    class="inline-flex items-center rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200"
+                  >
+                    <%= suburb.city.name %> (<%= suburb.venue_count %>)
+                  </button>
+                <% end %>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
 
         <%= if length(@venues) > 0 do %>
           <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
@@ -532,5 +642,58 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
   defp format_day(day) do
     format_day_of_week(day)
+  end
+
+  # Get suburbs (nearby cities) with venue counts
+  defp get_suburbs(city) do
+    try do
+      Locations.find_suburbs_near_city(city, radius_km: 50, limit: 10)
+    rescue
+      e ->
+        Logger.error("Error fetching suburbs for city: #{inspect(e)}")
+        []
+    end
+  end
+
+  # Filter venues based on selected suburbs
+  defp filter_venues_by_suburbs(city, radius, selected_suburb_ids, suburbs) do
+    # Extract suburb city objects from the suburbs list
+    selected_suburbs = suburbs
+      |> Enum.filter(fn %{city: suburb} -> suburb.id in selected_suburb_ids end)
+      |> Enum.map(fn %{city: suburb} -> suburb end)
+
+    if Enum.empty?(selected_suburbs) do
+      # If no suburbs selected, just return all venues in radius
+      get_venues_near_city(city, radius)
+    else
+      # For each selected suburb, get venues within 10km of it
+      suburb_venues = Enum.flat_map(selected_suburbs, fn suburb ->
+        Locations.find_venues_near_city(suburb, radius_km: 10, load_relations: true)
+      end)
+
+      # Deduplicate venues and format them the same way as in get_venues_near_city
+      suburb_venues
+      |> Enum.uniq_by(fn %{venue: venue} -> venue.id end)
+      |> Enum.map(fn %{venue: venue, distance_km: distance} ->
+        # Extract event source data if available
+        event_source_data = get_event_source_data(venue)
+
+        %{
+          venue: %{
+            id: venue.id,
+            name: venue.name,
+            slug: venue.slug,
+            address: venue.address,
+            description: get_venue_description(venue),
+            hero_image_url: get_venue_image(venue),
+            rating: get_venue_rating(venue),
+            events: Map.get(venue, :events, []),
+            last_seen_at: event_source_data[:last_seen_at],
+            source_name: event_source_data[:source_name]
+          },
+          distance_km: distance
+        }
+      end)
+    end
   end
 end

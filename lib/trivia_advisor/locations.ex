@@ -643,4 +643,72 @@ defmodule TriviaAdvisor.Locations do
       ]
     ])
   end
+
+  @doc """
+  Find suburbs (nearby cities) within a certain radius of a given city.
+  Returns cities with venue count, ordered by venue count (descending).
+
+  ## Options
+    * `:radius_km` - search radius in kilometers (default: 50)
+    * `:limit` - maximum number of cities to return (default: 20)
+    * `:exclude_self` - whether to exclude the origin city (default: true)
+
+  ## Examples
+
+      iex> find_suburbs_near_city(city, radius_km: 25)
+      [%{city: %City{}, venue_count: 12, distance_km: 5.2}, ...]
+  """
+  def find_suburbs_near_city(%City{} = city, opts \\ []) do
+    radius_km = Keyword.get(opts, :radius_km, 50)
+    limit = Keyword.get(opts, :limit, 20)
+    exclude_self = Keyword.get(opts, :exclude_self, true)
+
+    {lat, lng} = City.coordinates(city)
+
+    # Base query to find cities within radius
+    query = from c in City,
+            select: %{
+              city: c,
+              distance_km: fragment(
+                "ST_Distance(
+                  ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                  ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography
+                ) / 1000.0",
+                ^lng, ^lat, c.longitude, c.latitude
+              )
+            },
+            where: fragment(
+              "ST_DWithin(
+                ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+                ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography,
+                ?
+              )",
+              ^lng, ^lat, c.longitude, c.latitude, ^(radius_km * 1000)
+            )
+
+    # Add condition to exclude the origin city if requested
+    query = if exclude_self do
+      from [c] in query, where: c.id != ^city.id
+    else
+      query
+    end
+
+    # Execute the query to get cities with distances
+    cities_with_distances = Repo.all(query)
+
+    # For each city, get the venue count within a smaller radius (10km)
+    # and filter out cities with no venues
+    cities_with_distances
+    |> Enum.map(fn %{city: c, distance_km: distance} ->
+      venues = find_venues_near_city(c, radius_km: 10, load_relations: false)
+      %{
+        city: c,
+        venue_count: length(venues),
+        distance_km: distance
+      }
+    end)
+    |> Enum.filter(fn %{venue_count: count} -> count > 0 end)
+    |> Enum.sort_by(fn %{venue_count: count} -> count end, :desc)
+    |> Enum.take(limit)
+  end
 end
