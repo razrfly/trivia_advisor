@@ -15,6 +15,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   alias TriviaAdvisor.Services.GooglePlacesService
 
   @max_images 5
+  @refresh_days 90  # Number of days before considering refreshing venue images
   @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
   # Client API
@@ -24,6 +25,83 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @doc """
+  Smart function to check if a venue should have its Google Place images updated
+  and update them if needed. This is intended to be used by scrapers.
+
+  It will only update images if:
+  1. The venue has a place_id, and
+  2. One of the following is true:
+     a. The venue has no google_place_images
+     b. The venue has fewer than 5 google_place_images
+     c. The venue's images haven't been updated in at least 90 days
+
+  Returns the venue (updated if images were fetched, or original if not)
+  """
+  def maybe_update_venue_images(venue) do
+    if should_update_images?(venue) do
+      Logger.info("🖼️ Fetching Google Place images for venue: #{venue.name}")
+
+      try do
+        case process_venue_images(venue) do
+          {:ok, updated_venue} ->
+            Logger.info("✅ Successfully fetched Google Place images for venue: #{venue.name}")
+            updated_venue
+          {:error, reason} ->
+            Logger.error("❌ Failed to fetch Google Place images: #{inspect(reason)}")
+            venue
+        end
+      rescue
+        e ->
+          Logger.error("❌ Error fetching Google Place images: #{Exception.message(e)}")
+          venue
+      end
+    else
+      venue
+    end
+  end
+
+  @doc """
+  Determines if a venue should have its Google Place images updated
+  based on defined criteria.
+  """
+  def should_update_images?(venue) do
+    has_place_id?(venue) && (
+      missing_or_few_images?(venue) ||
+      images_need_refresh?(venue)
+    )
+  end
+
+  @doc """
+  Checks if a venue has a valid place_id.
+  """
+  def has_place_id?(venue) do
+    Map.get(venue, :place_id) && venue.place_id != ""
+  end
+
+  @doc """
+  Checks if a venue is missing images or has fewer than the max number.
+  """
+  def missing_or_few_images?(venue) do
+    images = Map.get(venue, :google_place_images, [])
+    is_nil(images) || length(images) < @max_images
+  end
+
+  @doc """
+  Checks if a venue's images need to be refreshed based on the
+  last update timestamp.
+  """
+  def images_need_refresh?(venue) do
+    updated_at = Map.get(venue, :updated_at)
+
+    if is_nil(updated_at) do
+      true
+    else
+      days_since_update = DateTime.diff(DateTime.utc_now(), updated_at, :second) / 86400
+      days_since_update > @refresh_days
+    end
   end
 
   @doc """

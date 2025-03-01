@@ -1,5 +1,6 @@
 defmodule TriviaAdvisor.Uploaders.GooglePlaceImage do
   use Waffle.Definition
+  use Waffle.Ecto.Definition
 
   # Define original and thumbnail versions
   @versions [:original, :thumb]
@@ -9,30 +10,40 @@ defmodule TriviaAdvisor.Uploaders.GooglePlaceImage do
   # Whitelist file extensions
   def validate({file, _}) do
     file_extension = file.file_name |> Path.extname() |> String.downcase()
-    ~w(.jpg .jpeg .gif .png .webp .avif) |> Enum.member?(file_extension)
+    Enum.member?(~w(.jpg .jpeg .gif .png .webp .avif), file_extension)
   end
 
   # Define a thumbnail transformation:
-  def transform(:thumb, {_file, _}) do
-    {:convert, "-strip -thumbnail 250x250^ -gravity center -extent 250x250 -format jpg"}
+  def transform(:thumb, _) do
+    {:convert, "-thumbnail 300x300^ -gravity center -extent 300x300"}
   end
 
   # Override the storage directory to use venue slug
-  def storage_dir(_version, {_file, scope}) do
-    venue_id = scope[:venue_id]
-    venue_slug = scope[:venue_slug]
-    "priv/static/uploads/google_place_images/#{venue_slug || venue_id}"
+  def storage_dir(_version, {_file, {venue_id, venue_slug, _position}}) do
+    "uploads/google_place_images/#{venue_slug || venue_id}"
+  end
+
+  # Handle map format
+  def storage_dir(_version, {_file, %{venue_id: venue_id, venue_slug: venue_slug}}) do
+    "uploads/google_place_images/#{venue_slug || venue_id}"
   end
 
   # Provide a default URL if there hasn't been a file uploaded
   def default_url(_version, _scope) do
-    "/images/default-venue.jpg"
+    "https://placehold.co/600x400/png"
   end
 
-  # Generate a unique filename
-  def filename(version, {file, scope}) do
-    position = scope[:position] || 1
-    name = Path.basename(file.file_name, Path.extname(file.file_name))
-    "#{name}_#{version}_#{position}"
+  # Generate a unique filename - tuple format
+  def filename(version, {file, {_venue_id, _venue_slug, position}}) do
+    file_name = Path.rootname(file.file_name)
+    file_extension = Path.extname(file.file_name)
+    "#{version}_#{file_name}_#{position}#{file_extension}"
+  end
+
+  # Generate a unique filename - map format
+  def filename(version, {file, %{position: position}}) do
+    file_name = Path.rootname(file.file_name)
+    file_extension = Path.extname(file.file_name)
+    "#{version}_#{file_name}_#{position}#{file_extension}"
   end
 end

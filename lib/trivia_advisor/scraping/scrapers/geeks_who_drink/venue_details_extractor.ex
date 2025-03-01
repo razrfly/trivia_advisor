@@ -82,19 +82,74 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
   end
 
   defp extract_start_time(document) do
-    time_text = document
-    |> Floki.find(".venueHero__time")
+    # First, try to extract the visible time directly from the time-moment span
+    visible_time = document
+    |> Floki.find(".venueHero__time .time-moment")
     |> Floki.text()
     |> String.trim()
 
-    case TriviaAdvisor.Scraping.Helpers.TimeParser.parse_time_text(time_text) do
-      {:ok, %{start_time: start_time}} -> start_time
-      _ ->
-        # Fallback to data-time attribute if parsing fails
-        document
-        |> Floki.find(".venueHero__time .time-moment")
-        |> Floki.attribute("data-time")
-        |> List.first()
+    # Log the extracted time for debugging
+    Logger.debug("📅 Extracted visible time: #{inspect(visible_time)}")
+
+    if visible_time && visible_time != "" do
+      # Try to convert 12-hour time (7:00 pm) to 24-hour time (19:00)
+      case Regex.run(~r/(\d+):(\d+)\s*(am|pm)/i, visible_time) do
+        [_, hour_str, minute_str, period] ->
+          hour = String.to_integer(hour_str)
+          minute = String.to_integer(minute_str)
+
+          hour = case String.downcase(period) do
+            "pm" when hour < 12 -> hour + 12
+            "am" when hour == 12 -> 0
+            _ -> hour
+          end
+
+          # Format as HH:MM
+          formatted_time = :io_lib.format("~2..0B:~2..0B", [hour, minute]) |> to_string()
+          Logger.debug("📅 Converted time: #{visible_time} -> #{formatted_time}")
+          formatted_time
+        _ ->
+          # If regex fails, try TimeParser
+          time_text = document
+          |> Floki.find(".venueHero__time")
+          |> Floki.text()
+          |> String.trim()
+
+          Logger.debug("📅 Falling back to parsing time_text: #{inspect(time_text)}")
+          case TriviaAdvisor.Scraping.Helpers.TimeParser.parse_time(time_text) do
+            {:ok, time_str} -> time_str
+            _ ->
+              Logger.debug("📅 Time parsing failed, using default time")
+              "20:00"  # Default fallback
+          end
+      end
+    else
+      # Fallback to data-time attribute if visible time is not found
+      Logger.debug("📅 No visible time found, trying data-time attribute")
+      case document
+      |> Floki.find(".venueHero__time .time-moment")
+      |> Floki.attribute("data-time")
+      |> List.first() do
+        nil ->
+          Logger.debug("📅 No data-time attribute found, using default time")
+          "20:00"  # Default fallback
+        data_time ->
+          # Parse ISO 8601 datetime string
+          Logger.debug("📅 Using data-time attribute: #{inspect(data_time)}")
+          case DateTime.from_iso8601(data_time) do
+            {:ok, datetime, _} ->
+              # Convert UTC time to local time (assuming US Mountain Time, UTC-6)
+              # This is a simplification - in a real app, you'd use proper time zone handling
+              local_hour = rem(datetime.hour + 18, 24)  # UTC to Mountain Time (UTC-6)
+              minute = datetime.minute
+              formatted_time = :io_lib.format("~2..0B:~2..0B", [local_hour, minute]) |> to_string()
+              Logger.debug("📅 Parsed from ISO: #{formatted_time} (converted from UTC #{datetime.hour}:#{minute})")
+              formatted_time
+            _ ->
+              Logger.debug("📅 ISO parsing failed, using default time")
+              "20:00"  # Default fallback
+          end
+      end
     end
   end
 end

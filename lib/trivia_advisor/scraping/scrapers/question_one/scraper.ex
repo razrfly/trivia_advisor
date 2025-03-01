@@ -7,6 +7,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   alias TriviaAdvisor.Repo
   require Logger
   alias TriviaAdvisor.Scraping.Scrapers.QuestionOne.VenueExtractor
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
@@ -152,6 +153,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
           }
 
           with {:ok, venue} <- TriviaAdvisor.Locations.VenueStore.process_venue(venue_data) do
+            # Check if we should fetch Google Place images using the centralized function
+            venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
+
             # Then process the event with the venue
             event_data = %{
               raw_title: raw_title,

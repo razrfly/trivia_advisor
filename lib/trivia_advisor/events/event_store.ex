@@ -339,8 +339,8 @@ defmodule TriviaAdvisor.Events.EventStore do
 
   # Make sure the directory exists
   defp ensure_upload_dir do
-    Path.join([Application.app_dir(:trivia_advisor), "priv", "static", "uploads", "venues"])
-    |> File.mkdir_p!()
+    path = Path.join(Application.app_dir(:trivia_advisor), "priv/static/uploads/venues")
+    File.mkdir_p!(path)
   end
 
   # Check if changeset has errors related to hero_image
