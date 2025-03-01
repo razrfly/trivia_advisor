@@ -132,7 +132,7 @@ defmodule TriviaAdvisor.Services.UnsplashService do
       access_key ->
         # Customize search query based on type
         query = case type do
-          "city" -> "#{name} city skyline cityscape"
+          "city" -> "#{name} city"
           "venue" -> "#{name} pub bar interior"
           _ -> "#{name}"
         end
@@ -150,11 +150,13 @@ defmodule TriviaAdvisor.Services.UnsplashService do
                 results = Map.get(data, "results", [])
 
                 if length(results) > 0 do
-                  # Pick a result - either first or random from top 5
-                  result = if length(results) >= 5 do
-                    Enum.random(Enum.take(results, 5))
+                  # Order by likes and randomly select from top 5
+                  results_by_likes = Enum.sort_by(results, fn r -> Map.get(r, "likes", 0) end, :desc)
+
+                  result = if length(results_by_likes) >= 5 do
+                    Enum.random(Enum.take(results_by_likes, 5))
                   else
-                    List.first(results)
+                    Enum.random(results_by_likes)
                   end
 
                   get_in(result, ["urls", "regular"]) || fallback_image(name)
