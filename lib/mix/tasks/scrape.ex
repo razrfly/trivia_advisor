@@ -8,6 +8,7 @@ defmodule Mix.Tasks.Scrape do
     Available scraping tasks:
 
       mix scrape.question_one   # Run the QuestionOne scraper
+      mix scrape.speedquizzing  # Run the SpeedQuizzing scraper
     """
   end
 end
