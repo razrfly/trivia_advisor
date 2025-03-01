@@ -186,7 +186,14 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                   <span>•</span>
                   <span>Active since <%= format_active_since(@venue) %></span>
                   <span>•</span>
-                  <span>Source: <%= get_source_name(@venue) %></span>
+                  <span>Source:
+                    <% source = get_source_name(@venue) %>
+                    <%= if source.url do %>
+                      <a href={source.url} target="_blank" class="text-indigo-600 hover:text-indigo-800"><%= source.name %></a>
+                    <% else %>
+                      <%= source.name %>
+                    <% end %>
+                  </span>
                 </div>
               <% end %>
             </div>
@@ -780,13 +787,10 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
     # Create a marker pin at the venue's coordinates
     marker = "pin-l-star+f74e4e(#{lng},#{lat})"
-
     # Size of the map image
     size = "600x400"
-
     # Zoom level (higher numbers = more zoomed in)
     zoom = 19
-
     # Use custom Mapbox style instead of default streets style
     style = "holden/cm7pbsjwv004401sc5z5ldatr"
 

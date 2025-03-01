@@ -283,7 +283,13 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                       <span>Updated <%= time_ago(venue.last_seen_at) %></span>
                       <%= if venue.source_name do %>
                         <span class="mx-1">•</span>
-                        <span>Source: <%= venue.source_name %></span>
+                        <span>Source:
+                          <%= if venue.source_url do %>
+                            <a href={venue.source_url} target="_blank" class="text-indigo-600 hover:text-indigo-800"><%= venue.source_name %></a>
+                          <% else %>
+                            <%= venue.source_name %>
+                          <% end %>
+                        </span>
                       <% end %>
                     </div>
                   <% end %>
@@ -334,7 +340,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
             rating: get_venue_rating(venue),
             events: Map.get(venue, :events, []),
             last_seen_at: event_source_data[:last_seen_at],
-            source_name: event_source_data[:source_name]
+            source_name: event_source_data[:source_name],
+            source_url: event_source_data[:source_url]
           },
           distance_km: distance
         }
@@ -689,7 +696,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
             rating: get_venue_rating(venue),
             events: Map.get(venue, :events, []),
             last_seen_at: event_source_data[:last_seen_at],
-            source_name: event_source_data[:source_name]
+            source_name: event_source_data[:source_name],
+            source_url: event_source_data[:source_url]
           },
           distance_km: distance
         }
