@@ -33,6 +33,10 @@ if is_nil(Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)
   ])
 end
 
+# Add Mapbox configuration
+config :trivia_advisor, :mapbox,
+  access_token: System.get_env("MAPBOX_ACCESS_TOKEN")
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

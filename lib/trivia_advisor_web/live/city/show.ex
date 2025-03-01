@@ -2,7 +2,13 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Services.UnsplashService
+  alias TriviaAdvisorWeb.Helpers.FormatHelpers
   require Logger
+  import FormatHelpers, only: [
+    time_ago: 1,
+    format_day_of_week: 1,
+    get_event_source_data: 1
+  ]
 
   @radius_options [
     {"5 km", 5},
@@ -196,37 +202,6 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     """
   end
 
-  # Get city data using either the database or mock data
-  defp get_city_data(slug) do
-    # Try to get the city from the database first
-    case Locations.get_city_by_slug(slug) do
-      %{} = city ->
-        # If found, format the data for display
-        venues_count =
-          case Locations.find_venues_near_city(city, radius_km: 50) do
-            venues when is_list(venues) -> length(venues)
-            _ -> 0
-          end
-
-        {:ok, %{
-          id: city.id,
-          name: city.name,
-          slug: city.slug,
-          country_name: city.country.name,
-          venue_count: venues_count,
-          image_url: get_city_image(city.name),
-          city: city
-        }}
-
-      nil ->
-        # If not found in database, try mock data
-        case get_mock_city_by_slug(slug) do
-          nil -> {:error, :not_found}
-          city_data -> {:ok, city_data}
-        end
-    end
-  end
-
   # Get venues near a city using spatial search
   defp get_venues_near_city(city, radius) do
     try do
@@ -262,65 +237,36 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     end
   end
 
-  # Extract event source data from venue
-  defp get_event_source_data(venue) do
-    events = Map.get(venue, :events, [])
+  # Get city data using either the database or mock data
+  defp get_city_data(slug) do
+    # Try to get the city from the database first
+    case Locations.get_city_by_slug(slug) do
+      %{} = city ->
+        # If found, format the data for display
+        venues_count =
+          case Locations.find_venues_near_city(city, radius_km: 50) do
+            venues when is_list(venues) -> length(venues)
+            _ -> 0
+          end
 
-    if Enum.any?(events) do
-      # Get first event with event_sources
-      event = Enum.find(events, fn event ->
-        Map.get(event, :event_sources) &&
-        is_list(event.event_sources) &&
-        Enum.any?(event.event_sources)
-      end)
+        {:ok, %{
+          id: city.id,
+          name: city.name,
+          slug: city.slug,
+          country_name: city.country.name,
+          venue_count: venues_count,
+          image_url: get_city_image(city.name),
+          city: city
+        }}
 
-      if event do
-        # Get most recent event source
-        event_source = event.event_sources
-          |> Enum.sort_by(& &1.last_seen_at, {:desc, DateTime})
-          |> List.first()
-
-        if event_source do
-          %{
-            last_seen_at: event_source.last_seen_at,
-            source_name: get_source_name(event_source)
-          }
-        else
-          %{}
+      nil ->
+        # If not found in database, try mock data
+        case get_mock_city_by_slug(slug) do
+          nil -> {:error, :not_found}
+          city_data -> {:ok, city_data}
         end
-      else
-        %{}
-      end
-    else
-      %{}
     end
   end
-
-  # Get source name from event source
-  defp get_source_name(event_source) do
-    if Map.has_key?(event_source, :source) && !is_nil(event_source.source) do
-      event_source.source.name
-    else
-      "Unknown Source"
-    end
-  end
-
-  # Format time ago in words
-  defp time_ago(datetime) when is_struct(datetime) do
-    now = DateTime.utc_now()
-    diff = DateTime.diff(now, datetime, :second)
-
-    cond do
-      diff < 60 -> "just now"
-      diff < 3600 -> "#{div(diff, 60)} minutes ago"
-      diff < 86400 -> "#{div(diff, 3600)} hours ago"
-      diff < 604800 -> "#{div(diff, 86400)} days ago"
-      diff < 2592000 -> "#{div(diff, 604800)} weeks ago"
-      diff < 31536000 -> "#{div(diff, 2592000)} months ago"
-      true -> "#{div(diff, 31536000)} years ago"
-    end
-  end
-  defp time_ago(_), do: nil
 
   # Get mock city data by slug (for development only)
   defp get_mock_city_by_slug(slug) do
@@ -585,15 +531,6 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   end
 
   defp format_day(day) do
-    case day do
-      1 -> "Monday"
-      2 -> "Tuesday"
-      3 -> "Wednesday"
-      4 -> "Thursday"
-      5 -> "Friday"
-      6 -> "Saturday"
-      7 -> "Sunday"
-      _ -> "Unknown"
-    end
+    format_day_of_week(day)
   end
 end
