@@ -787,13 +787,10 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
     # Create a marker pin at the venue's coordinates
     marker = "pin-l-star+f74e4e(#{lng},#{lat})"
-
     # Size of the map image
     size = "600x400"
-
     # Zoom level (higher numbers = more zoomed in)
     zoom = 19
-
     # Use custom Mapbox style instead of default streets style
     style = "holden/cm7pbsjwv004401sc5z5ldatr"
 
