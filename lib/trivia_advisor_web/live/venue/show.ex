@@ -186,7 +186,14 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                   <span>•</span>
                   <span>Active since <%= format_active_since(@venue) %></span>
                   <span>•</span>
-                  <span>Source: <%= get_source_name(@venue) %></span>
+                  <span>Source:
+                    <% source = get_source_name(@venue) %>
+                    <%= if source.url do %>
+                      <a href={source.url} target="_blank" class="text-indigo-600 hover:text-indigo-800"><%= source.name %></a>
+                    <% else %>
+                      <%= source.name %>
+                    <% end %>
+                  </span>
                 </div>
               <% end %>
             </div>

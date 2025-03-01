@@ -160,12 +160,13 @@ defmodule TriviaAdvisorWeb.Helpers.FormatHelpers do
   end
 
   @doc """
-  Gets the source name from a venue's events.
+  Gets the source name from a venue's events, with the name titleized.
+  Returns a map with name and url.
 
   ## Examples
 
       iex> get_source_name(venue)
-      "TriviaAdvisor"
+      %{name: "TriviaAdvisor", url: "https://triviaadvisor.com"}
   """
   def get_source_name(venue) when is_map(venue) do
     if venue.events && Enum.any?(venue.events) do
@@ -173,33 +174,56 @@ defmodule TriviaAdvisorWeb.Helpers.FormatHelpers do
       if event.event_sources && Enum.any?(event.event_sources) do
         event_source = hd(event.event_sources)
         if event_source.source && event_source.source.name do
-          event_source.source.name
+          %{
+            name: titleize(event_source.source.name),
+            url: event_source.source_url || event_source.source.website_url || nil
+          }
         else
-          "TriviaAdvisor"
+          %{name: "TriviaAdvisor", url: nil}
         end
       else
-        "TriviaAdvisor"
+        %{name: "TriviaAdvisor", url: nil}
       end
     else
-      "TriviaAdvisor"
+      %{name: "TriviaAdvisor", url: nil}
     end
   end
 
   @doc """
-  Gets the source name directly from an event source.
+  Gets the source name directly from an event source, with the name titleized.
+  Returns a map with name and url.
 
   ## Examples
 
       iex> get_source_name_from_event_source(event_source)
-      "TriviaAdvisor"
+      %{name: "TriviaAdvisor", url: "https://triviaadvisor.com"}
   """
   def get_source_name_from_event_source(event_source) when is_map(event_source) do
     if Map.has_key?(event_source, :source) && !is_nil(event_source.source) do
-      event_source.source.name
+      %{
+        name: titleize(event_source.source.name),
+        url: event_source.source_url || event_source.source.website_url || nil
+      }
     else
-      "Unknown Source"
+      %{name: "Unknown Source", url: nil}
     end
   end
+
+  @doc """
+  Titleizes a string by capitalizing each word.
+
+  ## Examples
+
+      iex> titleize("hello world")
+      "Hello World"
+  """
+  def titleize(string) when is_binary(string) do
+    string
+    |> String.split(" ")
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join(" ")
+  end
+  def titleize(nil), do: nil
 
   @doc """
   Extracts event source data from a venue.
@@ -227,9 +251,11 @@ defmodule TriviaAdvisorWeb.Helpers.FormatHelpers do
           |> List.first()
 
         if event_source do
+          source_data = get_source_name_from_event_source(event_source)
           %{
             last_seen_at: event_source.last_seen_at,
-            source_name: get_source_name_from_event_source(event_source)
+            source_name: source_data.name,
+            source_url: source_data.url
           }
         else
           %{}
