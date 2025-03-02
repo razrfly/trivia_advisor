@@ -3,17 +3,19 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   Scraper for SpeedQuizzing venues and events.
   """
 
-  alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
+  require Logger
   alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
+  alias TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor
   # Comment out aliases that aren't needed for the first step
   # alias TriviaAdvisor.Locations.VenueStore
   # alias TriviaAdvisor.Events.EventStore
   # alias TriviaAdvisor.Services.GooglePlaceImageStore
-  require Logger
 
   @base_url "https://www.speedquizzing.com"
   @index_url "#{@base_url}/find/"
   @version "1.0.0"
+  @max_event_details 5  # Temporarily reduced from 50 to 5 for testing
 
   @doc """
   Main entry point for the scraper.
@@ -33,24 +35,47 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
               event_count = length(events)
               Logger.info("✅ Successfully scraped #{event_count} events from index page")
 
-              # Log events instead of processing them
-              Enum.each(events, &log_event/1)
+              # Process a limited number of events to avoid overloading
+              events_to_process = Enum.take(events, @max_event_details)
+              processed_count = length(events_to_process)
 
-              # Comment out event processing for now
-              # processed_events = events
-              # |> Enum.map(&process_event(&1, source))
-              # |> Enum.reject(&is_nil/1)
-              #
-              # successful_count = length(processed_events)
+              Logger.info("🔍 Fetching details for #{processed_count} events...")
+
+              # Fetch and process venue details for each event
+              venue_details = events_to_process
+              |> Enum.map(fn event ->
+                event_id = Map.get(event, "event_id")
+                case VenueExtractor.extract(event_id) do
+                  {:ok, venue_data} ->
+                    # Add coordinates from the index data
+                    venue_data = Map.merge(venue_data, %{
+                      lat: Map.get(event, "lat"),
+                      lng: Map.get(event, "lon")
+                    })
+                    # Log the venue and event details
+                    log_venue_details(venue_data)
+                    {:ok, venue_data}
+                  {:error, reason} ->
+                    Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
+                    {:error, reason}
+                end
+              end)
+              |> Enum.filter(fn result -> match?({:ok, _}, result) end)
+              |> Enum.map(fn {:ok, data} -> data end)
+
+              successful_venues_count = length(venue_details)
+
+              Logger.info("✅ Successfully fetched details for #{successful_venues_count} venues out of #{processed_count} attempted")
 
               # Update the scrape log with success info
               ScrapeLog.update_log(log, %{
                 success: true,
-                event_count: event_count, # Use total count since we're not processing yet
+                event_count: event_count,
                 metadata: %{
                   total_events: event_count,
-                  # processed_events: successful_count,
-                  events: events,
+                  processed_events: processed_count,
+                  successful_venue_details: successful_venues_count,
+                  venue_details: venue_details,
                   started_at: DateTime.to_iso8601(start_time),
                   completed_at: DateTime.to_iso8601(DateTime.utc_now()),
                   scraper_version: @version
@@ -231,25 +256,71 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
     end
   end
 
-  defp log_event(event) do
-    # Format the event details for logging
-    event_id = Map.get(event, "event_id", "unknown")
-    date = Map.get(event, "date", "unknown")
-    day = Map.get(event, "day", "unknown")
-    lat = Map.get(event, "lat", "")
-    lon = Map.get(event, "lon", "")
+  # Commented out as it's no longer used
+  # defp log_event(event) do
+  #   # Format the event details for logging
+  #   event_id = Map.get(event, "event_id", "unknown")
+  #   date = Map.get(event, "date", "unknown")
+  #   day = Map.get(event, "day", "unknown")
+  #   lat = Map.get(event, "lat", "")
+  #   lon = Map.get(event, "lon", "")
 
-    location = if lat != "" and lon != "" do
-      "Lat: #{lat}, Lon: #{lon}"
-    else
-      "No coordinates"
+  #   location = if lat != "" and lon != "" do
+  #     "Lat: #{lat}, Lon: #{lon}"
+  #   else
+  #     "No coordinates"
+  #   end
+
+  #   Logger.info("""
+  #   📅 Event:
+  #     ID: #{event_id}
+  #     Date: #{date} (#{day})
+  #     Location: #{location}
+  #   """)
+  # end
+
+  defp log_venue_details(venue_data) do
+    # Parse day of week
+    day_of_week = case venue_data.day_of_week do
+      "Monday" -> 1
+      "Tuesday" -> 2
+      "Wednesday" -> 3
+      "Thursday" -> 4
+      "Friday" -> 5
+      "Saturday" -> 6
+      "Sunday" -> 7
+      _ -> nil
     end
 
-    Logger.info("""
-    📅 Event:
-      ID: #{event_id}
-      Date: #{date} (#{day})
-      Location: #{location}
-    """)
+    # Parse start time
+    start_time = if venue_data.start_time == "00:00" or is_nil(venue_data.start_time) do
+      nil
+    else
+      case TriviaAdvisor.Scraping.Helpers.TimeParser.parse_time(venue_data.start_time) do
+        {:ok, time} -> time
+        _ -> venue_data.start_time
+      end
+    end
+
+    # Create standardized venue data
+    standardized_venue_data = %{
+      raw_title: venue_data.event_title,
+      title: venue_data.venue_name,
+      address: venue_data.address,
+      time_text: "#{venue_data.day_of_week} #{venue_data.start_time}",
+      day_of_week: day_of_week,
+      start_time: start_time,
+      frequency: :weekly,
+      fee_text: venue_data.description,
+      phone: nil,
+      website: venue_data.event_url,
+      description: venue_data.description,
+      hero_image_url: nil,
+      url: venue_data.event_url,
+      postcode: venue_data.postcode
+    }
+
+    # Log venue details using VenueHelpers
+    TriviaAdvisor.Scraping.Helpers.VenueHelpers.log_venue_details(standardized_venue_data)
   end
 end
