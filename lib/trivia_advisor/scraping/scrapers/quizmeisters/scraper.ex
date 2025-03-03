@@ -194,10 +194,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
 
               # Process performer if present
               performer_id = case final_data.performer do
-                %{name: name, profile_image: profile_image} when not is_nil(name) ->
+                %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
+                  # Download the image directly
+                  profile_image = download_performer_image(image_url)
+
                   case Performer.find_or_create(%{
                     name: name,
-                    profile_image_url: profile_image,
+                    profile_image: profile_image,
                     source_id: source.id
                   }) do
                     {:ok, performer} -> performer.id
@@ -272,5 +275,47 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
     end
 
     "#{day_name} #{time_str}"
+  end
+
+  # Download profile image and return file struct for Waffle
+  defp download_performer_image(url) do
+    try do
+      # Extract file extension from URL
+      file_extension = url |> Path.extname() |> String.downcase()
+
+      # If no extension or unknown extension, default to jpg
+      file_extension = if file_extension in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"] do
+        file_extension
+      else
+        ".jpg"
+      end
+
+      # Create a temporary file path
+      temp_dir = System.tmp_dir!()
+      temp_file = Path.join(temp_dir, "performer_image_#{:rand.uniform(999999)}#{file_extension}")
+
+      Logger.debug("Downloading performer image from #{url} to #{temp_file}")
+
+      # Download the image
+      case HTTPoison.get(url, [], follow_redirect: true, max_redirects: 5) do
+        {:ok, %{status_code: 200, body: body}} ->
+          # Write the file
+          File.write!(temp_file, body)
+
+          # Create a proper file struct for Waffle
+          %{
+            filename: Path.basename(temp_file),
+            path: temp_file
+          }
+
+        _ ->
+          Logger.error("Failed to download performer image from #{url}")
+          nil
+      end
+    rescue
+      e ->
+        Logger.error("Error downloading performer image: #{inspect(e)}")
+        nil
+    end
   end
 end
