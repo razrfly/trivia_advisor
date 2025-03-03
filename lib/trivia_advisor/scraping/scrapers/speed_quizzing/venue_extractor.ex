@@ -49,6 +49,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
     description = extract_description(document)
     latitude = extract_latitude(document)
     longitude = extract_longitude(document)
+    fee = extract_fee(description)
 
     # Extract performer info if available
     performer = case extract_performer(document) do
@@ -71,6 +72,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
       day_of_week: day,
       date: date,
       description: description,
+      fee: fee,
       lat: latitude,
       lng: longitude,
       event_url: "https://www.speedquizzing.com/events/#{event_id}/",
@@ -510,4 +512,34 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
       _ -> ""
     end
   end
+
+  # Extract fee from description text
+  defp extract_fee(description) when is_binary(description) do
+    Logger.debug("💰 Extracting fee from: '#{description}'")
+
+    # Check for common fee patterns with currency symbols
+    fee_patterns = [
+      # £1 to play, £1 per person
+      ~r/(?:£|\$|€)\s*([1-9](?:\.\d{2})?)\s+(?:to\s+play|per\s+person|per\s+player|entry)/i,
+      # £5 per team to play
+      ~r/(?:£|\$|€)\s*([1-9](?:\.\d{2})?)\s+per\s+team/i,
+      # Just look for simple currency amount with values 1-9
+      ~r/(?:£|\$|€)\s*([1-9](?:\.\d{2})?)\b/,
+      # Look for digits 1-9 followed by common words
+      ~r/\b([1-9](?:\.\d{2})?)\s+(?:pounds|dollars|euros)\b/i
+    ]
+
+    result = Enum.find_value(fee_patterns, fn pattern ->
+      case Regex.run(pattern, description) do
+        [_, amount] ->
+          Logger.debug("💰 Found fee amount: #{amount}")
+          "£#{amount}"
+        _ -> nil
+      end
+    end)
+
+    # If nothing found, default to £2
+    result || "£2"
+  end
+  defp extract_fee(_), do: "£2"
 end

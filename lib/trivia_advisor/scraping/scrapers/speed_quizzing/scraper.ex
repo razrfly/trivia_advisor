@@ -311,7 +311,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
       day_of_week: day_of_week,
       start_time: start_time,
       frequency: :weekly,
-      fee_text: venue_data.description,
+      fee_text: venue_data.fee,
       phone: nil,
       website: venue_data.event_url,
       description: venue_data.description,
