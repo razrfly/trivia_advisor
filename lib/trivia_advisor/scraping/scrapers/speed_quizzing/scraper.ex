@@ -15,7 +15,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   @base_url "https://www.speedquizzing.com"
   @index_url "#{@base_url}/find/"
   @version "1.0.0"
-  @max_event_details 500  # Temporarily reduced from 50 to 5 for testing
+  @max_event_details 10  # Temporarily reduced from 50 to 5 for testing
 
   @doc """
   Main entry point for the scraper.
