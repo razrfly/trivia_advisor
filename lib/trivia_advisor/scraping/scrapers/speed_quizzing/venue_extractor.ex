@@ -50,6 +50,16 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
     latitude = extract_latitude(document)
     longitude = extract_longitude(document)
 
+    # Extract performer info if available
+    performer = case extract_performer(document) do
+      nil -> nil
+      data -> %{
+        name: data.name,
+        profile_image: data.profile_image,
+        description: data.description
+      }
+    end
+
     # Return the extracted data as a map
     %{
       event_id: event_id,
@@ -63,8 +73,131 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
       description: description,
       lat: latitude,
       lng: longitude,
-      event_url: "https://www.speedquizzing.com/events/#{event_id}/"
+      event_url: "https://www.speedquizzing.com/events/#{event_id}/",
+      performer: performer
     }
+  end
+
+  defp extract_performer(document) do
+    # Look for the host section - try multiple possible selectors
+    host_section = document
+      |> Floki.find("#menu4, .host-section, .host-info")
+      |> List.first()
+
+    # First try to extract from dedicated host section
+    case host_section do
+      nil ->
+        # Fallback: Try to extract from title or metadata if no host section found
+        Logger.debug("🎭 No host section found, checking title for host info")
+
+        # Check in title tag
+        title_host = document
+          |> Floki.find("title")
+          |> Floki.text()
+          |> extract_host_from_text()
+
+        # Check in meta tags
+        meta_host = document
+          |> Floki.find("meta[property='og:title']")
+          |> Floki.attribute("content")
+          |> List.first()
+          |> extract_host_from_text()
+
+        host_name = title_host || meta_host
+
+        if host_name do
+          Logger.debug("🎭 Found performer in metadata: #{host_name}")
+          %{
+            name: host_name,
+            profile_image: nil, # We don't have an image in this case
+            description: ""
+          }
+        else
+          Logger.debug("🎭 No performer information found anywhere")
+          nil
+        end
+
+      _ ->
+        # Extract host name - try multiple possible selectors
+        name = host_section
+          |> Floki.find("h3, .host-name, .quiz-master-name")
+          |> Floki.text()
+          |> String.replace(~r/This event is hosted by |Hosted by |Quiz Master: /, "")
+          |> String.trim()
+          |> clean_performer_name()
+
+        # Extract host image - try multiple possible selectors
+        profile_image = host_section
+          |> Floki.find(".host-img, .quiz-master-img, img[alt*='host'], img[alt*='quiz master']")
+          |> Floki.attribute("src")
+          |> List.first()
+          |> case do
+            nil -> nil
+            url -> if String.starts_with?(url, "http"), do: url, else: "#{@base_url}#{url}"
+          end
+
+        # Extract host description - try multiple possible selectors
+        description = host_section
+          |> Floki.find(".sm1, .host-description, .quiz-master-description")
+          |> Floki.text()
+          |> String.trim()
+
+        # Only return if we found a name
+        if name != "" do
+          Logger.debug("🎭 Found performer: #{name}")
+          %{
+            name: name,
+            profile_image: profile_image,
+            description: description
+          }
+        else
+          Logger.debug("🎭 No performer name found in host section")
+          nil
+        end
+    end
+  end
+
+  # Very specific performer name cleaning
+  defp clean_performer_name(name) do
+    Logger.info("🎭 Processing performer name: '#{name}'")
+
+    # If name contains a star followed by digits, extract digits for logging
+    if String.match?(name, ~r/★\d+/) do
+      # Extract just the digits (without the star)
+      [_, digits] = Regex.run(~r/★(\d+)/, name)
+      Logger.info("🎭 Found star-number pattern: #{digits}")
+    end
+
+    # Very direct approach - just look for the precise pattern and handle it
+    # Handle patterns like "★234 Matt Lavery"
+    cleaned = case Regex.run(~r/^★\d+\s+(.+)$/, name) do
+      [_, real_name] ->
+        Logger.info("🎭 Extracted actual name: '#{real_name}'")
+        real_name
+      _ ->
+        # Try a more general pattern
+        case Regex.run(~r/^[^\w\s]\d+\s+(.+)$/, name) do
+          [_, real_name] -> real_name
+          _ -> name
+        end
+    end
+
+    # Final normalization and trimming
+    final = cleaned
+          |> String.replace(~r/^DJ\s+/, "DJ ")
+          |> String.trim()
+
+    Logger.info("🎭 Final cleaned name: '#{final}'")
+    final
+  end
+
+  # Helper function to extract host name from title or metadata
+  defp extract_host_from_text(nil), do: nil
+  defp extract_host_from_text(text) do
+    case Regex.run(~r/Hosted by ([^•\n\r]+)/, text) do
+      [_, host_name] -> clean_performer_name(String.trim(host_name))
+      _ -> nil
+    end
   end
 
   # Extract the title from the document
@@ -162,10 +295,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
       [first | _] ->
         text = Floki.text(first)
         Logger.debug("⏰ Found date/time text: '#{text}'")
-        # Log each character with its code point for debugging
-        text |> String.to_charlist() |> Enum.each(fn char ->
-          Logger.debug("⏰ Character: '#{[char]}' (#{char})")
-        end)
         text
       [] ->
         Logger.debug("⏰ No clock element found, trying og:title")
