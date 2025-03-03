@@ -16,7 +16,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   @base_url "https://www.speedquizzing.com"
   @index_url "#{@base_url}/find/"
   @version "1.0.0"
-  @max_event_details 50  # Changed from 10 back to 50 for production use
+  @max_event_details 1500  # Changed from 10 back to 50 for production use
 
   @doc """
   Main entry point for the scraper.
@@ -57,14 +57,26 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
                     log_venue_details(venue_data)
 
                     # Process venue and create event
-                    process_venue_and_event(venue_data, source)
+                    result = process_venue_and_event(venue_data, source)
+                    # Extract the event data for JSON serialization
+                    event_data = case result do
+                      {:ok, %{venue: _venue, event: _event}} ->
+                        # Already in the right format, extract data
+                        extract_event_data(result)
+                      {:ok, event} ->
+                        # Direct event result, wrap it
+                        extract_event_data({:ok, %{venue: nil, event: event}})
+                      other ->
+                        # Handle other cases
+                        extract_event_data(other)
+                    end
+                    event_data
                   {:error, reason} ->
                     Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
-                    {:error, reason}
+                    %{error: inspect(reason)}
                 end
               end)
-              |> Enum.filter(fn result -> match?({:ok, _}, result) end)
-              |> Enum.map(fn {:ok, data} -> data end)
+              |> Enum.filter(fn result -> !Map.has_key?(result, :error) end)
 
               successful_venues_count = length(venue_details)
 
@@ -78,7 +90,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
                   total_events: event_count,
                   processed_events: processed_count,
                   successful_venue_details: successful_venues_count,
-                  venue_details: venue_details,
+                  venue_details: format_venue_details_for_metadata(venue_details),
                   started_at: DateTime.to_iso8601(start_time),
                   completed_at: DateTime.to_iso8601(DateTime.utc_now()),
                   scraper_version: @version
@@ -96,12 +108,78 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
           e ->
             Logger.error("❌ Scraper failed: #{Exception.message(e)}")
             ScrapeLog.log_error(log, e)
-            {:error, e}
+            reraise e, __STACKTRACE__
         end
 
       {:error, reason} ->
         Logger.error("Failed to create scrape log: #{inspect(reason)}")
         {:error, reason}
+    end
+  end
+
+  # Helper function to extract event data from result for JSON serialization
+  defp extract_event_data(result) do
+    # First, unwrap any tuples to get to the actual data
+    unwrapped = case result do
+      {:ok, %{venue: venue, event: {:ok, %TriviaAdvisor.Events.Event{} = event}}} ->
+        # Handle the case where event is wrapped in an additional {:ok, ...} tuple
+        %{venue: venue, event: event}
+
+      {:ok, %{venue: venue, event: %TriviaAdvisor.Events.Event{} = event}} ->
+        # We have both venue and event
+        %{venue: venue, event: event}
+
+      {:ok, %TriviaAdvisor.Events.Event{} = event} ->
+        # We have just the event in a tuple
+        %{venue: nil, event: event}
+
+      %TriviaAdvisor.Events.Event{} = event ->
+        # We have just the event directly
+        %{venue: nil, event: event}
+
+      {:error, reason} ->
+        # Error case
+        %{error: inspect(reason)}
+
+      other ->
+        # Unknown format
+        Logger.error("Unknown result format in extract_event_data: #{inspect(other)}")
+        %{error: "Unknown result format: #{inspect(other)}"}
+    end
+
+    # Now extract the data from the unwrapped result
+    case unwrapped do
+      %{venue: venue, event: event} when not is_nil(event) ->
+        # We have an event, extract its data
+        venue_data = if venue do
+          %{
+            venue_id: venue.id,
+            venue_name: venue.name
+          }
+        else
+          %{
+            venue_id: event.venue_id,
+            venue_name: nil
+          }
+        end
+
+        # Merge venue data with event data
+        Map.merge(venue_data, %{
+          event_id: event.id,
+          event_name: event.name,
+          day_of_week: event.day_of_week,
+          start_time: Time.to_iso8601(event.start_time),
+          entry_fee_cents: event.entry_fee_cents,
+          description: event.description
+        })
+
+      %{error: reason} ->
+        # Pass through error
+        %{error: reason}
+
+      _ ->
+        # Fallback for unexpected formats
+        %{error: "Could not extract event data from: #{inspect(result)}"}
     end
   end
 
@@ -165,9 +243,12 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
           }
 
           # Process event through EventStore
-          case EventStore.process_event(venue, event_data, source.id) do
+          result = EventStore.process_event(venue, event_data, source.id)
+
+          case result do
             {:ok, event} ->
               Logger.info("✅ Successfully created event for venue: #{venue.name}")
+              # Return a consistent format with both venue and event
               {:ok, %{venue: venue, event: event}}
             {:error, reason} ->
               Logger.error("❌ Failed to create event: #{inspect(reason)}")
@@ -348,4 +429,21 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   end
   defp format_start_time(nil), do: "20:00" # Default time
   defp format_start_time(time), do: time # Handle any other type
+
+  # Format venue details for metadata storage - ensure JSON serializable
+  defp format_venue_details_for_metadata(venue_details) do
+    # Return just basic info for each venue to avoid serialization issues
+    Enum.map(venue_details, fn details ->
+      # Extract only basic fields that are guaranteed to be serializable
+      case details do
+        %{venue_name: _name} = details ->
+          # Keep only the key fields we need for reporting
+          Map.take(details, [:venue_id, :venue_name, :event_id, :event_name])
+
+        other ->
+          # For any other format, convert to a simple map with limited info
+          %{summary: "Event processed successfully", data: inspect(other)}
+      end
+    end)
+  end
 end
