@@ -370,6 +370,33 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                 </div>
               </div>
             </div>
+
+            <!-- Quiz Master -->
+            <%= if event = get_event_with_performer(@venue) do %>
+              <div class="mt-8 overflow-hidden rounded-lg border bg-white p-6 shadow-sm">
+                <h3 class="mb-4 text-lg font-semibold text-gray-900">Quiz Master</h3>
+                <div class="flex items-center">
+                  <%= if event.performer.profile_image do %>
+                    <div class="h-12 w-12 flex-shrink-0 overflow-hidden rounded-full">
+                      <img
+                        src={event.performer.profile_image}
+                        alt={event.performer.name}
+                        class="h-full w-full object-cover"
+                      />
+                    </div>
+                  <% else %>
+                    <div class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-indigo-100">
+                      <svg class="h-6 w-6 text-indigo-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                        <path fill-rule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clip-rule="evenodd" />
+                      </svg>
+                    </div>
+                  <% end %>
+                  <div class="ml-4">
+                    <h4 class="text-base font-medium text-gray-900"><%= event.performer.name %></h4>
+                  </div>
+                </div>
+              </div>
+            <% end %>
           </div>
         </div>
       </div>
@@ -819,4 +846,21 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   end
 
   defp format_day(_), do: "TBA"
+
+  # Helper to check if performer is loaded
+  defp performer_loaded?(event) do
+    event &&
+    event.performer &&
+    !is_struct(event.performer, Ecto.Association.NotLoaded) &&
+    event.performer.name
+  end
+
+  # Helper to get first event that has performer data
+  defp get_event_with_performer(venue) do
+    if venue.events && Enum.any?(venue.events) do
+      Enum.find(venue.events, fn event -> performer_loaded?(event) end)
+    else
+      nil
+    end
+  end
 end
