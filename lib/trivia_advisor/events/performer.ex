@@ -1,8 +1,10 @@
 defmodule TriviaAdvisor.Events.Performer do
   use Ecto.Schema
   import Ecto.Changeset
+  import Ecto.Query
   alias TriviaAdvisor.Scraping.Source
   use Waffle.Ecto.Schema
+  require Logger
 
   schema "performers" do
     field :name, :string
@@ -125,12 +127,27 @@ defmodule TriviaAdvisor.Events.Performer do
   Finds or creates a performer by name and source_id.
   Updates the profile image if it has changed.
   """
-  def find_or_create(attrs = %{name: name, source_id: source_id}) do
-    case TriviaAdvisor.Repo.get_by(__MODULE__, name: name, source_id: source_id) do
-      nil -> %__MODULE__{}
-      performer -> performer
+  def find_or_create(attrs = %{name: name, source_id: source_id}) when not is_nil(name) do
+    # Handle potential duplicates by using Repo.all and taking the first result
+    case TriviaAdvisor.Repo.all(from p in __MODULE__, where: p.name == ^name and p.source_id == ^source_id) do
+      [] ->
+        # No performer found, create a new one
+        %__MODULE__{}
+      [performer] ->
+        # Only one performer found, use it
+        performer
+      performers when is_list(performers) ->
+        # Multiple performers found, log the issue and use the first one
+        Logger.warning("⚠️ Found #{length(performers)} duplicate performers for '#{name}' (source_id: #{source_id}). Using the first one.")
+        List.first(performers)
     end
     |> changeset(attrs)
     |> TriviaAdvisor.Repo.insert_or_update()
+  end
+
+  # Handle case where name is nil
+  def find_or_create(%{source_id: source_id} = _attrs) do
+    Logger.warning("❌ Attempted to create performer with nil name for source_id: #{source_id}")
+    {:error, "Performer name cannot be nil"}
   end
 end

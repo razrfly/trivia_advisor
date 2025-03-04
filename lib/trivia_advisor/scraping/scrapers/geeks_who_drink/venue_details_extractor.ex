@@ -113,10 +113,14 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
           |> Floki.attribute("src")
           |> List.first()
 
-          if is_nil(name) and is_nil(profile_image) do
-            {:error, "No performer name or image found"}
-          else
-            {:ok, %{name: name, profile_image: profile_image}}
+          # If we have an image but no name, provide a default name
+          cond do
+            is_nil(name) and is_nil(profile_image) ->
+              {:error, "No performer name or image found"}
+            is_nil(name) and not is_nil(profile_image) ->
+              {:ok, %{name: "Geeks Who Drink Quizmaster", profile_image: profile_image}}
+            true ->
+              {:ok, %{name: name, profile_image: profile_image}}
           end
         end
 
@@ -137,13 +141,19 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
         |> String.replace(~r/(Quizmaster:\s+){2,}/i, "Quizmaster: ", global: true)
 
         # Extract the name, typically in "With Quizmaster John Doe" format
-        if String.contains?(clean_text, "Quizmaster") do
+        name = if String.contains?(clean_text, "Quizmaster") do
           clean_text
           |> String.replace(~r/.*Quizmaster:\s*/i, "")
           |> String.trim()
         else
           # If not in the expected format, just return the text
           clean_text |> String.trim()
+        end
+
+        # Ensure we don't return an empty string
+        case name do
+          "" -> "Unknown Quizmaster"
+          name -> name
         end
     end
   end
@@ -152,7 +162,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
   defp truncate_name(nil, _), do: nil
   defp truncate_name(name, max_length) when is_binary(name) do
     if String.length(name) > max_length do
-      Logger.warn("⚠️ Truncating performer name from #{String.length(name)} to #{max_length} characters")
+      Logger.warning("⚠️ Truncating performer name from #{String.length(name)} to #{max_length} characters")
       String.slice(name, 0, max_length)
     else
       name
@@ -326,7 +336,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
     {:error, "Max retries exceeded"}
   end
 
-  defp retry_or_fail_details(url, retries, error_reason) do
+  defp retry_or_fail_details(url, retries, _error_reason) do
     # Exponential backoff: wait longer between each retry
     backoff_ms = :math.pow(2, retries) * 1000 |> round()
     Logger.info("⏱️ Retrying venue details fetch in #{backoff_ms}ms...")
