@@ -9,6 +9,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   alias TriviaAdvisor.{Locations, Repo}
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Services.GooglePlaceImageStore
+  alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
   require Logger
 
   @base_url "https://quizmeisters.com"
@@ -194,10 +195,13 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
 
               # Process performer if present
               performer_id = case final_data.performer do
-                %{name: name, profile_image: profile_image} when not is_nil(name) ->
+                %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
+                  # Download the image directly
+                  profile_image = ImageDownloader.download_performer_image(image_url)
+
                   case Performer.find_or_create(%{
                     name: name,
-                    profile_image_url: profile_image,
+                    profile_image: profile_image,
                     source_id: source.id
                   }) do
                     {:ok, performer} -> performer.id
