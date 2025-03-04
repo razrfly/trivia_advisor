@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   alias TriviaAdvisor.Events.EventStore
   alias TriviaAdvisor.Events.Performer
   alias TriviaAdvisor.Services.GooglePlaceImageStore
+  alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   @base_url "https://www.speedquizzing.com"
   @index_url "#{@base_url}/find/"
@@ -275,7 +276,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   defp get_performer_id(performer, source_id) when is_map(performer) do
     # Download the profile image if URL is available
     profile_image = if is_binary(performer.profile_image) and performer.profile_image != "" do
-      download_performer_image(performer.profile_image)
+      ImageDownloader.download_performer_image(performer.profile_image)
     else
       nil
     end
@@ -288,48 +289,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
     }) do
       {:ok, performer} -> performer.id
       _ -> nil
-    end
-  end
-
-  # Download profile image and return file struct for Waffle
-  defp download_performer_image(url) do
-    try do
-      # Extract file extension from URL
-      file_extension = url |> Path.extname() |> String.downcase()
-
-      # If no extension or unknown extension, default to jpg
-      file_extension = if file_extension in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"] do
-        file_extension
-      else
-        ".jpg"
-      end
-
-      # Create a temporary file path
-      temp_dir = System.tmp_dir!()
-      temp_file = Path.join(temp_dir, "performer_image_#{:rand.uniform(999999)}#{file_extension}")
-
-      Logger.debug("Downloading performer image from #{url} to #{temp_file}")
-
-      # Download the image
-      case HTTPoison.get(url, [], follow_redirect: true, max_redirects: 5) do
-        {:ok, %{status_code: 200, body: body}} ->
-          # Write the file
-          File.write!(temp_file, body)
-
-          # Create a proper file struct for Waffle
-          %{
-            filename: Path.basename(temp_file),
-            path: temp_file
-          }
-
-        _ ->
-          Logger.error("Failed to download performer image from #{url}")
-          nil
-      end
-    rescue
-      e ->
-        Logger.error("Error downloading performer image: #{inspect(e)}")
-        nil
     end
   end
 
