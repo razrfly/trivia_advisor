@@ -382,13 +382,29 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
 
         # Download the profile image
         profile_image = case TriviaAdvisor.Scraping.Helpers.ImageDownloader.download_performer_image(image_url) do
-          %{path: path} = image_data when not is_nil(path) ->
-            Logger.info("✅ Downloaded performer image to: #{path}")
-            image_data
+          %{file_name: file_name, _temp_path: temp_path} = image_data when not is_nil(temp_path) ->
+            Logger.info("✅ Downloaded performer image to: #{temp_path}, filename: #{file_name}")
+
+            # Verify the file exists and is not empty
+            case File.stat(temp_path) do
+              {:ok, %{size: size}} when size > 0 ->
+                Logger.info("✅ Image file exists and has size: #{size} bytes")
+                image_data
+              {:ok, %{size: 0}} ->
+                Logger.warning("⚠️ Downloaded image file is empty, using nil")
+                nil
+              {:error, reason} ->
+                Logger.warning("⚠️ Can't verify downloaded image: #{inspect(reason)}, trying anyway")
+                image_data
+            end
+
           nil ->
             Logger.error("❌ Failed to download performer image")
             nil
         end
+
+        # Log the profile_image structure we're passing to find_or_create
+        Logger.debug("🖼️ Profile image data being passed to find_or_create: #{inspect(profile_image)}")
 
         # Create or update the performer
         case TriviaAdvisor.Events.Performer.find_or_create(%{
@@ -397,12 +413,19 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
           source_id: source_id
         }) do
           {:ok, performer} ->
-            Logger.info("✅ Created/updated performer: #{name}, ID: #{performer.id}")
+            Logger.info("✅ Created/updated performer: #{name}, ID: #{performer.id}, profile_image: #{inspect(performer.profile_image)}")
             performer.id
-          {:error, reason} ->
-            Logger.error("❌ Failed to create performer: #{inspect(reason)}")
+          {:error, changeset} ->
+            Logger.error("❌ Failed to create performer: #{inspect(changeset.errors)}")
+            # Log the full changeset for debugging
+            Logger.debug("🔍 Full changeset: #{inspect(changeset)}")
             nil
         end
+
+      # Handle different error formats gracefully
+      {:error, reason} ->
+        Logger.info("🚫 No performer data available: #{reason}")
+        nil
 
       _ ->
         Logger.debug("🔍 No performer data found in additional details")
