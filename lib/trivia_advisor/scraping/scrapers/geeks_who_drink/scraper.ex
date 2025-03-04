@@ -145,7 +145,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             description: venue_data.description,
             fee_text: "Free",  # Explicitly set as free for all GWD events
             source_url: venue_data.url,
-            performer_id: nil,  # GWD doesn't provide performer info
+            performer_id: get_performer_id(source.id, additional_details),  # Try to get performer ID
             hero_image_url: venue_data.hero_image_url  # Pass through unchanged
           }
 
@@ -350,7 +350,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
               description: venue_data.description,
               fee_text: "Free",  # Explicitly set as free for all GWD events
               source_url: venue_data.url,
-              performer_id: nil,
+              performer_id: get_performer_id(source.id, additional_details),  # Try to get performer ID
               hero_image_url: venue_data.hero_image_url  # Pass through unchanged
             }
 
@@ -370,6 +370,42 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
 
       _ ->
         Logger.warning("Failed to extract venue info from block")
+        nil
+    end
+  end
+
+  defp get_performer_id(source_id, additional_details) do
+    # Check if there's performer data in the additional details
+    case Map.get(additional_details, :performer) do
+      %{name: name, profile_image: image_url} when not is_nil(name) and not is_nil(image_url) ->
+        Logger.info("🎭 Found performer: #{name} with image: #{image_url}")
+
+        # Download the profile image
+        profile_image = case TriviaAdvisor.Scraping.Helpers.ImageDownloader.download_performer_image(image_url) do
+          %{path: path} = image_data when not is_nil(path) ->
+            Logger.info("✅ Downloaded performer image to: #{path}")
+            image_data
+          nil ->
+            Logger.error("❌ Failed to download performer image")
+            nil
+        end
+
+        # Create or update the performer
+        case TriviaAdvisor.Events.Performer.find_or_create(%{
+          name: name,
+          profile_image: profile_image,
+          source_id: source_id
+        }) do
+          {:ok, performer} ->
+            Logger.info("✅ Created/updated performer: #{name}, ID: #{performer.id}")
+            performer.id
+          {:error, reason} ->
+            Logger.error("❌ Failed to create performer: #{inspect(reason)}")
+            nil
+        end
+
+      _ ->
+        Logger.debug("🔍 No performer data found in additional details")
         nil
     end
   end
