@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 15.10 (Postgres.app)
--- Dumped by pg_dump version 15.10 (Postgres.app)
+-- Dumped from database version 15.12 (Postgres.app)
+-- Dumped by pg_dump version 15.12 (Postgres.app)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -42,6 +42,21 @@ CREATE TYPE public.event_frequency AS ENUM (
 );
 
 
+--
+-- Name: oban_job_state; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.oban_job_state AS ENUM (
+    'available',
+    'scheduled',
+    'executing',
+    'retryable',
+    'completed',
+    'discarded',
+    'cancelled'
+);
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -56,7 +71,9 @@ CREATE TABLE public.cities (
     name character varying(255) NOT NULL,
     slug character varying(255) NOT NULL,
     inserted_at timestamp(0) without time zone NOT NULL,
-    updated_at timestamp(0) without time zone NOT NULL
+    updated_at timestamp(0) without time zone NOT NULL,
+    latitude numeric(10,6),
+    longitude numeric(10,6)
 );
 
 
@@ -88,7 +105,8 @@ CREATE TABLE public.countries (
     code character varying(2) NOT NULL,
     name character varying(255) NOT NULL,
     inserted_at timestamp(0) without time zone NOT NULL,
-    updated_at timestamp(0) without time zone NOT NULL
+    updated_at timestamp(0) without time zone NOT NULL,
+    slug character varying(255) NOT NULL
 );
 
 
@@ -161,7 +179,9 @@ CREATE TABLE public.events (
     entry_fee_cents integer DEFAULT 0,
     description text,
     inserted_at timestamp(0) without time zone NOT NULL,
-    updated_at timestamp(0) without time zone NOT NULL
+    updated_at timestamp(0) without time zone NOT NULL,
+    hero_image character varying(255),
+    performer_id bigint
 );
 
 
@@ -182,6 +202,107 @@ CREATE SEQUENCE public.events_id_seq
 --
 
 ALTER SEQUENCE public.events_id_seq OWNED BY public.events.id;
+
+
+--
+-- Name: oban_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.oban_jobs (
+    id bigint NOT NULL,
+    state public.oban_job_state DEFAULT 'available'::public.oban_job_state NOT NULL,
+    queue text DEFAULT 'default'::text NOT NULL,
+    worker text NOT NULL,
+    args jsonb DEFAULT '{}'::jsonb NOT NULL,
+    errors jsonb[] DEFAULT ARRAY[]::jsonb[] NOT NULL,
+    attempt integer DEFAULT 0 NOT NULL,
+    max_attempts integer DEFAULT 20 NOT NULL,
+    inserted_at timestamp without time zone DEFAULT timezone('UTC'::text, now()) NOT NULL,
+    scheduled_at timestamp without time zone DEFAULT timezone('UTC'::text, now()) NOT NULL,
+    attempted_at timestamp without time zone,
+    completed_at timestamp without time zone,
+    attempted_by text[],
+    discarded_at timestamp without time zone,
+    priority integer DEFAULT 0 NOT NULL,
+    tags text[] DEFAULT ARRAY[]::text[],
+    meta jsonb DEFAULT '{}'::jsonb,
+    cancelled_at timestamp without time zone,
+    CONSTRAINT attempt_range CHECK (((attempt >= 0) AND (attempt <= max_attempts))),
+    CONSTRAINT positive_max_attempts CHECK ((max_attempts > 0)),
+    CONSTRAINT queue_length CHECK (((char_length(queue) > 0) AND (char_length(queue) < 128))),
+    CONSTRAINT worker_length CHECK (((char_length(worker) > 0) AND (char_length(worker) < 128)))
+);
+
+
+--
+-- Name: TABLE oban_jobs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.oban_jobs IS '12';
+
+
+--
+-- Name: oban_jobs_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.oban_jobs_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: oban_jobs_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.oban_jobs_id_seq OWNED BY public.oban_jobs.id;
+
+
+--
+-- Name: oban_peers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE UNLOGGED TABLE public.oban_peers (
+    name text NOT NULL,
+    node text NOT NULL,
+    started_at timestamp without time zone NOT NULL,
+    expires_at timestamp without time zone NOT NULL
+);
+
+
+--
+-- Name: performers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.performers (
+    id bigint NOT NULL,
+    name character varying(255) NOT NULL,
+    source_id bigint NOT NULL,
+    inserted_at timestamp(0) without time zone NOT NULL,
+    updated_at timestamp(0) without time zone NOT NULL,
+    profile_image jsonb
+);
+
+
+--
+-- Name: performers_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.performers_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: performers_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.performers_id_seq OWNED BY public.performers.id;
 
 
 --
@@ -280,7 +401,10 @@ CREATE TABLE public.venues (
     slug character varying(255) NOT NULL,
     metadata jsonb,
     inserted_at timestamp(0) without time zone NOT NULL,
-    updated_at timestamp(0) without time zone NOT NULL
+    updated_at timestamp(0) without time zone NOT NULL,
+    facebook character varying(255),
+    instagram character varying(255),
+    google_place_images jsonb DEFAULT '[]'::jsonb
 );
 
 
@@ -329,6 +453,20 @@ ALTER TABLE ONLY public.event_sources ALTER COLUMN id SET DEFAULT nextval('publi
 --
 
 ALTER TABLE ONLY public.events ALTER COLUMN id SET DEFAULT nextval('public.events_id_seq'::regclass);
+
+
+--
+-- Name: oban_jobs id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.oban_jobs ALTER COLUMN id SET DEFAULT nextval('public.oban_jobs_id_seq'::regclass);
+
+
+--
+-- Name: performers id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.performers ALTER COLUMN id SET DEFAULT nextval('public.performers_id_seq'::regclass);
 
 
 --
@@ -385,6 +523,38 @@ ALTER TABLE ONLY public.events
 
 
 --
+-- Name: oban_jobs non_negative_priority; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.oban_jobs
+    ADD CONSTRAINT non_negative_priority CHECK ((priority >= 0)) NOT VALID;
+
+
+--
+-- Name: oban_jobs oban_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.oban_jobs
+    ADD CONSTRAINT oban_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: oban_peers oban_peers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.oban_peers
+    ADD CONSTRAINT oban_peers_pkey PRIMARY KEY (name);
+
+
+--
+-- Name: performers performers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.performers
+    ADD CONSTRAINT performers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -424,6 +594,13 @@ CREATE INDEX cities_country_id_index ON public.cities USING btree (country_id);
 
 
 --
+-- Name: cities_latitude_longitude_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX cities_latitude_longitude_index ON public.cities USING btree (latitude, longitude);
+
+
+--
 -- Name: cities_slug_index; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -435,6 +612,13 @@ CREATE UNIQUE INDEX cities_slug_index ON public.cities USING btree (slug);
 --
 
 CREATE UNIQUE INDEX countries_code_index ON public.countries USING btree (code);
+
+
+--
+-- Name: countries_slug_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX countries_slug_index ON public.countries USING btree (slug);
 
 
 --
@@ -470,6 +654,34 @@ CREATE UNIQUE INDEX events_venue_id_day_of_week_start_time_index ON public.event
 --
 
 CREATE INDEX events_venue_id_index ON public.events USING btree (venue_id);
+
+
+--
+-- Name: oban_jobs_args_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX oban_jobs_args_index ON public.oban_jobs USING gin (args);
+
+
+--
+-- Name: oban_jobs_meta_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX oban_jobs_meta_index ON public.oban_jobs USING gin (meta);
+
+
+--
+-- Name: oban_jobs_state_queue_priority_scheduled_at_id_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX oban_jobs_state_queue_priority_scheduled_at_id_index ON public.oban_jobs USING btree (state, queue, priority, scheduled_at, id);
+
+
+--
+-- Name: performers_source_id_name_index; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX performers_source_id_name_index ON public.performers USING btree (source_id, name);
 
 
 --
@@ -546,11 +758,27 @@ ALTER TABLE ONLY public.event_sources
 
 
 --
+-- Name: events events_performer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.events
+    ADD CONSTRAINT events_performer_id_fkey FOREIGN KEY (performer_id) REFERENCES public.performers(id);
+
+
+--
 -- Name: events events_venue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.events
     ADD CONSTRAINT events_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES public.venues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: performers performers_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.performers
+    ADD CONSTRAINT performers_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id);
 
 
 --
@@ -587,3 +815,13 @@ INSERT INTO public."schema_migrations" (version) VALUES (20250213000000);
 INSERT INTO public."schema_migrations" (version) VALUES (20250213135445);
 INSERT INTO public."schema_migrations" (version) VALUES (20250214000000);
 INSERT INTO public."schema_migrations" (version) VALUES (20250214000003);
+INSERT INTO public."schema_migrations" (version) VALUES (20250214000004);
+INSERT INTO public."schema_migrations" (version) VALUES (20250214000005);
+INSERT INTO public."schema_migrations" (version) VALUES (20250214000006);
+INSERT INTO public."schema_migrations" (version) VALUES (20250221114524);
+INSERT INTO public."schema_migrations" (version) VALUES (20250221114525);
+INSERT INTO public."schema_migrations" (version) VALUES (20250221114526);
+INSERT INTO public."schema_migrations" (version) VALUES (20250226123304);
+INSERT INTO public."schema_migrations" (version) VALUES (20250226134235);
+INSERT INTO public."schema_migrations" (version) VALUES (20250303204410);
+INSERT INTO public."schema_migrations" (version) VALUES (20250303211218);

@@ -145,7 +145,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
             description: venue_data.description,
             fee_text: "Free",  # Explicitly set as free for all GWD events
             source_url: venue_data.url,
-            performer_id: nil,  # GWD doesn't provide performer info
+            performer_id: get_performer_id(source.id, additional_details),  # Try to get performer ID
             hero_image_url: venue_data.hero_image_url  # Pass through unchanged
           }
 
@@ -350,7 +350,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
               description: venue_data.description,
               fee_text: "Free",  # Explicitly set as free for all GWD events
               source_url: venue_data.url,
-              performer_id: nil,
+              performer_id: get_performer_id(source.id, additional_details),  # Try to get performer ID
               hero_image_url: venue_data.hero_image_url  # Pass through unchanged
             }
 
@@ -370,6 +370,65 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
 
       _ ->
         Logger.warning("Failed to extract venue info from block")
+        nil
+    end
+  end
+
+  defp get_performer_id(source_id, additional_details) do
+    # Check if there's performer data in the additional details
+    case Map.get(additional_details, :performer) do
+      %{name: name, profile_image: image_url} when not is_nil(name) and not is_nil(image_url) ->
+        Logger.info("🎭 Found performer: #{name} with image: #{image_url}")
+
+        # Download the profile image
+        profile_image = case TriviaAdvisor.Scraping.Helpers.ImageDownloader.download_performer_image(image_url) do
+          %{file_name: file_name, _temp_path: temp_path} = image_data when not is_nil(temp_path) ->
+            Logger.info("✅ Downloaded performer image to: #{temp_path}, filename: #{file_name}")
+
+            # Verify the file exists and is not empty
+            case File.stat(temp_path) do
+              {:ok, %{size: size}} when size > 0 ->
+                Logger.info("✅ Image file exists and has size: #{size} bytes")
+                image_data
+              {:ok, %{size: 0}} ->
+                Logger.warning("⚠️ Downloaded image file is empty, using nil")
+                nil
+              {:error, reason} ->
+                Logger.warning("⚠️ Can't verify downloaded image: #{inspect(reason)}, trying anyway")
+                image_data
+            end
+
+          nil ->
+            Logger.error("❌ Failed to download performer image")
+            nil
+        end
+
+        # Log the profile_image structure we're passing to find_or_create
+        Logger.debug("🖼️ Profile image data being passed to find_or_create: #{inspect(profile_image)}")
+
+        # Create or update the performer
+        case TriviaAdvisor.Events.Performer.find_or_create(%{
+          name: name,
+          profile_image: profile_image,
+          source_id: source_id
+        }) do
+          {:ok, performer} ->
+            Logger.info("✅ Created/updated performer: #{name}, ID: #{performer.id}, profile_image: #{inspect(performer.profile_image)}")
+            performer.id
+          {:error, changeset} ->
+            Logger.error("❌ Failed to create performer: #{inspect(changeset.errors)}")
+            # Log the full changeset for debugging
+            Logger.debug("🔍 Full changeset: #{inspect(changeset)}")
+            nil
+        end
+
+      # Handle different error formats gracefully
+      {:error, reason} ->
+        Logger.info("🚫 No performer data available: #{reason}")
+        nil
+
+      _ ->
+        Logger.debug("🔍 No performer data found in additional details")
         nil
     end
   end

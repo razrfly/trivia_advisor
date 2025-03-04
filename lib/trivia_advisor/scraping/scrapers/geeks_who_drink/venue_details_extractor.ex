@@ -5,22 +5,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
 
   require Logger
 
-  def extract_additional_details(url) when is_binary(url) do
-    case HTTPoison.get(url, [], follow_redirect: true) do
-      {:ok, %{status_code: 200, body: body}} ->
-        case Floki.parse_document(body) do
-          {:ok, document} ->
-            {:ok, parse_details(document)}
-          error -> error
-        end
-      {:ok, %{status_code: status}} ->
-        Logger.error("Failed to fetch venue details. Status: #{status}")
-        {:error, "HTTP #{status}"}
-      {:error, reason} ->
-        Logger.error("Failed to fetch venue details: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
+  # Fetches additional details about the venue from its details page with retries
+  def extract_additional_details(nil), do: {:error, "No URL available"}
+  def extract_additional_details(url) when is_binary(url), do: extract_additional_details(url, 0)
 
   defp parse_details(document) do
     %{
@@ -32,6 +19,154 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
       instagram: extract_social_link(document, "instagram"),
       start_time: extract_start_time(document)
     }
+  end
+
+  # Extract venue ID from URL or document
+  defp extract_venue_id(url, document) do
+    # Try to extract from URL first
+    case Regex.run(~r/\/venues\/(\d+)/, url) do
+      [_, venue_id] ->
+        Logger.debug("📌 Extracted venue ID from URL: #{venue_id}")
+        venue_id
+      nil ->
+        # Try to find it in the document
+        document
+        |> Floki.find("body")
+        |> Floki.attribute("data-venue-id")
+        |> List.first()
+        |> case do
+          nil ->
+            # Try alternate method - look for it in script tags
+            scripts = Floki.find(document, "script")
+            Enum.find_value(scripts, fn script ->
+              script_text = Floki.text(script)
+              case Regex.run(~r/venue[\"']?\s*:\s*[\"']?(\d+)[\"']?/, script_text) do
+                [_, venue_id] -> venue_id
+                nil -> nil
+              end
+            end)
+          id -> id
+        end
+    end
+  end
+
+  # Extract performer from AJAX endpoint with retries
+  defp extract_performer(nil), do: {:error, "No venue ID available"}
+  defp extract_performer(venue_id), do: extract_performer(venue_id, 0)
+
+  defp extract_performer(venue_id, retries) when retries < 3 do
+    # Construct the API endpoint URL
+    url = "https://www.geekswhodrink.com/wp-admin/admin-ajax.php?action=mb_display_venue_events&pag=1&venue=#{venue_id}&team=*"
+    Logger.debug("🔍 Fetching performer data from: #{url} (attempt #{retries + 1}/3)")
+
+    # Set a timeout to prevent hanging on slow requests
+    options = [timeout: 5000, recv_timeout: 5000]
+
+    case HTTPoison.get(url, [], options) do
+      {:ok, %{status_code: 200, body: body}} ->
+        process_performer_response(body)
+
+      {:ok, %{status_code: status}} ->
+        Logger.error("❌ Failed to fetch performer data. Status: #{status}")
+        retry_or_fail(venue_id, retries, "HTTP #{status}")
+
+      {:error, reason} ->
+        Logger.error("❌ Failed to fetch performer data: #{inspect(reason)}")
+        retry_or_fail(venue_id, retries, "HTTP request failed: #{inspect(reason)}")
+    end
+  end
+
+  defp extract_performer(_venue_id, retries) do
+    Logger.error("❌ Failed to fetch performer data after #{retries} attempts")
+    {:error, "Max retries exceeded"}
+  end
+
+  defp retry_or_fail(venue_id, retries, _error_reason) do
+    # Exponential backoff: wait longer between each retry
+    backoff_ms = :math.pow(2, retries) * 500 |> round()
+    Logger.info("⏱️ Retrying performer data fetch in #{backoff_ms}ms...")
+    Process.sleep(backoff_ms)
+    extract_performer(venue_id, retries + 1)
+  end
+
+  defp process_performer_response(body) do
+    case Floki.parse_document(body) do
+      {:ok, document} ->
+        # Look for quizmaster info in the quizzes__meta div
+        meta_div = Floki.find(document, ".quizzes__meta")
+
+        if Enum.empty?(meta_div) do
+          Logger.debug("❌ No .quizzes__meta div found in performer response")
+          {:error, "No quizmaster information found"}
+        else
+          # Extract name
+          name = document
+          |> Floki.find(".quiz__master p")
+          |> Floki.text()
+          |> String.trim()
+          |> extract_name_from_text()
+          |> truncate_name(200) # Truncate name to avoid database errors
+
+          # Extract profile image
+          profile_image = document
+          |> Floki.find(".quiz__avatar img")
+          |> Floki.attribute("src")
+          |> List.first()
+
+          # If we have an image but no name, provide a default name
+          cond do
+            is_nil(name) and is_nil(profile_image) ->
+              {:error, "No performer name or image found"}
+            is_nil(name) and not is_nil(profile_image) ->
+              {:ok, %{name: "Geeks Who Drink Quizmaster", profile_image: profile_image}}
+            true ->
+              {:ok, %{name: name, profile_image: profile_image}}
+          end
+        end
+
+      {:error, reason} ->
+        Logger.error("❌ Failed to parse performer HTML: #{inspect(reason)}")
+        {:error, "Failed to parse performer HTML"}
+    end
+  end
+
+  defp extract_name_from_text(text) do
+    case text do
+      nil -> nil
+      "" -> nil
+      text ->
+        # Clean up the text by removing repeated "Quizmaster:" prefixes
+        clean_text = text
+        |> String.replace(~r/Quizmaster:\s*/i, "Quizmaster: ", global: true)
+        |> String.replace(~r/(Quizmaster:\s+){2,}/i, "Quizmaster: ", global: true)
+
+        # Extract the name, typically in "With Quizmaster John Doe" format
+        name = if String.contains?(clean_text, "Quizmaster") do
+          clean_text
+          |> String.replace(~r/.*Quizmaster:\s*/i, "")
+          |> String.trim()
+        else
+          # If not in the expected format, just return the text
+          clean_text |> String.trim()
+        end
+
+        # Ensure we don't return an empty string
+        case name do
+          "" -> "Unknown Quizmaster"
+          name -> name
+        end
+    end
+  end
+
+  # Helper to truncate name to a maximum length
+  defp truncate_name(nil, _), do: nil
+  defp truncate_name(name, max_length) when is_binary(name) do
+    if String.length(name) > max_length do
+      Logger.warning("⚠️ Truncating performer name from #{String.length(name)} to #{max_length} characters")
+      String.slice(name, 0, max_length)
+    else
+      name
+    end
   end
 
   defp extract_website(document) do
@@ -151,5 +286,61 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor do
           end
       end
     end
+  end
+
+  defp extract_additional_details(url, retries) when retries < 3 do
+    Logger.debug("🔍 Fetching additional venue details from: #{url} (attempt #{retries + 1}/3)")
+
+    # Set appropriate timeouts and follow redirects
+    options = [timeout: 10000, recv_timeout: 10000, follow_redirect: true]
+
+    case HTTPoison.get(url, [], options) do
+      {:ok, %{status_code: 200, body: body}} ->
+        case Floki.parse_document(body) do
+          {:ok, document} ->
+            # Extract venue ID for performer API call
+            venue_id = extract_venue_id(url, document)
+
+            # Parse basic details from main document
+            details = parse_details(document)
+
+            # Add performer details if possible
+            details =
+              case extract_performer(venue_id) do
+                {:ok, performer} ->
+                  Logger.debug("✅ Found performer: #{inspect(performer)}")
+                  Map.put(details, :performer, performer)
+                {:error, reason} ->
+                  Logger.debug("❌ No performer found: #{reason}")
+                  details
+              end
+
+            {:ok, details}
+          {:error, reason} ->
+            Logger.error("❌ Failed to parse venue details HTML: #{inspect(reason)}")
+            retry_or_fail_details(url, retries, "Failed to parse venue details HTML: #{inspect(reason)}")
+        end
+
+      {:ok, %{status_code: status}} ->
+        Logger.error("❌ Failed to fetch venue details. Status: #{status}")
+        retry_or_fail_details(url, retries, "HTTP #{status}")
+
+      {:error, reason} ->
+        Logger.error("❌ Failed to fetch venue details: #{inspect(reason)}")
+        retry_or_fail_details(url, retries, "HTTP request failed: #{inspect(reason)}")
+    end
+  end
+
+  defp extract_additional_details(_url, retries) do
+    Logger.error("❌ Failed to fetch venue details after #{retries} attempts")
+    {:error, "Max retries exceeded"}
+  end
+
+  defp retry_or_fail_details(url, retries, _error_reason) do
+    # Exponential backoff: wait longer between each retry
+    backoff_ms = :math.pow(2, retries) * 1000 |> round()
+    Logger.info("⏱️ Retrying venue details fetch in #{backoff_ms}ms...")
+    Process.sleep(backoff_ms)
+    extract_additional_details(url, retries + 1)
   end
 end
