@@ -8,8 +8,11 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   alias TriviaAdvisor.Scraping.Source
 
   @impl Oban.Worker
-  def perform(_job) do
+  def perform(%Oban.Job{args: args}) do
     Logger.info("🔄 Starting SpeedQuizzing Index Job...")
+
+    # Check if a limit is specified (for testing)
+    limit = Map.get(args, "limit")
 
     # Get the SpeedQuizzing source
     source = Repo.get_by!(Source, slug: "speed-quizzing")
@@ -21,8 +24,20 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         event_count = length(events)
         Logger.info("✅ Successfully fetched #{event_count} events from SpeedQuizzing index page")
 
+        # Apply limit if specified
+        events_to_process = if limit, do: Enum.take(events, limit), else: events
+        limited_count = length(events_to_process)
+
+        if limit do
+          Logger.info("🧪 Testing mode: Limited to #{limited_count} events (out of #{event_count} total)")
+        end
+
+        # Enqueue detail jobs for each event
+        enqueued_count = enqueue_detail_jobs(events_to_process, source.id)
+        Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing")
+
         # Return success with event count
-        {:ok, %{event_count: event_count, source_id: source.id}}
+        {:ok, %{event_count: event_count, enqueued_jobs: enqueued_count, source_id: source.id}}
 
       {:error, reason} ->
         # Log the error
@@ -31,6 +46,37 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         # Return the error
         {:error, reason}
     end
+  end
+
+  # Enqueue detail jobs for each event
+  defp enqueue_detail_jobs(events, source_id) do
+    Logger.info("🔄 Enqueueing detail jobs for #{length(events)} events...")
+
+    # For each event, create a detail job with the event ID
+    Enum.reduce(events, 0, fn event, count ->
+      event_id = Map.get(event, "event_id")
+
+      if is_nil(event_id) do
+        Logger.warning("⚠️ Skipping event with missing ID: #{inspect(event)}")
+        count
+      else
+        # Create a job with the event ID and source ID
+        %{
+          event_id: event_id,
+          source_id: source_id,
+          lat: Map.get(event, "lat"),
+          lng: Map.get(event, "lon")
+        }
+        |> TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob.new()
+        |> Oban.insert()
+        |> case do
+          {:ok, _job} -> count + 1
+          {:error, error} ->
+            Logger.error("❌ Failed to enqueue detail job for event ID #{event_id}: #{inspect(error)}")
+            count
+        end
+      end
+    end)
   end
 
   # The following functions are copied from the existing SpeedQuizzing scraper
