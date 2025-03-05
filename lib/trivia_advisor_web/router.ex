@@ -1,6 +1,9 @@
 defmodule TriviaAdvisorWeb.Router do
   use TriviaAdvisorWeb, :router
 
+  import Oban.Web.Router
+  import Plug.BasicAuth
+
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
@@ -12,6 +15,11 @@ defmodule TriviaAdvisorWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+  end
+
+  # Basic authentication for Oban Web
+  pipeline :oban_auth do
+    plug :basic_auth, username: "admin", password: "trivia_admin"
   end
 
   scope "/", TriviaAdvisorWeb do
@@ -26,6 +34,13 @@ defmodule TriviaAdvisorWeb.Router do
     if Mix.env() == :dev do
       live "/dev/cache", DevLive.Cache, :index
     end
+  end
+
+  # Oban Web UI routes for version 2.11
+  scope "/admin" do
+    pipe_through [:browser, :oban_auth]
+
+    oban_dashboard "/oban"
   end
 
   # Other scopes may use custom stacks.

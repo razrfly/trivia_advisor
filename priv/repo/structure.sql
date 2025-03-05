@@ -57,6 +57,28 @@ CREATE TYPE public.oban_job_state AS ENUM (
 );
 
 
+--
+-- Name: oban_count_estimate(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.oban_count_estimate(state text, queue text) RETURNS integer
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  plan jsonb;
+BEGIN
+  EXECUTE 'EXPLAIN (FORMAT JSON)
+           SELECT id
+           FROM public.oban_jobs
+           WHERE state = $1::public.oban_job_state
+           AND queue = $2'
+    INTO plan
+    USING state, queue;
+  RETURN plan->0->'Plan'->'Plan Rows';
+END;
+$_$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
