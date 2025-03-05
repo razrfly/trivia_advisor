@@ -6,7 +6,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
   # Aliases for Question One scraper functionality
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
-  alias TriviaAdvisor.Scraping.Scrapers.QuestionOne
 
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
