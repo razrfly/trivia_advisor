@@ -77,6 +77,8 @@ defmodule TriviaAdvisor.MixProject do
       {:mime, "~> 2.0"},
       {:timex, "~> 3.7"},
       {:oban, "~> 2.19"},
+      {:oban_web, "~> 2.11"},
+      {:plug, "~> 1.16"},
       {:igniter, "~> 0.5", only: [:dev]}
     ]
   end

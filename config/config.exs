@@ -19,6 +19,11 @@ config :trivia_advisor, Oban,
      ]}
   ]
 
+# Add Oban Web UI configuration
+config :oban_web,
+  repo: TriviaAdvisor.Repo,
+  prefix: "public"
+
 config :trivia_advisor,
   ecto_repos: [TriviaAdvisor.Repo],
   generators: [timestamp_type: :utc_datetime],
