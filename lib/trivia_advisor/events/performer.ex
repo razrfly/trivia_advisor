@@ -15,6 +15,20 @@ defmodule TriviaAdvisor.Events.Performer do
     timestamps()
   end
 
+  # Add before_delete callback to delete files when the record is deleted
+  def before_delete(%{profile_image: profile_image} = performer) do
+    if profile_image && profile_image.file_name do
+      Logger.info("🗑️ Deleting profile image files for performer: #{performer.name}")
+
+      # Note: Waffle.Actions.Delete.delete/2 currently always returns :ok
+      # This will be updated when Waffle adds proper error handling (issue #86)
+      Waffle.Actions.Delete.delete({profile_image.file_name, performer}, [])
+      Logger.info("✅ Successfully deleted profile image files for performer: #{performer.name}")
+    end
+  end
+  # Catch-all for performers without images
+  def before_delete(_), do: :ok
+
   @doc false
   def changeset(performer, attrs) do
     performer

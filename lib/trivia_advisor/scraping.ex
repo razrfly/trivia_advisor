@@ -86,7 +86,7 @@ defmodule TriviaAdvisor.Scraping do
 
   """
   def delete_source(%Source{} = source) do
-    Repo.delete(source)
+    Repo.delete_with_callbacks(source)
   end
 
   @doc """
@@ -182,7 +182,7 @@ defmodule TriviaAdvisor.Scraping do
 
   """
   def delete_scrape_log(%ScrapeLog{} = scrape_log) do
-    Repo.delete(scrape_log)
+    Repo.delete_with_callbacks(scrape_log)
   end
 
   @doc """

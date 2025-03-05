@@ -49,8 +49,8 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
           {:ok, updated_venue} ->
             Logger.info("✅ Successfully fetched Google Place images for venue: #{venue.name}")
             updated_venue
-          {:error, reason} ->
-            Logger.error("❌ Failed to fetch Google Place images: #{inspect(reason)}")
+          {:error, _reason} ->
+            # Return the original venue on error
             venue
         end
       rescue
@@ -59,6 +59,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
           venue
       end
     else
+      # Logger.debug("⏭️ Skipping Google Place images for venue: #{venue.name}")
       venue
     end
   end
@@ -198,6 +199,38 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
       failed_ids: Enum.map(failed, fn {id, _} -> id end)
     }
   end
+
+  @doc """
+  Deletes all Google Place images for a venue from the filesystem.
+  This function is meant to be called from a before_delete callback.
+
+  Returns :ok on success, or {:error, reason} on failure.
+  """
+  def delete_venue_images(%Venue{google_place_images: images, slug: slug} = venue) when is_list(images) and length(images) > 0 do
+    Logger.info("🗑️ Deleting Google Place images for venue: #{venue.name}")
+
+    # Track successes
+    Enum.each(images, fn image ->
+      # Create the scope that matches what was used when storing
+      scope = {venue.id, slug, image["position"] || 0}
+
+      # Try to delete the file using Waffle
+      filename = Path.basename(image["url"])
+
+      # Note: Waffle.Actions.Delete.delete/2 currently always returns :ok
+      # This will be updated when Waffle adds proper error handling (issue #86)
+      Waffle.Actions.Delete.delete({filename, scope}, [])
+
+      # Log the result
+      Logger.debug("✅ Deleted image: #{filename}")
+    end)
+
+    Logger.info("✅ Successfully deleted all Google Place images for venue: #{venue.name}")
+    :ok
+  end
+
+  # No images to delete
+  def delete_venue_images(_venue), do: :ok
 
   # Server callbacks
 

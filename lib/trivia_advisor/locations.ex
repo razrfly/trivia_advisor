@@ -86,7 +86,7 @@ defmodule TriviaAdvisor.Locations do
 
   """
   def delete_country(%Country{} = country) do
-    Repo.delete(country)
+    Repo.delete_with_callbacks(country)
   end
 
   @doc """
@@ -218,7 +218,7 @@ defmodule TriviaAdvisor.Locations do
 
   """
   def delete_city(%City{} = city) do
-    Repo.delete(city)
+    Repo.delete_with_callbacks(city)
   end
 
   @doc """
@@ -332,7 +332,7 @@ defmodule TriviaAdvisor.Locations do
 
   """
   def delete_venue(%Venue{} = venue) do
-    Repo.delete(venue)
+    Repo.delete_with_callbacks(venue)
   end
 
   @doc """
