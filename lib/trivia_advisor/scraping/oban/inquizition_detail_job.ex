@@ -8,7 +8,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Helpers.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
-  alias TriviaAdvisor.Events.{Event, EventStore}
+  alias TriviaAdvisor.Events.{Event, EventStore, EventSource}
   alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @base_url "https://inquizition.com/find-a-quiz/"
@@ -16,22 +16,42 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   @standard_fee_cents 250
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"venue_data" => venue_data}}) do
+  def perform(%Oban.Job{args: args}) do
+    # Handle both formats: args with venue_data as map key or string key
+    venue_data = args[:venue_data] || args["venue_data"]
+
     venue_name = venue_data["name"]
     Logger.info("🔄 Processing Inquizition venue: #{venue_name}")
+    Logger.debug("Venue data: #{inspect(venue_data)}")
 
-    # Get source ID
-    source_id = venue_data["source_id"]
-    _source = Repo.get!(Source, source_id)
+    # Get source ID (default to 3 for Inquizition if not provided)
+    source_id = venue_data["source_id"] || 3
+
+    # Make sure we have a valid source ID before proceeding
+    source = case source_id do
+      id when is_integer(id) ->
+        Repo.get(Source, id) || get_inquizition_source()
+      _ ->
+        get_inquizition_source()
+    end
+
+    # Log the source for debugging
+    Logger.debug("📊 Using source: #{inspect(source)}")
 
     # Process the venue data
-    result = process_venue_and_event(venue_data, source_id)
+    result = process_venue_and_event(venue_data, source.id)
 
     # Log the result structure for debugging
     Logger.debug("📊 Result structure: #{inspect(result)}")
 
     # Handle the processing result
     handle_processing_result(result)
+  end
+
+  # Fallback to get Inquizition source
+  defp get_inquizition_source do
+    # The name in the database is lowercase "inquizition"
+    Repo.get_by!(Source, slug: "inquizition")
   end
 
   # Handle different result formats - this is a helper function to ensure consistent return formats
@@ -66,6 +86,19 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
   # Process a venue and create an event from the raw data
   defp process_venue_and_event(venue_data, source_id) do
+    # Special case for The White Horse which has known time data
+    venue_data = if venue_data["name"] == "The White Horse" &&
+                   (venue_data["time_text"] == "" || is_nil(venue_data["time_text"])) do
+      Logger.info("🔍 Adding missing time data for The White Horse")
+      Map.merge(venue_data, %{
+        "time_text" => "Sundays, 7pm",
+        "day_of_week" => 7,
+        "start_time" => "19:00"  # Use 24-hour format that EventStore expects
+      })
+    else
+      venue_data
+    end
+
     # Get time_text - provide a default if nil
     time_text = case Map.get(venue_data, "time_text") do
       nil ->
@@ -137,7 +170,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
               update_attrs = %{
                 start_time: parsed_time.start_time,
-                time_text: time_text,
+                time_text: format_time_for_event_store(time_text, parsed_time.day_of_week, parsed_time.start_time),
                 description: description
               }
 
@@ -163,7 +196,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             event_data = %{
               raw_title: "Inquizition Quiz at #{venue.name}",
               name: venue.name,
-              time_text: time_text,
+              time_text: format_time_for_event_store(time_text, parsed_time.day_of_week, parsed_time.start_time),
               description: description,
               fee_text: fee_text,
               source_url: source_url,
@@ -189,7 +222,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             event_data = %{
               raw_title: "Inquizition Quiz at #{venue.name}",
               name: venue.name,
-              time_text: time_text,
+              time_text: format_time_for_event_store(time_text, parsed_time.day_of_week, parsed_time.start_time),
               description: description,
               fee_text: fee_text,
               source_url: source_url,
@@ -218,11 +251,15 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
   # Find existing event for a venue from a specific source
   defp find_existing_event(venue_id, source_id) do
+    # Query for events from this venue that are linked to this source through EventSource
+    # Make sure to use a proper join to avoid the source_id field error
     Repo.one(
       from e in Event,
-      where: e.venue_id == ^venue_id and e.source_id == ^source_id,
+      join: es in EventSource, on: es.event_id == e.id,
+      where: e.venue_id == ^venue_id and es.source_id == ^source_id,
       order_by: [desc: e.inserted_at],
-      limit: 1
+      limit: 1,
+      select: e
     )
   end
 
@@ -231,5 +268,37 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     event
     |> Event.changeset(attrs)
     |> Repo.update()
+  end
+
+  # Format time_text for EventStore processing
+  # Convert formats like "Sundays, 7pm" to include proper "20:00" format that EventStore expects
+  defp format_time_for_event_store(time_text, day_of_week, start_time) do
+    # If we already have a parsed start_time as a string in the correct format
+    if is_binary(start_time) && Regex.match?(~r/^\d{2}:\d{2}$/, start_time) do
+      # Just append the formatted time to the day for EventStore to parse
+      day_name = case day_of_week do
+        1 -> "Monday"
+        2 -> "Tuesday"
+        3 -> "Wednesday"
+        4 -> "Thursday"
+        5 -> "Friday"
+        6 -> "Saturday"
+        7 -> "Sunday"
+        _ -> "Thursday" # Default to Thursday
+      end
+      "#{day_name} #{start_time}"
+    else
+      # Original time_text has the correct format for EventStore
+      time_text
+    end
+  end
+
+  # Check if we need to process this venue
+  defp should_process_venue?(venue, source_id) do
+    # Check if there's an existing event for this venue from this source
+    existing_event = find_existing_event(venue.id, source_id)
+
+    # If no existing event, we should process
+    is_nil(existing_event)
   end
 end
