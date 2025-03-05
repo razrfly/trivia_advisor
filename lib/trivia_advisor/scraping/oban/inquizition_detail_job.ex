@@ -113,11 +113,11 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     # Use explicitly provided day_of_week and start_time if available, otherwise parse from time_text
     parsed_time = cond do
       # If both day_of_week and start_time are provided, use them directly
-      venue_data["day_of_week"] && venue_data["start_time"] ->
+      Map.get(venue_data, "day_of_week") && Map.get(venue_data, "start_time") ->
         %{
-          day_of_week: venue_data["day_of_week"],
-          start_time: venue_data["start_time"],
-          frequency: venue_data["frequency"] || :weekly
+          day_of_week: Map.get(venue_data, "day_of_week"),
+          start_time: Map.get(venue_data, "start_time"),
+          frequency: Map.get(venue_data, "frequency") || :weekly
         }
 
       # Otherwise parse from time_text
@@ -153,6 +153,9 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
         # Get source_url or create default
         source_url = venue_data["source_url"] || "#{@base_url}##{venue.name}"
+
+        # Ensure source_url is never empty (required by EventSource)
+        source_url = if source_url == "", do: "#{@base_url}##{venue.name}", else: source_url
 
         # Get description or use time_text
         description = venue_data["description"] || time_text
@@ -272,33 +275,28 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
   # Format time_text for EventStore processing
   # Convert formats like "Sundays, 7pm" to include proper "20:00" format that EventStore expects
-  defp format_time_for_event_store(time_text, day_of_week, start_time) do
-    # If we already have a parsed start_time as a string in the correct format
-    if is_binary(start_time) && Regex.match?(~r/^\d{2}:\d{2}$/, start_time) do
-      # Just append the formatted time to the day for EventStore to parse
-      day_name = case day_of_week do
-        1 -> "Monday"
-        2 -> "Tuesday"
-        3 -> "Wednesday"
-        4 -> "Thursday"
-        5 -> "Friday"
-        6 -> "Saturday"
-        7 -> "Sunday"
-        _ -> "Thursday" # Default to Thursday
-      end
-      "#{day_name} #{start_time}"
-    else
-      # Original time_text has the correct format for EventStore
-      time_text
+  defp format_time_for_event_store(_time_text, day_of_week, start_time) do
+    # Always generate a properly formatted time string for EventStore
+    day_name = case day_of_week do
+      1 -> "Monday"
+      2 -> "Tuesday"
+      3 -> "Wednesday"
+      4 -> "Thursday"
+      5 -> "Friday"
+      6 -> "Saturday"
+      7 -> "Sunday"
+      _ -> "Thursday" # Default to Thursday
     end
-  end
 
-  # Check if we need to process this venue
-  defp should_process_venue?(venue, source_id) do
-    # Check if there's an existing event for this venue from this source
-    existing_event = find_existing_event(venue.id, source_id)
+    # Ensure start_time is in the correct HH:MM format
+    formatted_time = if is_binary(start_time) && Regex.match?(~r/^\d{2}:\d{2}$/, start_time) do
+      start_time
+    else
+      # Default time if not properly formatted
+      "20:00"
+    end
 
-    # If no existing event, we should process
-    is_nil(existing_event)
+    # Return the correctly formatted string
+    "#{day_name} #{formatted_time}"
   end
 end
