@@ -142,10 +142,10 @@ test_performer_deletion = fn ->
     IO.puts("This confirms performers are independent entities that can exist without related events.")
   end
 
-  # Clean up
+  # Clean up the test data
   IO.puts("\nCleaning up test data...")
-  Repo.delete(performer)
-  Repo.delete(source)
+  Repo.delete_with_callbacks(performer)
+  Repo.delete_with_callbacks(source)
 end
 
 # Run the test

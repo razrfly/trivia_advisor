@@ -86,7 +86,7 @@ defmodule TriviaAdvisor.Events do
 
   """
   def delete_event(%Event{} = event) do
-    Repo.delete(event)
+    Repo.delete_with_callbacks(event)
   end
 
   @doc """
@@ -214,7 +214,7 @@ defmodule TriviaAdvisor.Events do
 
   """
   def delete_event_source(%EventSource{} = event_source) do
-    Repo.delete(event_source)
+    Repo.delete_with_callbacks(event_source)
   end
 
   @doc """

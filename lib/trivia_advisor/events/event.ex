@@ -21,6 +21,20 @@ defmodule TriviaAdvisor.Events.Event do
     timestamps(type: :utc_datetime)
   end
 
+  # Add before_delete callback to delete files when the record is deleted
+  def before_delete(%{hero_image: hero_image} = event) do
+    if hero_image && hero_image.file_name do
+      Logger.info("🗑️ Deleting hero image files for event: #{event.name}")
+
+      # Note: Waffle.Actions.Delete.delete/2 currently always returns :ok
+      # This will be updated when Waffle adds proper error handling (issue #86)
+      Waffle.Actions.Delete.delete({hero_image.file_name, event}, [])
+      Logger.info("✅ Successfully deleted hero image files for event: #{event.name}")
+    end
+  end
+  # Catch-all for events without images
+  def before_delete(_), do: :ok
+
   @doc false
   def changeset(event, attrs) do
     # Get the current hero image filename if it exists
