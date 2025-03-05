@@ -131,6 +131,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     end
 
     # Create venue data for VenueStore
+    # Include ALL venue attributes to ensure complete venue creation
     venue_attrs = %{
       name: venue_data["name"],
       address: venue_data["address"],
@@ -139,6 +140,15 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
       facebook: venue_data["facebook"],
       instagram: venue_data["instagram"]
     }
+
+    # Log what we're doing for debugging
+    Logger.info("""
+    🏢 Processing venue in Detail Job:
+      Name: #{venue_attrs.name}
+      Address: #{venue_attrs.address}
+      Phone: #{venue_attrs.phone || "Not provided"}
+      Website: #{venue_attrs.website || "Not provided"}
+    """)
 
     # Process venue through VenueStore (creates or updates the venue)
     case VenueStore.process_venue(venue_attrs) do
@@ -254,16 +264,37 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
   # Find existing event for a venue from a specific source
   defp find_existing_event(venue_id, source_id) do
-    # Query for events from this venue that are linked to this source through EventSource
-    # Make sure to use a proper join to avoid the source_id field error
-    Repo.one(
-      from e in Event,
-      join: es in EventSource, on: es.event_id == e.id,
-      where: e.venue_id == ^venue_id and es.source_id == ^source_id,
-      order_by: [desc: e.inserted_at],
-      limit: 1,
-      select: e
-    )
+    # First find all events for this venue
+    events = Repo.all(from e in Event, where: e.venue_id == ^venue_id, select: e)
+
+    # If there are no events, return nil
+    if Enum.empty?(events) do
+      nil
+    else
+      # Get all event IDs
+      event_ids = Enum.map(events, & &1.id)
+
+      # Find event sources that link these events to our source
+      event_sources = Repo.all(
+        from es in EventSource,
+        where: es.event_id in ^event_ids and es.source_id == ^source_id,
+        select: es
+      )
+
+      # If no event sources found, return nil
+      if Enum.empty?(event_sources) do
+        nil
+      else
+        # Get the most recent event that has a source link
+        linked_event_ids = Enum.map(event_sources, & &1.event_id)
+        Repo.one(
+          from e in Event,
+          where: e.id in ^linked_event_ids,
+          order_by: [desc: e.inserted_at],
+          limit: 1
+        )
+      end
+    end
   end
 
   # Update an existing event with new attributes

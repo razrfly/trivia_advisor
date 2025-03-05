@@ -150,32 +150,88 @@ defmodule TriviaAdvisor.Events do
       {:error, %Ecto.Changeset{}}
 
   """
-  def create_event_source(attrs) when is_map(attrs) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
+  def create_event_source(attrs) do
+    now = DateTime.utc_now()
     attrs = Map.put(attrs, :last_seen_at, now)
 
-    # Return error changeset if required fields are missing
     changeset = EventSource.changeset(%EventSource{}, attrs)
-    if !changeset.valid? do
+
+    if not changeset.valid? do
       {:error, changeset}
     else
-      # First try to find existing record
-      query = from es in EventSource,
+      # First try to find existing record by event_id and source_url
+      query_by_url = from es in EventSource,
         where: es.event_id == ^attrs.event_id and es.source_url == ^attrs.source_url
 
-      case Repo.one(query) do
-        nil ->
+      # Also check for event_id and source_id constraint
+      query_by_source = from es in EventSource,
+        where: es.event_id == ^attrs.event_id and es.source_id == ^attrs.source_id
+
+      case {Repo.one(query_by_url), Repo.one(query_by_source)} do
+        {nil, nil} ->
+          # No existing record found, try inserting
           %EventSource{}
           |> EventSource.changeset(attrs)
           |> Repo.insert()
+          |> case do
+            {:ok, event_source} ->
+              {:ok, event_source}
+            {:error, changeset} ->
+              # Check if this is a unique constraint error
+              constraint_error? = Enum.any?(changeset.errors, fn
+                {_, {_, opts}} -> Keyword.get(opts, :constraint) == :unique
+                _ -> false
+              end)
 
-        event_source ->
-          # Update existing record, merging metadata
-          merged_metadata = Map.merge(event_source.metadata || %{}, attrs.metadata || %{})
+              if constraint_error? do
+                # Race condition - try to find and update the record that now exists
+                existing_by_url = Repo.one(query_by_url)
+                existing_by_source = Repo.one(query_by_source)
+                existing = existing_by_url || existing_by_source
 
-          event_source
+                if existing do
+                  # Update existing record, merging metadata
+                  new_metadata = attrs.metadata || %{}
+                  existing_metadata = existing.metadata || %{}
+                  merged_metadata = Map.merge(existing_metadata, new_metadata)
+
+                  existing
+                  |> EventSource.changeset(%{
+                    last_seen_at: now,
+                    metadata: merged_metadata
+                  })
+                  |> Repo.update()
+                else
+                  {:error, changeset}
+                end
+              else
+                {:error, changeset}
+              end
+          end
+
+        {existing, _} when not is_nil(existing) ->
+          # Update existing record found by URL, merging metadata
+          new_metadata = attrs.metadata || %{}
+          existing_metadata = existing.metadata || %{}
+          merged_metadata = Map.merge(existing_metadata, new_metadata)
+
+          existing
           |> EventSource.changeset(%{
             last_seen_at: now,
+            metadata: merged_metadata
+          })
+          |> Repo.update()
+
+        {nil, existing} when not is_nil(existing) ->
+          # Update existing record found by source_id, merging metadata
+          new_metadata = attrs.metadata || %{}
+          existing_metadata = existing.metadata || %{}
+          merged_metadata = Map.merge(existing_metadata, new_metadata)
+
+          existing
+          |> EventSource.changeset(%{
+            last_seen_at: now,
+            source_url: attrs.source_url, # Update the source_url to match
             metadata: merged_metadata
           })
           |> Repo.update()
@@ -256,19 +312,40 @@ defmodule TriviaAdvisor.Events do
         })
         |> Repo.insert()
         |> case do
-          {:error, %{errors: [event_id: {_, [constraint: :unique]}]} = _changeset} ->
-            # If we hit the unique constraint, try to find and update the existing record
-            event_source = Repo.one(query)
-            update_event_source(event_source, %{
-              last_seen_at: now,
-              metadata: Map.merge(event_source.metadata || %{}, metadata || %{})
-            })
+          {:error, changeset} = error ->
+            errors = changeset.errors
+            has_unique_constraint = Enum.any?(errors, fn
+              {field, {_, opts}} ->
+                field == :event_id and Keyword.get(opts, :constraint) == :unique
+              _ ->
+                false
+            end)
+
+            if has_unique_constraint do
+              # If we hit the unique constraint, try to find and update the existing record
+              case Repo.one(query) do
+                nil -> error
+                found_event_source ->
+                  existing_metadata = found_event_source.metadata || %{}
+                  new_metadata = metadata || %{}
+                  merged_metadata = Map.merge(existing_metadata, new_metadata)
+
+                  update_event_source(found_event_source, %{
+                    last_seen_at: now,
+                    metadata: merged_metadata
+                  })
+              end
+            else
+              error
+            end
           other -> other
         end
 
       # Update existing record, merging metadata
       event_source ->
-        merged_metadata = Map.merge(event_source.metadata || %{}, metadata || %{})
+        existing_metadata = event_source.metadata || %{}
+        new_metadata = metadata || %{}
+        merged_metadata = Map.merge(existing_metadata, new_metadata)
 
         event_source
         |> EventSource.changeset(%{
