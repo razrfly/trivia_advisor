@@ -1,6 +1,5 @@
 defmodule TriviaAdvisor.Repo.Migrations.CleanupDuplicateEventSourcesAndAddUniqueIndex do
   use Ecto.Migration
-  import Ecto.Query
   require Logger
 
   def up do
