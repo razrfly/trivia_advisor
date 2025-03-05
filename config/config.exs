@@ -15,8 +15,8 @@ config :trivia_advisor, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
-       {"0 4 * * *", TriviaAdvisor.Scraping.Jobs.QuestionOneJob}, # Run at 4 AM daily
-       {"0 3 * * *", TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob} # Run at 3 AM daily
+       {"0 4 * * *", TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob}, # Run at 4 AM daily
+       {"0 3 * * *", TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob}, # Run at 3 AM daily
      ]}
   ]
 
