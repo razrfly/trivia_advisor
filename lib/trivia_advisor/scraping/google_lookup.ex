@@ -70,8 +70,11 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
             _ = Logger.info("✅ Found business details for #{venue_name}")
             {:ok, normalize_business_data(merged_data)}
           else
+            {:error, reason} ->
+              Logger.warning("Failed to get place details: #{inspect(reason)}, falling back to Geocoding API")
+              lookup_by_geocoding(address, api_key, opts)
             error ->
-              Logger.warning("Failed to get place details: #{inspect(error)}, falling back to Geocoding API")
+              Logger.warning("Unexpected error in place details: #{inspect(error)}, falling back to Geocoding API")
               lookup_by_geocoding(address, api_key, opts)
           end
       end
@@ -264,31 +267,40 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     url = "https://maps.googleapis.com/maps/api/place/details/json?" <> URI.encode_query(params)
     case make_api_request(url) do
       {:ok, response} ->
-        # Ensure we're using the Places API place_id and mark the source
-        response =
-          response
-          |> put_in(["result", "place_id"], place_id)  # Keep original Places API place_id
-          |> put_in(["result", "source"], "places")    # Mark as Places API data
-          |> update_in(["result", "types"], &(if &1, do: &1, else: []))  # Ensure types is a list
-        handle_place_details_response(response)
+        # Check if the response has a result key and it's not nil
+        if is_map(response) && Map.has_key?(response, "result") && response["result"] != nil do
+          # Ensure we're using the Places API place_id and mark the source
+          response =
+            response
+            |> put_in(["result", "place_id"], place_id)  # Keep original Places API place_id
+            |> put_in(["result", "source"], "places")    # Mark as Places API data
+            |> update_in(["result", "types"], &(if &1, do: &1, else: []))  # Ensure types is a list
+          handle_place_details_response(response)
+        else
+          # Log the invalid response format and return an error
+          Logger.error("Invalid response format from Places API: #{inspect(response)}")
+          {:error, "API response missing 'result' data"}
+        end
       error -> error
     end
   end
 
-  defp handle_places_response(%{"status" => "OK", "candidates" => []}) do
-    Logger.warning("No results found in Places API response")
-    {:ok, nil}
-  end
+  defp handle_places_response(%{"status" => "OK", "candidates" => candidates}) when is_list(candidates) do
+    case candidates do
+      [] ->
+        Logger.warning("No results found in Places API response")
+        {:ok, nil}
 
-  defp handle_places_response(%{"status" => "OK", "candidates" => [candidate | _]}) do
-    Logger.debug("Places API candidate: #{inspect(candidate)}")
+      [candidate | _] ->
+        Logger.debug("Places API candidate: #{inspect(candidate)}")
 
-    # Check if this is a business or just a street address
-    if is_business?(candidate["types"]) do
-      {:ok, candidate}
-    else
-      Logger.info("Found location but not a business, using geocoding instead")
-      {:ok, nil}
+        # Check if this is a business or just a street address
+        if is_business?(candidate["types"]) do
+          {:ok, candidate}
+        else
+          Logger.info("Found location but not a business, using geocoding instead")
+          {:ok, nil}
+        end
     end
   end
 
@@ -308,13 +320,19 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     {:ok, nil}  # Fall back to geocoding instead of failing
   end
 
-  defp handle_place_details_response(%{"status" => "OK", "result" => result}) do
+  defp handle_place_details_response(%{"status" => "OK", "result" => result}) when not is_nil(result) do
     {:ok, result}
   end
 
   defp handle_place_details_response(%{"status" => status, "error_message" => msg}) do
     Logger.error("Google Place Details API error: #{status} - #{msg}")
     {:error, msg}
+  end
+
+  # Add a catch-all clause for any unexpected response formats
+  defp handle_place_details_response(response) do
+    Logger.error("Unexpected response format from Place Details API: #{inspect(response)}")
+    {:error, "Unexpected response format from API"}
   end
 
   defp places_url(params) do
