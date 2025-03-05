@@ -379,7 +379,13 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                   <%= if event.performer.profile_image do %>
                     <div class="h-12 w-12 flex-shrink-0 overflow-hidden rounded-full">
                       <img
-                        src={event.performer.profile_image}
+                        src={
+                          cond do
+                            is_map(event.performer.profile_image) -> TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer})
+                            is_binary(event.performer.profile_image) -> event.performer.profile_image
+                            true -> nil
+                          end
+                        }
                         alt={event.performer.name}
                         class="h-full w-full object-cover"
                       />
