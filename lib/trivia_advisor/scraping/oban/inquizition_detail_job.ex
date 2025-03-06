@@ -9,7 +9,6 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{Event, EventStore, EventSource}
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @base_url "https://inquizition.com/find-a-quiz/"
   @standard_fee_text "£2.50" # Standard fee for all Inquizition quizzes
@@ -151,12 +150,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     """)
 
     # Process venue through VenueStore (creates or updates the venue)
+    # VenueStore.process_venue now handles all Google API interactions including image fetching
     case VenueStore.process_venue(venue_attrs) do
       {:ok, venue} ->
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-
-        # Check if we should fetch Google Place images
-        venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
         # Get fee from venue_data or use standard
         fee_text = venue_data["entry_fee"] || @standard_fee_text

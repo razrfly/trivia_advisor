@@ -9,7 +9,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -76,8 +75,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
           }
 
           with {:ok, venue} <- VenueStore.process_venue(venue_data) do
-            # Check if we should fetch Google Place images using the centralized function
-            venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
+            # The venue is already fully prepared with images from GoogleLookupJob
+            # No need to call GooglePlaceImageStore.maybe_update_venue_images anymore
 
             # Then process the event with the venue
             event_data = %{

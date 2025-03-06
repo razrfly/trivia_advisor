@@ -9,7 +9,6 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
   alias HtmlEntities
 
@@ -90,9 +89,6 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       case VenueStore.process_venue(venue_attrs) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
-
-          # Check if we should fetch Google Place images
-          venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
           # Parse day and time
           time_text = format_event_time(venue_data_map, additional_details)
