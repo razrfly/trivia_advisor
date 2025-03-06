@@ -31,7 +31,8 @@ defmodule Mix.Tasks.Delete.Random.Venues do
     "inquizition" => "inquizition",
     "question_one" => "question-one",
     "speed_quizzing" => "speed-quizzing",
-    "quizmeisters" => "quizmeisters"
+    "quizmeisters" => "quizmeisters",
+    "geeks_who_drink" => "geeks-who-drink"
   }
 
   @impl Mix.Task

@@ -23,6 +23,11 @@ defmodule Mix.Tasks.Oban.Scraper do
       job_module: TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob,
       description: "Quizmeisters",
       result_key: :venue_count
+    },
+    "geeks_who_drink" => %{
+      job_module: TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob,
+      description: "Geeks Who Drink",
+      result_key: :venue_count
     }
   }
 
