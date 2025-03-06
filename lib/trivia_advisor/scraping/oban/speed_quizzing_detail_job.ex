@@ -8,9 +8,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
   alias TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
-  alias TriviaAdvisor.Events.EventStore
-  alias TriviaAdvisor.Events.Performer
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
+  alias TriviaAdvisor.Events.{EventStore, Performer}
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -151,9 +149,6 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
 
   # Extract creating event to separate function
   defp create_event_for_venue(venue, venue_data, source) do
-    # Check if we should fetch Google Place images
-    venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
-
     # Parse day of week
     day_of_week = case venue_data.day_of_week do
       "Monday" -> 1

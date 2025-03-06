@@ -9,7 +9,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   @impl Oban.Worker
@@ -157,9 +156,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
             {:ok, venue} ->
               final_data = Map.put(merged_data, :venue_id, venue.id)
               VenueHelpers.log_venue_details(final_data)
-
-              # Check if we should fetch Google Place images using the centralized function
-              venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
               # Process performer if present
               performer_id = case final_data.performer do

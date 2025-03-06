@@ -10,7 +10,10 @@ import Config
 config :trivia_advisor, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
-  queues: [default: 10],
+  queues: [
+    default: 10,
+    google_api: [limit: 2]  # Remove rate limiting as it's not supported in this Oban version
+  ],
   repo: TriviaAdvisor.Repo,
   plugins: [
     {Oban.Plugins.Cron,
@@ -18,7 +21,8 @@ config :trivia_advisor, Oban,
        {"0 4 * * *", TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob}, # Run at 4 AM daily
        {"0 3 * * *", TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob}, # Run at 3 AM daily
        {"0 5 * * *", TriviaAdvisor.Scraping.Oban.InquizitionIndexJob} # Run at 5 AM daily
-     ]}
+     ]},
+    {Oban.Plugins.Pruner, max_age: 604800}  # 7 days in seconds
   ]
 
 # Add Oban Web UI configuration

@@ -6,7 +6,7 @@ defmodule TriviaAdvisor.Locations.VenueStore do
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.{Venue, City, Country}
-  alias TriviaAdvisor.Scraping.GoogleLookup
+  alias TriviaAdvisor.Scraping.Oban.GoogleLookupJob
 
   require Logger
 
@@ -15,6 +15,10 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   Ensures country and city exist and are properly linked.
 
   Returns {:ok, venue} on success or {:error, reason} on failure.
+
+  This function checks for existing venues first. If a venue with coordinates
+  is found, it's returned immediately. Otherwise, it schedules a GoogleLookupJob
+  to handle the Google API call and venue creation/update.
   """
   def process_venue(%{address: address} = attrs) when is_binary(address) do
     # Check for existing venue with coordinates
@@ -24,10 +28,34 @@ defmodule TriviaAdvisor.Locations.VenueStore do
         Logger.info("✅ Using stored coordinates for venue: #{attrs.name}")
         {:ok, existing}
 
-      _ ->
-        # No existing venue with coordinates, proceed with API lookup
-        lookup_opts = [venue_name: attrs.name]
-        process_new_venue(attrs, lookup_opts)
+      existing ->
+        # If venue exists but has no coordinates, pass its ID to the job
+        existing_id = if existing, do: existing.id, else: nil
+
+        # Schedule GoogleLookupJob to handle the API lookup and venue creation/update
+        # This job will handle all Google API interactions in a rate-limited queue
+        Logger.info("🔄 Scheduling Google lookup job for venue: #{attrs.name}")
+
+        # Build job args from venue attributes
+        job_args = %{
+          "venue_name" => attrs.name,
+          "address" => attrs.address,
+          "phone" => attrs[:phone],
+          "website" => attrs[:website],
+          "facebook" => attrs[:facebook],
+          "instagram" => attrs[:instagram],
+          "existing_venue_id" => existing_id
+        }
+
+        # Queue the job and wait for it to complete
+        case GoogleLookupJob.new(job_args)
+             |> Oban.insert()
+             |> wait_for_job() do
+          {:ok, venue} ->
+            Logger.info("✅ Google lookup job completed for venue: #{venue.name}")
+            {:ok, venue}
+          error -> error
+        end
     end
   end
 
@@ -46,46 +74,11 @@ defmodule TriviaAdvisor.Locations.VenueStore do
     venue = venue || Repo.get_by(Venue, name: name, address: attrs[:address])
 
     case venue do
-      %Venue{latitude: lat, longitude: lng} = v when not is_nil(lat) and not is_nil(lng) ->
-        Repo.preload(v, [city: :country])
+      %Venue{} = v -> Repo.preload(v, [city: :country])
       _ -> nil
     end
   end
   defp find_existing_venue(_), do: nil
-
-  defp process_new_venue(attrs, lookup_opts) do
-    case GoogleLookup.lookup_address(attrs.address, lookup_opts) do
-      {:ok, location_data} ->
-        # Check if venue exists by place_id from Google lookup
-        existing = if location_data["place_id"] do
-          Repo.get_by(Venue, place_id: location_data["place_id"])
-        end
-
-        case existing do
-          %Venue{latitude: lat, longitude: lng} = venue when not is_nil(lat) and not is_nil(lng) ->
-            Logger.info("✅ Found existing venue by place_id: #{venue.name}")
-            {:ok, venue}
-
-          _ ->
-            # Get or create the city and country
-            with {:ok, country} <- find_or_create_country(location_data["country"]),
-                 {:ok, city} <- find_or_create_city(location_data["city"], country) do
-              # Structure venue data to match expected format
-              venue_data = %{
-                title: attrs.name,
-                address: attrs.address,
-                phone: attrs[:phone] || location_data["phone"],
-                website: attrs[:website] || location_data["website"],
-                facebook: attrs[:facebook],
-                instagram: attrs[:instagram]
-              }
-
-              find_or_create_venue(venue_data, location_data, city)
-            end
-        end
-      error -> error
-    end
-  end
 
   @doc """
   Finds or creates a country based on its code.
@@ -300,6 +293,89 @@ defmodule TriviaAdvisor.Locations.VenueStore do
       venue
       |> Venue.changeset(updated_attrs)
       |> Repo.update()
+    end
+  end
+
+  # Wait for job to complete with a timeout
+  defp wait_for_job({:ok, %{id: job_id}}) do
+    # Poll for job completion, with a 30 second timeout
+    start_time = System.monotonic_time(:millisecond)
+    timeout = 30_000 # 30 seconds
+
+    wait_for_completion(job_id, start_time, timeout)
+  end
+
+  defp wait_for_job(error), do: error
+
+  defp wait_for_completion(job_id, start_time, timeout) do
+    # Check if we've exceeded timeout
+    elapsed = System.monotonic_time(:millisecond) - start_time
+    if elapsed > timeout do
+      Logger.error("⏱️ Timeout waiting for Google lookup job #{job_id}")
+      {:error, :job_timeout}
+    else
+      # Query job directly from database
+      case Repo.get(Oban.Job, job_id) do
+        %{state: "completed", args: args} ->
+          # Successfully completed job
+          venue_name = args["venue_name"] || "Unknown venue"
+          venue_address = args["address"]
+          Logger.info("✅ Google lookup job #{job_id} completed for venue: #{venue_name}")
+
+          # First try to find by name
+          venue = if venue_name && venue_name != "Unknown venue" do
+            Repo.get_by(Venue, name: venue_name)
+          end
+
+          # Then try by address if available and venue not found yet
+          venue = venue || if venue_address && is_binary(venue_address) do
+            Repo.get_by(Venue, address: venue_address)
+          end
+
+          case venue do
+            %Venue{} = v ->
+              {:ok, Repo.preload(v, [city: :country])}
+            nil ->
+              Logger.error("""
+              ❌ Venue not found after job completion
+              Name: #{venue_name}
+              Address: #{venue_address}
+              """)
+              {:error, :venue_not_found}
+          end
+
+        %{state: "retryable"} ->
+          Logger.info("🔄 Job #{job_id} is retryable, waiting...")
+          Process.sleep(500)
+          wait_for_completion(job_id, start_time, timeout)
+
+        %{state: "available"} ->
+          Logger.info("⏳ Job #{job_id} is available but not yet processed, waiting...")
+          Process.sleep(500)
+          wait_for_completion(job_id, start_time, timeout)
+
+        %{state: "executing"} ->
+          Logger.info("⚙️ Job #{job_id} is executing, waiting...")
+          Process.sleep(500)
+          wait_for_completion(job_id, start_time, timeout)
+
+        %{state: "scheduled"} ->
+          Logger.info("🗓️ Job #{job_id} is scheduled but not yet running, waiting...")
+          Process.sleep(500)
+          wait_for_completion(job_id, start_time, timeout)
+
+        %{state: "discarded"} ->
+          Logger.error("❌ Job #{job_id} was discarded")
+          {:error, :job_discarded}
+
+        %{state: state} ->
+          Logger.error("❌ Job #{job_id} in unexpected state: #{state}")
+          {:error, :job_unexpected_state}
+
+        nil ->
+          Logger.error("❌ Could not find job with ID #{job_id}")
+          {:error, :job_not_found}
+      end
     end
   end
 end
