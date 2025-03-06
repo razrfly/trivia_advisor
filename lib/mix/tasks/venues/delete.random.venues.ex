@@ -30,7 +30,8 @@ defmodule Mix.Tasks.Delete.Random.Venues do
   @scraper_sources %{
     "inquizition" => "inquizition",
     "question_one" => "question-one",
-    "speed_quizzing" => "speed-quizzing"
+    "speed_quizzing" => "speed-quizzing",
+    "quizmeisters" => "quizmeisters"
   }
 
   @impl Mix.Task
