@@ -626,6 +626,40 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
+  Count the total number of venues near a city within a specified radius.
+  This function doesn't use a limit, so it returns the actual total count.
+
+  ## Options
+    * `:radius_km` - search radius in kilometers (default: 50)
+
+  ## Examples
+
+      iex> count_venues_near_city(city, radius_km: 25)
+      150
+
+  """
+  def count_venues_near_city(%City{} = city, opts \\ []) do
+    {lat, lng} = City.coordinates(city)
+    radius_km = Keyword.get(opts, :radius_km, 50)
+
+    # PostGIS query using ST_DWithin for efficient distance filtering
+    # We only use COUNT instead of fetching all venues
+    query = from v in Venue,
+      select: count(v.id),
+      where: fragment(
+        "ST_DWithin(
+          ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+          ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography,
+          ?
+        )",
+        ^lng, ^lat, v.longitude, v.latitude, ^(radius_km * 1000)
+      )
+
+    # Run the query
+    Repo.one(query) || 0
+  end
+
+  @doc """
   Loads all important relationships for a venue.
 
   ## Examples
@@ -700,10 +734,10 @@ defmodule TriviaAdvisor.Locations do
     # and filter out cities with no venues
     cities_with_distances
     |> Enum.map(fn %{city: c, distance_km: distance} ->
-      venues = find_venues_near_city(c, radius_km: 10, load_relations: false)
+      venue_count = count_venues_near_city(c, radius_km: 10)
       %{
         city: c,
-        venue_count: length(venues),
+        venue_count: venue_count,
         distance_km: distance
       }
     end)
