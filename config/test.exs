@@ -57,3 +57,6 @@ config :trivia_advisor,
 
 # Add HTTPoison mock
 config :trivia_advisor, :http_client, HTTPoison.Mock
+
+# Set environment tag
+config :trivia_advisor, env: :test

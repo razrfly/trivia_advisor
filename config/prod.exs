@@ -17,5 +17,8 @@ config :swoosh, local: false
 # Do not print debug messages in production
 config :logger, level: :info
 
+# Set environment tag
+config :trivia_advisor, env: :prod
+
 # Runtime production configuration, including reading
 # of environment variables, is done on config/runtime.exs.
