@@ -745,4 +745,21 @@ defmodule TriviaAdvisor.Locations do
     |> Enum.sort_by(fn %{venue_count: count} -> count end, :desc)
     |> Enum.take(limit)
   end
+
+  @doc """
+  Manually trigger a recalibration of all city coordinates.
+  This schedules the DailyRecalibrateWorker to run immediately.
+
+  Returns {:ok, %Oban.Job{}} on success or {:error, changeset} on failure.
+
+  ## Examples
+
+      iex> recalibrate_city_coordinates()
+      {:ok, %Oban.Job{}}
+  """
+  def recalibrate_city_coordinates do
+    %{}
+    |> Oban.Job.new(worker: TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker)
+    |> Oban.insert()
+  end
 end
