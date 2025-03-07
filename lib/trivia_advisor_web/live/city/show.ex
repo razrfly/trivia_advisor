@@ -149,7 +149,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         <div class="absolute bottom-0 w-full p-4 text-white sm:p-6">
           <div class="mx-auto max-w-7xl">
             <h1 class="text-3xl font-bold sm:text-4xl md:text-5xl"><%= @city.name %></h1>
-            <p class="text-xl text-white/80"><%= length(@venues) %> Venues • <%= @city.country_name %></p>
+            <p class="text-xl text-white/80"><%= @city.venue_count %> Venues • <%= @city.country_name %></p>
           </div>
         </div>
       </div>
@@ -360,11 +360,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     case Locations.get_city_by_slug(slug) do
       %{} = city ->
         # If found, format the data for display
-        venues_count =
-          case Locations.find_venues_near_city(city, radius_km: 50) do
-            venues when is_list(venues) -> length(venues)
-            _ -> 0
-          end
+        venues_count = Locations.count_venues_near_city(city, radius_km: 50)
 
         {:ok, %{
           id: city.id,
