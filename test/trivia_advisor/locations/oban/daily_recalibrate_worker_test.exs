@@ -2,16 +2,18 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorkerTest do
   use TriviaAdvisor.DataCase, async: true
 
   alias TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker
-  alias TriviaAdvisor.Locations.{City, Venue}
+  alias TriviaAdvisor.Locations.{City, Venue, Country}
   alias TriviaAdvisor.Repo
 
   describe "perform/1" do
     test "updates city coordinates based on venue locations" do
-      # Create test country
-      {:ok, country} = %TriviaAdvisor.Locations.Country{
-        name: "Test Country",
-        code: "TC"
-      } |> Repo.insert()
+      # Create test country using changeset
+      {:ok, country} = %Country{}
+        |> Country.changeset(%{
+          name: "Test Country",
+          code: "TC"
+        })
+        |> Repo.insert()
 
       # Create test city with no coordinates using changeset
       {:ok, city} = %City{}
@@ -61,11 +63,13 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorkerTest do
     end
 
     test "handles cities with no venues gracefully" do
-      # Create test country
-      {:ok, country} = %TriviaAdvisor.Locations.Country{
-        name: "Test Country",
-        code: "TC"
-      } |> Repo.insert()
+      # Create test country using changeset
+      {:ok, country} = %Country{}
+        |> Country.changeset(%{
+          name: "Test Country",
+          code: "TC"
+        })
+        |> Repo.insert()
 
       # Create test city with no coordinates and no venues using changeset
       {:ok, city} = %City{}
