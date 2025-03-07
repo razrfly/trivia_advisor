@@ -759,7 +759,18 @@ defmodule TriviaAdvisor.Locations do
   """
   def recalibrate_city_coordinates do
     %{}
-    |> Oban.Job.new(worker: TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker)
+    |> Oban.Job.new(
+      worker: TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker,
+      # Pre-populate meta field with empty values
+      # This creates the structure that will be shown in the UI
+      meta: %{
+        total_cities: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+        duration_ms: 0
+      }
+    )
     |> Oban.insert()
   end
 end
