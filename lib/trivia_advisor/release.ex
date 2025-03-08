@@ -11,6 +11,22 @@ defmodule TriviaAdvisor.Release do
     for repo <- repos() do
       {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :up, all: true))
     end
+
+    # Run seeds after migrations
+    seed()
+  end
+
+  def seed do
+    load_app()
+
+    for repo <- repos() do
+      {:ok, _, _} = Ecto.Migrator.with_repo(repo, fn _repo ->
+        seed_path = Application.app_dir(@app, "priv/repo/seeds.exs")
+        if File.exists?(seed_path) do
+          Code.eval_file(seed_path)
+        end
+      end)
+    end
   end
 
   def rollback(repo, version) do
