@@ -14,6 +14,11 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
   alias TriviaAdvisor.Locations.{City, Venue}
   require Logger
 
+  # Define a helper function to check environment
+  defp debug_logging? do
+    Application.get_env(:trivia_advisor, :env, :prod) in [:dev, :staging]
+  end
+
   @impl Oban.Worker
   def perform(%{id: job_id} = _job) do
     start_time = System.monotonic_time(:millisecond)
@@ -66,7 +71,7 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
 
   # Update coordinates for a single city
   defp update_city_coordinates(%City{} = city) do
-    if Mix.env() in [:dev, :staging] do
+    if debug_logging?() do
       Logger.debug("Calculating coordinates for city: #{city.name}")
     end
 
@@ -84,7 +89,7 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
         )
 
         if updated_count > 0 do
-          if Mix.env() in [:dev, :staging] do
+          if debug_logging?() do
             Logger.debug("Updated #{city.name} coordinates: #{lat}, #{lng}")
           end
           {:ok, %{id: city.id, lat: lat, lng: lng}}
@@ -95,7 +100,7 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
 
       nil ->
         # Log skipped cities in dev/staging for debugging
-        if Mix.env() in [:dev, :staging] do
+        if debug_logging?() do
           Logger.debug("Skipped city: #{city.name} (no venue data)")
         end
         # No venues with coordinates found, return success but indicate no update

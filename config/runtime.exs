@@ -82,6 +82,38 @@ if config_env() == :prod do
     ],
     secret_key_base: secret_key_base
 
+  # Configure Waffle to use Tigris S3-compatible storage in production
+  config :waffle,
+    storage: Waffle.Storage.S3,
+    bucket: System.get_env("BUCKET_NAME", "trivia-advisor")
+
+  # Configure S3 client for access to Tigris
+  config :ex_aws,
+    debug_requests: true,
+    json_codec: Jason,
+    access_key_id: {:system, "AWS_ACCESS_KEY_ID"},
+    secret_access_key: {:system, "AWS_SECRET_ACCESS_KEY"}
+
+  # Configure S3 endpoint using environment variables if available
+  s3_config = case System.get_env("AWS_ENDPOINT_URL_S3") do
+    nil ->
+      [
+        scheme: "https://",
+        host: "fly.storage.tigris.dev",
+        region: System.get_env("AWS_REGION", "auto")
+      ]
+    endpoint_url ->
+      uri = URI.parse(endpoint_url)
+      [
+        scheme: "#{uri.scheme}://",
+        host: uri.host,
+        port: uri.port,
+        region: System.get_env("AWS_REGION", "auto")
+      ]
+  end
+
+  config :ex_aws, :s3, s3_config
+
   # ## SSL Support
   #
   # To get SSL working, you will need to add the `https` key
