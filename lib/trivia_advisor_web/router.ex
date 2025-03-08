@@ -19,7 +19,7 @@ defmodule TriviaAdvisorWeb.Router do
 
   # Basic authentication for Oban Web
   pipeline :oban_auth do
-    plug :basic_auth, username: "admin", password: "trivia_admin"
+    plug :basic_auth, username: "admin", password: "trivia"
   end
 
   scope "/", TriviaAdvisorWeb do
