@@ -1,24 +1,29 @@
 defmodule TriviaAdvisor.Scraping.GoogleLookup do
   @moduledoc """
   Handles Google Places and Geocoding API lookups for venue addresses.
+  Uses the new Places API v2 (https://places.googleapis.com/v1)
   """
 
   require Logger
   @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
-  # Business fields from Places API
+  # Business fields from Places API v2
   @place_fields [
-    "name",
-    "formatted_address",
-    "geometry",
-    "formatted_phone_number",
-    "international_phone_number",
-    "website",
-    "url",
-    "opening_hours",
-    "types",
+    "displayName",
+    "formattedAddress",
+    "location",
+    "internationalPhoneNumber",
+    "nationalPhoneNumber",
+    "websiteUri",
+    "regularOpeningHours",
+    "businessStatus",
     "rating",
-    "user_ratings_total"
+    "userRatingCount",
+    "types",
+    "addressComponents",
+    "priceLevel",
+    "shortFormattedAddress",
+    "googleMapsUri"
   ]
 
   @doc """
@@ -52,8 +57,8 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
          venue_name = Keyword.get(opts, :venue_name, ""),
          search_text = (if venue_name == "", do: address, else: "#{venue_name}, #{address}"),
          _ = Logger.info("📡 Querying Google Maps API with: \"#{search_text}\""),
-         {:ok, place_data} <- find_place_from_text(search_text, api_key, opts),
-         {:ok, maybe_place_id} <- extract_place_id(place_data) do
+         {:ok, search_results} <- find_places_from_text(search_text, api_key, opts),
+         {:ok, maybe_place_id} <- extract_place_id(search_results) do
 
       result = case maybe_place_id do
         nil ->
@@ -64,7 +69,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
         place_id ->
           # Get business details and geocoding data
           with {:ok, place_details} <- get_place_details(place_id, api_key),
-               location = get_in(place_details, ["geometry", "location"]),
+               location = get_in(place_details, ["location"]),
                {:ok, geocoding_data} <- lookup_geocode_by_latlng(location, api_key, opts) do
             merged_data = merge_api_responses(place_details, geocoding_data)
             _ = Logger.info("✅ Found business details for #{venue_name}")
@@ -83,50 +88,8 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     end
   end
 
-  defp lookup_by_geocoding(address, api_key, opts) do
-    case lookup_geocode_by_address(address, api_key, opts) do
-      {:ok, geocoding_data} ->
-        Logger.info("📡 Using Geocoding API for #{address} - no business details available")
-
-        # Extract only the fields we need, explicitly excluding place_id
-        basic_data = %{
-          "name" => extract_street_address(geocoding_data["formatted_address"]),
-          "formatted_address" => geocoding_data["formatted_address"],
-          "place_id" => nil,  # Always nil for non-business addresses
-          "geometry" => %{"location" => get_in(geocoding_data, ["geometry", "location"])},
-          "phone" => nil,
-          "website" => nil,
-          "google_maps_url" => nil,
-          "types" => ["street_address"],
-          "opening_hours" => nil,
-          "rating" => nil,
-          "source" => "geocoding"
-        }
-
-        # Extract address components, ensuring no place_id is included
-        components = extract_address_components(geocoding_data["address_components"] || [])
-        final_data = Map.merge(basic_data, %{
-          "city" => components["city"],
-          "state" => components["state"],
-          "country" => components["country"],
-          "postal_code" => components["postal_code"]
-        })
-
-        Logger.info("✅ Found address details")
-        {:ok, normalize_business_data(final_data)}
-      error -> error
-    end
-  end
-
-  # Extract just the street address part for non-business addresses
-  defp extract_street_address(formatted_address) do
-    formatted_address
-    |> String.split(",")
-    |> List.first()
-    |> String.trim()
-  end
-
-  defp lookup_geocode_by_address(address, api_key, _opts) do
+  defp lookup_by_geocoding(address, api_key, _opts) do
+    Logger.info("Using Geocoding API for address: #{address}")
     params = %{
       address: address,
       key: api_key
@@ -134,12 +97,32 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
     url = "https://maps.googleapis.com/maps/api/geocode/json?" <> URI.encode_query(params)
     case make_api_request(url) do
-      {:ok, response} -> handle_geocoding_response(response)
+      {:ok, response} ->
+        case handle_geocoding_response(response) do
+          {:ok, geocoding_data} ->
+            merged_data = add_geocoding_source(geocoding_data)
+            {:ok, normalize_business_data(merged_data)}
+          error -> error
+        end
       error -> error
     end
   end
 
-  defp lookup_geocode_by_latlng(%{"lat" => lat, "lng" => lng}, api_key, _opts) do
+  defp add_geocoding_source(data) do
+    # Extract address components first, then add the source
+    components = extract_address_components(data["address_components"] || [])
+
+    data
+    |> Map.merge(%{
+      "city" => components["city"],
+      "state" => components["state"],
+      "country" => components["country"],
+      "postal_code" => components["postal_code"]
+    })
+    |> Map.put("source", "geocoding")
+  end
+
+  defp lookup_geocode_by_latlng(%{"latitude" => lat, "longitude" => lng}, api_key, _opts) do
     params = %{
       latlng: "#{lat},#{lng}",
       key: api_key
@@ -164,37 +147,46 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
 
   defp normalize_business_data(details) do
+    # Convert from new Places API format to our standard format
     %{
       # Basic details (available for both businesses and addresses)
-      "name" => details["name"],
-      "formatted_address" => details["formatted_address"],
-      "place_id" => details["place_id"],
-      "location" => extract_location(details["geometry"]),
+      "name" => details["displayName"] || details["name"],
+      "formatted_address" => details["formattedAddress"] || details["formatted_address"],
+      "place_id" => details["id"] || details["place_id"],
+      "location" => extract_location(details),
 
       # Business-only details (nil for non-business addresses)
-      "phone" => details["international_phone_number"] || details["formatted_phone_number"],
-      "website" => details["website"],
-      "google_maps_url" => details["url"],
+      "phone" => details["internationalPhoneNumber"] || details["nationalPhoneNumber"] || details["formatted_phone_number"],
+      "website" => details["websiteUri"] || details["website"],
+      "google_maps_url" => details["googleMapsUri"] || details["url"],
       "types" => details["types"],
-      "opening_hours" => extract_hours(details["opening_hours"]),
-      "rating" => rating_data(details),
+      "opening_hours" => extract_hours(details["regularOpeningHours"] || details["opening_hours"]),
+      "rating" => extract_rating_data(details),
 
       # Address components (from Geocoding API)
       "city" => details["city"],
       "state" => details["state"],
       "country" => details["country"],
-      "postal_code" => details["postal_code"]
+      "postal_code" => details["postal_code"],
+
+      # Keep track of API source
+      "source" => details["source"] || "places"
     }
   end
 
-  defp rating_data(details) do
-    if details["rating"] do
-      %{
-        "value" => details["rating"],
-        "total_ratings" => details["user_ratings_total"]
-      }
-    else
-      nil
+  defp extract_rating_data(details) do
+    cond do
+      details["rating"] && is_number(details["rating"]) ->
+        %{
+          "value" => details["rating"],
+          "total_ratings" => details["userRatingCount"] || details["user_ratings_total"] || 0
+        }
+      details["rating"] && is_map(details["rating"]) ->
+        %{
+          "value" => details["rating"]["value"],
+          "total_ratings" => details["rating"]["userRatingCount"] || 0
+        }
+      true -> nil
     end
   end
 
@@ -202,7 +194,7 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     components = extract_address_components(geocoding_data["address_components"] || [])
 
     # Only keep place_id from Places API results
-    place_id = if place_details["source"] == "places", do: place_details["place_id"]
+    place_id = if place_details["source"] == "places", do: (place_details["id"] || place_details["place_id"])
 
     # Start with place details and add geocoding components
     place_details
@@ -215,14 +207,28 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     |> Map.put("place_id", place_id)  # Explicitly set place_id based on source
   end
 
-  defp extract_location(%{"location" => location}) when is_map(location) do
+  defp extract_location(details) do
+    cond do
+      details["location"] && Map.has_key?(details["location"], "latitude") ->
+        %{
+          "lat" => details["location"]["latitude"],
+          "lng" => details["location"]["longitude"]
+        }
+      details["geometry"] && details["geometry"]["location"] ->
+        %{
+          "lat" => details["geometry"]["location"]["lat"],
+          "lng" => details["geometry"]["location"]["lng"]
+        }
+      true -> nil
+    end
+  end
+
+  defp extract_hours(%{"periods" => periods, "weekdayDescriptions" => weekday_text}) do
     %{
-      "lat" => location["lat"],
-      "lng" => location["lng"]
+      "periods" => periods,
+      "formatted" => weekday_text
     }
   end
-  defp extract_location(_), do: nil
-
   defp extract_hours(%{"periods" => periods, "weekday_text" => weekday_text}) do
     %{
       "periods" => periods,
@@ -231,7 +237,10 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
   end
   defp extract_hours(_), do: nil
 
+  defp extract_place_id(%{"id" => place_id}) when is_binary(place_id), do: {:ok, place_id}
+  defp extract_place_id(%{"places" => [%{"id" => place_id} | _]}) when is_binary(place_id), do: {:ok, place_id}
   defp extract_place_id(%{"place_id" => place_id}) when is_binary(place_id), do: {:ok, place_id}
+  defp extract_place_id(%{"candidates" => [%{"place_id" => place_id} | _]}) when is_binary(place_id), do: {:ok, place_id}
   defp extract_place_id(_), do: {:ok, nil}  # Return nil instead of error to trigger fallback
 
   defp get_api_key do
@@ -243,100 +252,106 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     end
   end
 
-  defp find_place_from_text(input, api_key, _opts) do
-    params = %{
-      input: input,
-      inputtype: "textquery",
-      fields: "place_id,types",
-      key: api_key
-    }
+  defp find_places_from_text(input, api_key, _opts) do
+    # Using the new Places API v2 search endpoint
+    url = "https://places.googleapis.com/v1/places:searchText"
 
-    case make_api_request(places_url(params)) do
-      {:ok, response} -> handle_places_response(response)
-      error -> error
+    headers = [
+      {"Content-Type", "application/json"},
+      {"X-Goog-Api-Key", api_key},
+      {"X-Goog-FieldMask", "places.id,places.displayName,places.formattedAddress,places.types,places.location"}
+    ]
+
+    body = Jason.encode!(%{
+      "textQuery" => input,
+      "maxResultCount" => 1
+    })
+
+    case @http_client.post(url, body, headers) do
+      {:ok, %{status_code: 200, body: response_body}} ->
+        case Jason.decode(response_body) do
+          {:ok, response} -> handle_places_search_response(response)
+          {:error, error} ->
+            Logger.error("Failed to decode API response: #{inspect(error)}")
+            {:error, "Invalid JSON response"}
+        end
+
+      {:ok, %{status_code: status, body: body}} ->
+        error_message = extract_error_message(body)
+        Logger.error("❌ Google Places API error: HTTP #{status} - #{error_message}")
+        {:error, error_message}
+
+      {:error, error} ->
+        Logger.error("API request failed: #{inspect(error)}")
+        {:error, "Request failed"}
+    end
+  end
+
+  defp extract_error_message(body) do
+    case Jason.decode(body) do
+      {:ok, %{"error" => %{"message" => message}}} -> message
+      {:ok, %{"error_message" => message}} -> message
+      _ -> "Unknown error"
     end
   end
 
   defp get_place_details(place_id, api_key) do
-    params = %{
-      place_id: place_id,
-      fields: Enum.join(["place_id" | @place_fields], ","),
-      key: api_key
-    }
+    # Using the new Places API v2 details endpoint
+    url = "https://places.googleapis.com/v1/places/#{place_id}"
 
-    url = "https://maps.googleapis.com/maps/api/place/details/json?" <> URI.encode_query(params)
-    case make_api_request(url) do
-      {:ok, response} ->
-        # Check if the response has a result key and it's not nil
-        if is_map(response) && Map.has_key?(response, "result") && response["result"] != nil do
-          # Ensure we're using the Places API place_id and mark the source
-          response =
-            response
-            |> put_in(["result", "place_id"], place_id)  # Keep original Places API place_id
-            |> put_in(["result", "source"], "places")    # Mark as Places API data
-            |> update_in(["result", "types"], &(if &1, do: &1, else: []))  # Ensure types is a list
-          handle_place_details_response(response)
-        else
-          # Log the invalid response format and return an error
-          Logger.error("Invalid response format from Places API: #{inspect(response)}")
-          {:error, "API response missing 'result' data"}
+    fields_mask = Enum.join(@place_fields, ",")
+
+    headers = [
+      {"X-Goog-Api-Key", api_key},
+      {"X-Goog-FieldMask", fields_mask}
+    ]
+
+    case @http_client.get(url, headers) do
+      {:ok, %{status_code: 200, body: response_body}} ->
+        case Jason.decode(response_body) do
+          {:ok, place_details} ->
+            # Mark as Places API data and ensure the ID is set
+            place_details = place_details
+              |> Map.put("id", place_id)
+              |> Map.put("source", "places")
+
+            {:ok, place_details}
+
+          {:error, error} ->
+            Logger.error("Failed to decode API response: #{inspect(error)}")
+            {:error, "Invalid JSON response"}
         end
-      error -> error
+
+      {:ok, %{status_code: status, body: body}} ->
+        error_message = extract_error_message(body)
+        Logger.error("Google Place Details API error: HTTP #{status} - #{error_message}")
+        {:error, error_message}
+
+      {:error, error} ->
+        Logger.error("API request failed: #{inspect(error)}")
+        {:error, "Request failed"}
     end
   end
 
-  defp handle_places_response(%{"status" => "OK", "candidates" => candidates}) when is_list(candidates) do
-    case candidates do
-      [] ->
-        Logger.warning("No results found in Places API response")
-        {:ok, nil}
-
-      [candidate | _] ->
-        Logger.debug("Places API candidate: #{inspect(candidate)}")
-
-        # Check if this is a business or just a street address
-        if is_business?(candidate["types"]) do
-          {:ok, candidate}
-        else
-          Logger.info("Found location but not a business, using geocoding instead")
-          {:ok, nil}
-        end
-    end
+  defp handle_places_search_response(%{"places" => places}) when is_list(places) and length(places) > 0 do
+    Logger.info("Places API search found #{length(places)} results")
+    {:ok, %{"places" => places}}
   end
 
-  defp handle_places_response(%{"status" => "ZERO_RESULTS"}) do
+  defp handle_places_search_response(%{"places" => []}) do
     Logger.info("No results found in Places API, falling back to geocoding")
     {:ok, nil}
   end
 
-  defp handle_places_response(%{"status" => status, "error_message" => msg}) do
-    Logger.error("❌ Google Places API error: #{status} - #{msg}")
-    {:error, msg}
+  defp handle_places_search_response(response) when is_map(response) and map_size(response) == 0 do
+    Logger.info("Empty response from Places API, falling back to geocoding")
+    {:ok, nil}
   end
 
   # Catch-all for any other response format
-  defp handle_places_response(response) do
+  defp handle_places_search_response(response) do
     Logger.error("❌ Unexpected Places API response format: #{inspect(response)}")
     {:ok, nil}  # Fall back to geocoding instead of failing
-  end
-
-  defp handle_place_details_response(%{"status" => "OK", "result" => result}) when not is_nil(result) do
-    {:ok, result}
-  end
-
-  defp handle_place_details_response(%{"status" => status, "error_message" => msg}) do
-    Logger.error("Google Place Details API error: #{status} - #{msg}")
-    {:error, msg}
-  end
-
-  # Add a catch-all clause for any unexpected response formats
-  defp handle_place_details_response(response) do
-    Logger.error("Unexpected response format from Place Details API: #{inspect(response)}")
-    {:error, "Unexpected response format from API"}
-  end
-
-  defp places_url(params) do
-    "https://maps.googleapis.com/maps/api/place/findplacefromtext/json?" <> URI.encode_query(params)
   end
 
   defp make_api_request(url) do
@@ -378,50 +393,22 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
 
   defp extract_component(components, type) do
     case Enum.find(components, &(type in &1["types"])) do
-      %{"long_name" => name, "short_name" => code} -> %{"name" => name, "code" => code}
-      _ -> nil
+      nil -> nil
+      component -> %{
+        "name" => component["long_name"],
+        "code" => component["short_name"]
+      }
     end
   end
 
-  # Helper to determine if a type indicates a business
-  defp is_business?(nil), do: false
-  defp is_business?(types) do
-    business_types = [
-      "establishment",
-      "point_of_interest",
-      "food",
-      "restaurant",
-      "bar",
-      "cafe",
-      "night_club",
-      "lodging",
-      "store",
-      "shopping_mall",
-      "movie_theater",
-      "museum",
-      "art_gallery",
-      "gym",
-      "spa",
-      "casino"
-    ]
-
-    # Must have "establishment" or "point_of_interest" AND not be just a street_address
-    has_business_type = Enum.any?(types, &(&1 in business_types))
-    not_street_address = "street_address" not in types
-
-    has_business_type and not_street_address
-  end
-
-  defp build_cached_response(venue_name, address, lat, lng) do
+  defp build_cached_response(name, address, lat, lng) do
     %{
-      "name" => venue_name,
+      "name" => name,
       "formatted_address" => address,
       "place_id" => nil,
-      "geometry" => %{
-        "location" => %{
-          "lat" => lat,
-          "lng" => lng
-        }
+      "location" => %{
+        "lat" => lat,
+        "lng" => lng
       },
       "phone" => nil,
       "website" => nil,
