@@ -129,7 +129,15 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
         images when is_list(images) ->
           # Process images (download, store, update venue)
-          process_image_list(venue, images)
+          case process_image_list(venue, images) do
+            {:ok, updated_venue} ->
+              {:ok, updated_venue}
+
+            # If image processing fails, at least store the image URLs
+            {:error, _reason} ->
+              Logger.info("Storing image URLs instead of downloaded images for venue #{venue.id}")
+              store_image_urls_in_venue(venue, images)
+          end
 
         _ ->
           {:error, :invalid_images}
@@ -211,18 +219,34 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
     # Track successes
     Enum.each(images, fn image ->
+      position = image["position"] || 0
       # Create the scope that matches what was used when storing
-      scope = {venue.id, slug, image["position"] || 0}
+      scope = {venue.id, slug, position}
 
-      # Try to delete the file using Waffle
-      filename = Path.basename(image["url"])
+      # We need to try to delete both the original and thumb versions
+      versions = [:original, :thumb]
 
-      # Note: Waffle.Actions.Delete.delete/2 currently always returns :ok
-      # This will be updated when Waffle adds proper error handling (issue #86)
-      Waffle.Actions.Delete.delete({filename, scope}, [])
+      Enum.each(versions, fn version ->
+        # Generate filename using same pattern as in the uploader
+        filename = "#{version}_google_place_#{position}.jpg"
 
-      # Log the result
-      Logger.debug("✅ Deleted image: #{filename}")
+        # Try to delete the file using Waffle
+        # Instead of using Waffle.Actions.Delete.delete, we'll use a different approach
+        # that's more robust for this specific case
+        try do
+          # Create a definition for deleting
+          GooglePlaceImage = TriviaAdvisor.Uploaders.GooglePlaceImage
+
+          # Delete the file directly
+          :ok = GooglePlaceImage.delete({filename, scope})
+
+          # Log the result
+          Logger.debug("✅ Deleted image: #{filename}")
+        rescue
+          e ->
+            Logger.warning("⚠️ Failed to delete image #{filename}: #{inspect(e)}")
+        end
+      end)
     end)
 
     Logger.info("✅ Successfully deleted all Google Place images for venue: #{venue.name}")
@@ -258,8 +282,12 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
         _ -> false
       end)
 
-    # Update venue with new image data
-    update_venue_with_images(venue, image_results)
+    # Update venue with new image data or return error if all failed
+    if Enum.any?(image_results) do
+      update_venue_with_images(venue, image_results)
+    else
+      {:error, :all_images_failed}
+    end
   end
 
   defp process_single_image(venue, url, position) do
@@ -313,12 +341,22 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
     headers = [
       {"User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
-      {"Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"}
+      {"Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},
+      {"Referer", "https://www.google.com/"}
     ]
 
-    options = [follow_redirect: true, recv_timeout: 15000]
+    # If the URL is from the Places API v2 (contains places.googleapis.com/v1),
+    # then use the API key in the URL rather than adding it to the headers
+    {url_for_request, headers_for_request, options} =
+      if String.contains?(url, "places.googleapis.com/v1") do
+        # Keep the key in the URL and use the right options for the new API
+        {url, headers, [follow_redirect: true, recv_timeout: 15000]}
+      else
+        # For the old API, keep using the existing approach
+        {url, headers, [follow_redirect: true, recv_timeout: 15000]}
+      end
 
-    case @http_client.get(url, headers, options) do
+    case @http_client.get(url_for_request, headers_for_request, options) do
       {:ok, %{status_code: 200, body: body}} ->
         # Create temp file
         filename = "google_place_#{:crypto.strong_rand_bytes(8) |> Base.encode16()}.jpg"
@@ -380,9 +418,34 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   end
 
   defp extract_photo_reference(url) do
-    case Regex.run(~r/photoreference=([^&]+)/, url) do
-      [_, photo_ref] -> photo_ref
-      _ -> nil
+    cond do
+      # For Google Maps CDN URL format (PhotoService.GetPhoto)
+      String.contains?(url, "PhotoService.GetPhoto") ->
+        case Regex.run(~r/1s([^&]+)/, url) do
+          [_, photo_id] -> photo_id
+          _ -> nil
+        end
+
+      # For new Places API v2 URL format (photos/:getFullSizeImage)
+      String.contains?(url, "photos:getFullSizeImage") ->
+        case Regex.run(~r/photoreference=([^&]+)/, url) do
+          [_, photo_ref] -> photo_ref
+          _ -> nil
+        end
+
+      # For new Places API v2 URL format (places/{place_id}/photos/{photo_id})
+      String.contains?(url, "/places/") && String.contains?(url, "/photos/") ->
+        case Regex.run(~r{/places/[^/]+/photos/([^/?]+)}, url) do
+          [_, photo_id] -> photo_id
+          _ -> nil
+        end
+
+      # For old API format
+      true ->
+        case Regex.run(~r/photoreference=([^&]+)/, url) do
+          [_, photo_ref] -> photo_ref
+          _ -> nil
+        end
     end
   end
 
@@ -403,5 +466,22 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
         "/#{path}"
       end
     end
+  end
+
+  # Store original image URLs in the venue's google_place_images field
+  defp store_image_urls_in_venue(venue, image_urls) do
+    image_data = Enum.with_index(image_urls, 1)
+      |> Enum.map(fn {url, position} ->
+        %{
+          "original_url" => url,
+          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "position" => position
+        }
+      end)
+
+    # Update venue with new image data
+    venue
+    |> Venue.changeset(%{google_place_images: image_data})
+    |> Repo.update()
   end
 end
