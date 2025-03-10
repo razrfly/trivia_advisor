@@ -24,21 +24,6 @@ defmodule TriviaAdvisor.Locations.Venue do
     timestamps(type: :utc_datetime)
   end
 
-  # Add before_delete callback to delete Google Place images when the venue is deleted
-  def before_delete(venue) do
-    require Logger
-
-    if venue.google_place_images && length(venue.google_place_images) > 0 do
-      Logger.info("🗑️ Deleting Google Place images for venue: #{venue.name}")
-
-      # Call the GooglePlaceImageStore to delete the images
-      # Note: delete_venue_images currently always returns :ok
-      # This will be updated when Waffle adds proper error handling (issue #86)
-      TriviaAdvisor.Services.GooglePlaceImageStore.delete_venue_images(venue)
-      Logger.info("✅ Successfully deleted Google Place images for venue: #{venue.name}")
-    end
-  end
-
   @url_regex ~r/^https?:\/\/[^\s\/$.?#].[^\s]*$/i
 
   @doc false
