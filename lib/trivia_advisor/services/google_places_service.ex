@@ -10,7 +10,7 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.Venue
 
-  @max_images_per_venue 5
+  @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
   # Client API
 
@@ -94,26 +94,29 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
     else
       place_id = venue.place_id
 
-      url = "https://maps.googleapis.com/maps/api/place/details/json?place_id=#{place_id}&fields=photos&key=#{api_key}"
+      # Using the new Places API v2 endpoint for place details
+      url = "https://places.googleapis.com/v1/places/#{place_id}"
 
-      case HTTPoison.get(url, [], [timeout: 10000, recv_timeout: 10000]) do
+      headers = [
+        {"X-Goog-Api-Key", api_key},
+        {"X-Goog-FieldMask", "photos,id,displayName,location"}
+      ]
+
+      case @http_client.get(url, headers, [timeout: 10000, recv_timeout: 10000]) do
         {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
           response = Jason.decode!(body)
-
-          if response["status"] == "OK" do
-            photos = get_photos_from_response(response, api_key)
-            {:ok, photos}
-          else
-            Logger.error("Google Places API error: #{response["status"]}")
-            {:error, response["status"]}
-          end
+          Logger.debug("Google Places API response: #{inspect(response)}")
+          photos = get_photos_from_response(response, api_key, place_id)
+          {:ok, photos}
 
         {:ok, %HTTPoison.Response{status_code: 429}} ->
           Logger.error("Google Places API rate limit reached")
           {:error, :rate_limited}
 
-        {:ok, %HTTPoison.Response{status_code: status_code}} ->
-          {:error, "HTTP error: #{status_code}"}
+        {:ok, %HTTPoison.Response{status_code: status_code, body: body}} ->
+          error_message = extract_error_message(body)
+          Logger.error("Google Places API error: HTTP #{status_code} - #{error_message}")
+          {:error, "HTTP error: #{status_code} - #{error_message}"}
 
         {:error, error} ->
           {:error, error}
@@ -121,17 +124,57 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
     end
   end
 
-  defp get_photos_from_response(response, api_key) do
-    photos = get_in(response, ["result", "photos"]) || []
-
-    photos
-    |> Enum.take(@max_images_per_venue)
-    |> Enum.map(fn photo ->
-      photo_reference = photo["photo_reference"]
-      "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{photo_reference}&key=#{api_key}"
-    end)
-    |> Enum.reject(&is_nil/1)
+  defp extract_error_message(body) do
+    case Jason.decode(body) do
+      {:ok, %{"error" => %{"message" => message}}} -> message
+      {:ok, %{"error_message" => message}} -> message
+      _ -> "Unknown error"
+    end
   end
+
+  defp get_photos_from_response(response, api_key, _place_id) do
+    case get_in(response, ["photos"]) do
+      photos when is_list(photos) and length(photos) > 0 ->
+        # Instead of direct v2 photo URLs, we'll create media URLs using the photo reference
+        # from the MediaLink's googleMapsUri field, which contains the photo reference
+        Enum.map(photos, fn photo ->
+          flag_content_uri = Map.get(photo, "flagContentUri")
+          google_maps_uri = Map.get(photo, "googleMapsUri")
+
+          photo_ref = extract_photo_reference_from_uri(flag_content_uri || google_maps_uri)
+
+          if photo_ref do
+            # Construct URL with the photo reference using the Places API Photo endpoint
+            "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{photo_ref}&key=#{api_key}"
+          end
+        end)
+        |> Enum.filter(&(&1 != nil))
+        |> Enum.take(5)  # Limit to 5 photos
+
+      _ ->
+        # Return empty list if no photos found
+        []
+    end
+  end
+
+  # Extract photo reference from URIs like:
+  # "https://www.google.com/local/imagery/report/?cb_client=maps_api_places.places_api&image_key=!1e10!2sAF1QipPwqH7RJNC8LK4IFv5YtXHKb--3d81f4XLoMORD&hl=en-US"
+  # or
+  # "https://www.google.com/maps/place//data=!3m4!1e2!3m2!1sAF1QipPwqH7RJNC8LK4IFv5YtXHKb--3d81f4XLoMORD!2e10!4m2!3m1!1s0x47d8713644cb96fd:0x265918cb1f397890"
+  defp extract_photo_reference_from_uri(uri) when is_binary(uri) do
+    # Try to extract from image_key parameter
+    case Regex.run(~r/image_key=!1e10!2s([^&]+)/, uri) do
+      [_, photo_ref] -> photo_ref
+      nil ->
+        # Try to extract from the second format
+        case Regex.run(~r/!3m2!1s([^!]+)!2e/, uri) do
+          [_, photo_ref] -> photo_ref
+          nil -> nil
+        end
+    end
+  end
+
+  defp extract_photo_reference_from_uri(_), do: nil
 
   defp get_google_api_key do
     # First try to get from environment variable directly
