@@ -21,6 +21,7 @@ defmodule Mix.Tasks.Delete.Random.Venues do
   import Ecto.Query, warn: false
 
   alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Venues
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Events.{Event, EventSource}
   alias TriviaAdvisor.Scraping.Source
@@ -103,17 +104,12 @@ defmodule Mix.Tasks.Delete.Random.Venues do
                 "  - #{name} (#{address})"
               end)
 
-              # Delete venues one by one to ensure before_delete callbacks are invoked
+              # Delete venues one by one to ensure proper cleanup
               {deleted_count, failed_ids} = Enum.reduce(venue_ids, {0, []}, fn id, {count, failed} ->
-                venue = Repo.get(Venue, id)
-
-                if venue do
-                  case Repo.delete(venue) do
-                    {:ok, _} -> {count + 1, failed}
-                    {:error, _} -> {count, [id | failed]}
-                  end
-                else
-                  {count, failed}
+                # Use our proper deletion function that handles cleanup
+                case Venues.delete_venue_by_id(id) do
+                  {:ok, _} -> {count + 1, failed}
+                  {:error, _} -> {count, [id | failed]}
                 end
               end)
 

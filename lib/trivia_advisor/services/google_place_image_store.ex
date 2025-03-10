@@ -219,18 +219,34 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
     # Track successes
     Enum.each(images, fn image ->
+      position = image["position"] || 0
       # Create the scope that matches what was used when storing
-      scope = {venue.id, slug, image["position"] || 0}
+      scope = {venue.id, slug, position}
 
-      # Try to delete the file using Waffle
-      filename = Path.basename(image["url"])
+      # We need to try to delete both the original and thumb versions
+      versions = [:original, :thumb]
 
-      # Note: Waffle.Actions.Delete.delete/2 currently always returns :ok
-      # This will be updated when Waffle adds proper error handling (issue #86)
-      Waffle.Actions.Delete.delete({filename, scope}, [])
+      Enum.each(versions, fn version ->
+        # Generate filename using same pattern as in the uploader
+        filename = "#{version}_google_place_#{position}.jpg"
 
-      # Log the result
-      Logger.debug("✅ Deleted image: #{filename}")
+        # Try to delete the file using Waffle
+        # Instead of using Waffle.Actions.Delete.delete, we'll use a different approach
+        # that's more robust for this specific case
+        try do
+          # Create a definition for deleting
+          GooglePlaceImage = TriviaAdvisor.Uploaders.GooglePlaceImage
+
+          # Delete the file directly
+          :ok = GooglePlaceImage.delete({filename, scope})
+
+          # Log the result
+          Logger.debug("✅ Deleted image: #{filename}")
+        rescue
+          e ->
+            Logger.warning("⚠️ Failed to delete image #{filename}: #{inspect(e)}")
+        end
+      end)
     end)
 
     Logger.info("✅ Successfully deleted all Google Place images for venue: #{venue.name}")

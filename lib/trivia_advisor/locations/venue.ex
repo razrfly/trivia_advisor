@@ -51,10 +51,25 @@ defmodule TriviaAdvisor.Locations.Venue do
     |> cleanup_url(:website)
     |> cleanup_url(:facebook)
     |> cleanup_url(:instagram)
+    |> handle_google_place_images_change(venue)
     |> put_slug()
     |> unique_constraint(:slug)
     |> unique_constraint(:place_id)
     |> foreign_key_constraint(:city_id)
+  end
+
+  # Handle cleaning up image files when google_place_images is set to empty
+  defp handle_google_place_images_change(changeset, venue) do
+    case {get_change(changeset, :google_place_images), venue.google_place_images} do
+      {[], images} when is_list(images) and length(images) > 0 ->
+        # Only call delete if we're changing from non-empty to empty
+        require Logger
+        Logger.info("🗑️ Clearing Google Place images for venue: #{venue.name}")
+        TriviaAdvisor.Services.GooglePlaceImageStore.delete_venue_images(venue)
+        changeset
+      _ ->
+        changeset
+    end
   end
 
   defp cleanup_url(changeset, field) do
