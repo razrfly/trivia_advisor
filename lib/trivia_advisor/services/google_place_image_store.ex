@@ -2,7 +2,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   @moduledoc """
   Service for managing Google Place images for venues.
   This service:
-  1. Fetches photo references from Google Places API
+  1. Fetches photo references from Google Places API (New)
   2. Stores them in the venue's google_place_images field
   3. Provides methods to construct image URLs dynamically
   """
@@ -13,7 +13,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Services.GooglePlacesService
 
-  @max_images 5
+  @max_images 15
   @refresh_days 90  # Number of days before considering refreshing venue images
 
   # Client API
@@ -140,26 +140,29 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   Returns the URLs for Google Place images for a venue.
   Constructs URLs dynamically from stored photo_references.
 
-  Limits to the specified count (default 3), and orders by position.
+  Limits to the specified count (default 3), and randomizes the order.
   """
   def get_image_urls(venue, count \\ 3) do
     venue = ensure_loaded(venue)
     api_key = get_google_api_key()
 
     venue.google_place_images
-    |> Enum.sort_by(& &1["position"], :asc)
+    |> Enum.shuffle()  # Randomize the order of images
     |> Enum.take(count)
     |> Enum.map(fn image_data ->
       cond do
-        # New format with photo_reference
+        # New format with photo_name (Places API New)
+        Map.has_key?(image_data, "photo_name") && image_data["photo_name"] ->
+          "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
+
+        # Legacy format with photo_reference (old Places API)
         Map.has_key?(image_data, "photo_reference") && image_data["photo_reference"] ->
           "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
 
-        # Legacy format with local_path (backward compatibility)
+        # Very old formats for backward compatibility
         Map.has_key?(image_data, "local_path") && image_data["local_path"] ->
           ensure_full_url(image_data["local_path"])
 
-        # Legacy format with original_url (backward compatibility)
         Map.has_key?(image_data, "original_url") && image_data["original_url"] ->
           image_data["original_url"]
 
@@ -234,20 +237,51 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
       image_urls
       |> Enum.with_index(1)
       |> Enum.map(fn {url, position} ->
-        if photo_ref = extract_photo_reference(url) do
-          %{
-            "photo_reference" => photo_ref,
-            "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-            "position" => position
-          }
-        else
-          nil
+        cond do
+          # Handle new Places API (New) URLs
+          String.contains?(url, "places.googleapis.com/v1/") ->
+            extract_photo_name(url, position)
+
+          # Handle old Places API URLs
+          String.contains?(url, "photoreference=") ->
+            extract_photo_reference(url, position)
+
+          # Skip invalid URLs
+          true ->
+            nil
         end
       end)
       |> Enum.reject(&is_nil/1)
 
     # Update venue with new image data
     update_venue_with_images(venue, image_data)
+  end
+
+  defp extract_photo_name(url, position) do
+    # For Places API (New), extract the photo name from URL
+    # Format: https://places.googleapis.com/v1/places/PLACE_ID/photos/PHOTO_ID/media?key=API_KEY&maxHeightPx=800
+    case Regex.run(~r|v1/(places/[^/]+/photos/[^/]+)/media|, url) do
+      [_, photo_name] ->
+        %{
+          "photo_name" => photo_name,
+          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "position" => position
+        }
+      _ -> nil
+    end
+  end
+
+  defp extract_photo_reference(url, position) do
+    # For old Places API, extract the photo reference from URL
+    case Regex.run(~r/photoreference=([^&]+)/, url) do
+      [_, photo_ref] ->
+        %{
+          "photo_reference" => photo_ref,
+          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "position" => position
+        }
+      _ -> nil
+    end
   end
 
   defp update_venue_with_images(venue, image_data) when is_list(image_data) do
@@ -259,13 +293,6 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
     else
       # No images to update
       {:ok, venue}
-    end
-  end
-
-  defp extract_photo_reference(url) do
-    case Regex.run(~r/photoreference=([^&]+)/, url) do
-      [_, photo_ref] -> photo_ref
-      _ -> nil
     end
   end
 
@@ -289,13 +316,28 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   end
 
   defp get_google_api_key do
-    # First try to get from environment variable directly
-    case System.get_env("GOOGLE_MAPS_API_KEY") do
-      key when is_binary(key) and byte_size(key) > 0 ->
-        key
-      _ ->
-        # Fall back to application config
-        Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+    # First try to get from .env file
+    env_key = case File.read(".env") do
+      {:ok, contents} ->
+        contents
+        |> String.split("\n", trim: true)
+        |> Enum.find_value(fn line ->
+          case String.split(line, "=", parts: 2) do
+            ["GOOGLE_MAPS_API_KEY", value] -> String.trim(value)
+            _ -> nil
+          end
+        end)
+      _ -> nil
+    end
+
+    env_var_key = System.get_env("GOOGLE_MAPS_API_KEY")
+    config_key = Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+
+    # Use the first non-empty key found
+    cond do
+      env_key && env_key != "" -> env_key
+      env_var_key && env_var_key != "" -> env_var_key
+      true -> config_key
     end
   end
 end

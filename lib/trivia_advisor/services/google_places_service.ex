@@ -1,8 +1,7 @@
 defmodule TriviaAdvisor.Services.GooglePlacesService do
   @moduledoc """
   Service for fetching images from Google Places API.
-  Now serves as a simple API client for the GooglePlaceImageStore, which handles
-  permanent storage of images.
+  Uses Places API (New) for compatibility with Google Cloud Platform settings.
   """
 
   use GenServer
@@ -10,7 +9,7 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.Venue
 
-  @max_images_per_venue 5
+  @max_images_per_venue 15
 
   # Client API
 
@@ -89,39 +88,150 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
     api_key = get_google_api_key()
 
     if api_key == nil do
-      Logger.error("Google API key not configured")
+      # More detailed error message about API key
+      Logger.error("Google API key not configured or empty")
+      Logger.error("Value: #{inspect(api_key)}")
+      Logger.error("Environment variable: #{inspect(System.get_env("GOOGLE_MAPS_API_KEY"))}")
+      Logger.error("Application config: #{inspect(Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI))}")
       {:error, :no_api_key}
     else
       place_id = venue.place_id
 
-      url = "https://maps.googleapis.com/maps/api/place/details/json?place_id=#{place_id}&fields=photos&key=#{api_key}"
+      # Debug API key
+      key_prefix = String.slice(api_key, 0, 10)
+      key_suffix = String.slice(api_key, -4, 4)
+      key_length = String.length(api_key)
+      Logger.info("🔑 Using API key for venue #{venue.id}: #{key_prefix}...#{key_suffix} (length: #{key_length})")
 
-      case HTTPoison.get(url, [], [timeout: 10000, recv_timeout: 10000]) do
-        {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-          response = Jason.decode!(body)
+      # Try both the Places API (New) and the standard Places API
+      case try_places_api_new(place_id, api_key) do
+        {:ok, photos} ->
+          Logger.info("✅ Successfully fetched images using Places API (New) for venue #{venue.id}")
+          {:ok, photos}
 
-          if response["status"] == "OK" do
-            photos = get_photos_from_response(response, api_key)
-            {:ok, photos}
-          else
-            Logger.error("Google Places API error: #{response["status"]}")
-            {:error, response["status"]}
-          end
+        {:error, reason} ->
+          Logger.error("❌ Failed to fetch images using Places API (New): #{inspect(reason)}")
+          Logger.info("⏭️ Falling back to standard Places API for venue #{venue.id}")
 
-        {:ok, %HTTPoison.Response{status_code: 429}} ->
-          Logger.error("Google Places API rate limit reached")
-          {:error, :rate_limited}
-
-        {:ok, %HTTPoison.Response{status_code: status_code}} ->
-          {:error, "HTTP error: #{status_code}"}
-
-        {:error, error} ->
-          {:error, error}
+          # Fall back to standard Places API
+          try_standard_places_api(place_id, api_key)
       end
     end
   end
 
-  defp get_photos_from_response(response, api_key) do
+  defp try_places_api_new(place_id, api_key) do
+    # Using Places API (New) endpoint
+    url = "https://places.googleapis.com/v1/places/#{place_id}"
+
+    headers = [
+      {"Content-Type", "application/json"},
+      {"X-Goog-Api-Key", api_key},
+      {"X-Goog-FieldMask", "photos"}
+    ]
+
+    Logger.debug("🌐 Calling Places API (New) with URL: #{url}")
+    Logger.debug("🔐 Using headers: #{inspect(headers)}")
+
+    case HTTPoison.get(url, headers, [timeout: 10000, recv_timeout: 10000]) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        response = Jason.decode!(body)
+        photos = get_photos_from_response_new(response, api_key)
+
+        # Log success with photo count
+        photo_count = length(photos)
+        Logger.info("📸 Found #{photo_count} photos using Places API (New)")
+
+        {:ok, photos}
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        Logger.error("Google Places API rate limit reached")
+        {:error, :rate_limited}
+
+      {:ok, %HTTPoison.Response{status_code: status_code, body: body}} ->
+        error_info = extract_error_info(body)
+        Logger.error("Google Places API (New) error: #{status_code} - #{error_info}")
+        Logger.debug("Response body: #{body}")
+        {:error, "HTTP error: #{status_code} - #{error_info}"}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp try_standard_places_api(place_id, api_key) do
+    url = "https://maps.googleapis.com/maps/api/place/details/json?place_id=#{place_id}&fields=photos&key=#{api_key}"
+
+    Logger.debug("🌐 Calling Standard Places API with URL: #{inspect(url)}")
+
+    case HTTPoison.get(url, [], [timeout: 10000, recv_timeout: 10000]) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        response = Jason.decode!(body)
+
+        if response["status"] == "OK" do
+          photos = get_photos_from_response_standard(response, api_key)
+
+          # Log success with photo count
+          photo_count = length(photos)
+          Logger.info("📸 Found #{photo_count} photos using Standard Places API")
+
+          {:ok, photos}
+        else
+          Logger.error("Google Places API error: #{response["status"]}")
+          {:error, response["status"]}
+        end
+
+      {:ok, %HTTPoison.Response{status_code: 429}} ->
+        Logger.error("Google Places API rate limit reached")
+        {:error, :rate_limited}
+
+      {:ok, %HTTPoison.Response{status_code: status_code, body: body}} ->
+        error_info = extract_error_info(body)
+        Logger.error("Standard Places API error: #{status_code} - #{error_info}")
+        Logger.debug("Response body: #{body}")
+        {:error, "HTTP error: #{status_code} - #{error_info}"}
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+
+  defp extract_error_info(body) do
+    case Jason.decode(body) do
+      {:ok, data} ->
+        error_message = get_in(data, ["error", "message"]) ||
+                        get_in(data, ["error_message"]) ||
+                        "Unknown error"
+        error_message
+      _ ->
+        "Could not parse error response"
+    end
+  end
+
+  defp get_photos_from_response_new(response, api_key) do
+    photos = get_in(response, ["photos"]) || []
+
+    photos
+    |> Enum.take(@max_images_per_venue)
+    |> Enum.map(fn photo ->
+      # For Places API (New), we need to use the name field as the photo reference
+      case get_in(photo, ["name"]) do
+        nil -> nil
+        photo_name ->
+          # Extract just the ID part from the full photo name
+          # The format is "places/PLACE_ID/photos/PHOTO_ID"
+          case Regex.run(~r|places/[^/]+/photos/([^/]+)|, photo_name) do
+            [_, _photo_id] ->
+              # Documentation for maxHeightPx at:
+              # https://developers.google.com/maps/documentation/places/web-service/photos#photo-media-type
+              "https://places.googleapis.com/v1/#{photo_name}/media?key=#{api_key}&maxHeightPx=800"
+            _ -> nil
+          end
+      end
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp get_photos_from_response_standard(response, api_key) do
     photos = get_in(response, ["result", "photos"]) || []
 
     photos
@@ -134,13 +244,28 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
   end
 
   defp get_google_api_key do
-    # First try to get from environment variable directly
-    case System.get_env("GOOGLE_MAPS_API_KEY") do
-      key when is_binary(key) and byte_size(key) > 0 ->
-        key
-      _ ->
-        # Fall back to application config
-        Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+    # First try to get from .env file
+    env_key = case File.read(".env") do
+      {:ok, contents} ->
+        contents
+        |> String.split("\n", trim: true)
+        |> Enum.find_value(fn line ->
+          case String.split(line, "=", parts: 2) do
+            ["GOOGLE_MAPS_API_KEY", value] -> String.trim(value)
+            _ -> nil
+          end
+        end)
+      _ -> nil
+    end
+
+    env_var_key = System.get_env("GOOGLE_MAPS_API_KEY")
+    config_key = Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+
+    # Use the first non-empty key found
+    cond do
+      env_key && env_key != "" -> env_key
+      env_var_key && env_var_key != "" -> env_var_key
+      true -> config_key
     end
   end
 end

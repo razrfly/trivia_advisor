@@ -86,3 +86,7 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Add the Google Maps API key config
+config :trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI,
+  google_maps_api_key: System.get_env("GOOGLE_MAPS_API_KEY")

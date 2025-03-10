@@ -499,7 +499,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   defp get_venue_image(venue) do
     try do
       # First check for stored Google Place images
-      if Enum.any?(venue.google_place_images) do
+      if venue.google_place_images && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
         TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
       else
         # First try Unsplash
@@ -629,7 +629,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images_count + event_image_count
   end
 
-  # Modified version to never return nil and properly combine all image sources
+  # Modified version to never return nil and properly combine all image sources with randomization
   defp get_venue_image_at_position(venue, position) do
     # Get the event and its hero image if available
     {_event, event_image_url} = if venue.events && Enum.any?(venue.events) do
@@ -646,6 +646,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images = if venue.google_place_images && is_list(venue.google_place_images) do
       venue.google_place_images
       |> Enum.filter(fn img -> is_map(img) end)
+      |> Enum.shuffle()  # Randomize Google images
     else
       []
     end
@@ -661,12 +662,21 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_image_urls = google_images
     |> Enum.map(fn image_data ->
       cond do
+        # Handle Places API (New) format with photo_name
+        Map.has_key?(image_data, "photo_name") && image_data["photo_name"] ->
+          "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
+
+        # Handle legacy Places API format with photo_reference
         Map.has_key?(image_data, "photo_reference") && image_data["photo_reference"] ->
           "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
+
+        # Handle other legacy formats
         Map.has_key?(image_data, "local_path") && image_data["local_path"] ->
           ensure_full_url(image_data["local_path"])
+
         Map.has_key?(image_data, "original_url") && image_data["original_url"] ->
           image_data["original_url"]
+
         true ->
           nil
       end
