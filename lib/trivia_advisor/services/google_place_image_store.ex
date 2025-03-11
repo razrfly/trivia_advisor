@@ -1,20 +1,23 @@
 defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   @moduledoc """
-  Service for managing Google Place images for venues.
+  Service for downloading, storing, and managing Google Place images for venues.
   This service:
   1. Fetches photo references from Google Places API (New)
-  2. Stores them in the venue's google_place_images field
-  3. Provides methods to construct image URLs dynamically
+  2. Downloads images from Google Places API
+  3. Stores them physically using Waffle
+  4. Updates the venue's google_place_images field with metadata
   """
 
   use GenServer
   require Logger
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.Venue
+  alias TriviaAdvisor.Uploaders.GooglePlaceImage
   alias TriviaAdvisor.Services.GooglePlacesService
 
-  @max_images 15
+  @max_images 5  # Store top 5 images per venue
   @refresh_days 90  # Number of days before considering refreshing venue images
+  @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
   # Client API
 
@@ -40,14 +43,25 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   """
   def maybe_update_venue_images(venue) do
     if should_update_images?(venue) do
-      Logger.info("🖼️ Fetching Google Place images for venue: #{venue.name}")
+      Logger.info("""
+      🖼️ Updating Google Place images for venue: #{venue.name}
+      - place_id: #{venue.place_id}
+      - existing images: #{length(venue.google_place_images)}
+      - last updated: #{venue.updated_at}
+      """)
 
       try do
         case process_venue_images(venue) do
           {:ok, updated_venue} ->
-            Logger.info("✅ Successfully fetched Google Place images for venue: #{venue.name}")
+            Logger.info("""
+            ✅ Successfully updated Google Place images for venue: #{venue.name}
+            - place_id: #{venue.place_id}
+            - image count: #{length(updated_venue.google_place_images)}
+            """)
             updated_venue
-          {:error, _reason} ->
+          {:error, reason} ->
+            # Log the error
+            Logger.error("❌ Error updating Google Place images: #{inspect(reason)}")
             # Return the original venue on error
             venue
         end
@@ -57,7 +71,17 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
           venue
       end
     else
-      # Logger.debug("⏭️ Skipping Google Place images for venue: #{venue.name}")
+      # For better debugging, log why we're skipping
+      cond do
+        not has_place_id?(venue) ->
+          Logger.debug("⏭️ Skipping image update for #{venue.name}: No place_id")
+        not missing_or_few_images?(venue) ->
+          Logger.debug("⏭️ Skipping image update for #{venue.name}: Already has #{length(venue.google_place_images)} images")
+        not images_need_refresh?(venue) ->
+          Logger.debug("⏭️ Skipping image update for #{venue.name}: Images are recent (updated at #{venue.updated_at})")
+        true ->
+          Logger.debug("⏭️ Skipping image update for #{venue.name}: Unknown reason")
+      end
       venue
     end
   end
@@ -105,8 +129,9 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
   @doc """
   Processes Google Place images for a venue:
-  1. Fetches photo_references from Google Places API
-  2. Updates the venue's google_place_images field with photo_references
+  1. Fetches images from Google Places API
+  2. Downloads and stores them physically
+  3. Updates the venue's google_place_images field with metadata
 
   Returns {:ok, venue} or {:error, reason}
   """
@@ -118,59 +143,72 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   def process_venue_images(%Venue{} = venue) do
     # Skip if no place_id
     if venue.place_id && venue.place_id != "" do
+      Logger.info("🔄 Processing Google Place images for venue #{venue.id} (#{venue.name})")
+
       # Get images from Google Places API
       case GooglePlacesService.get_venue_images(venue.id) do
         [] ->
-          Logger.info("No Google Place images found for venue #{venue.id}")
+          Logger.info("ℹ️ No Google Place images found for venue #{venue.id}")
           {:ok, venue}
 
-        images when is_list(images) ->
-          # Process images (store references only)
-          process_image_references(venue, images)
+        {:error, :rate_limited} ->
+          Logger.warning("⚠️ Rate limited when fetching images for venue #{venue.id}")
+          {:error, :rate_limited}
 
-        _ ->
+        {:error, reason} ->
+          Logger.error("❌ Error fetching images: #{inspect(reason)}")
+          {:error, reason}
+
+        images when is_list(images) ->
+          Logger.info("✅ Got #{length(images)} images from Google Places API for venue #{venue.id}")
+
+          # Process images (download, store, update venue)
+          try do
+            case process_image_list(venue, images) do
+              {:ok, updated_venue} ->
+                Logger.info("✅ Successfully processed images for venue #{venue.id}")
+                {:ok, updated_venue}
+
+              # If image processing fails, at least store the image URLs
+              {:error, reason} ->
+                Logger.warning("⚠️ Image processing failed: #{inspect(reason)}, storing URLs instead")
+                store_image_urls_in_venue(venue, images)
+            end
+          rescue
+            e ->
+              Logger.error("❌ Exception processing images: #{Exception.message(e)}")
+              {:error, {:exception, e}}
+          end
+
+        other ->
+          Logger.error("❌ Unexpected response from GooglePlacesService: #{inspect(other)}")
           {:error, :invalid_images}
       end
     else
+      Logger.debug("⏭️ Skipping venue #{venue.id}: No place_id")
       {:ok, venue}
     end
   end
 
   @doc """
-  Returns the URLs for Google Place images for a venue.
-  Constructs URLs dynamically from stored photo_references.
+  Returns the URLs for stored Google Place images for a venue.
 
-  Limits to the specified count (default 3), and randomizes the order.
+  Limits to the specified count (default 3), and orders by position.
   """
   def get_image_urls(venue, count \\ 3) do
     venue = ensure_loaded(venue)
-    api_key = get_google_api_key()
 
     venue.google_place_images
-    |> Enum.shuffle()  # Randomize the order of images
+    |> Enum.sort_by(& &1["position"], :asc)
     |> Enum.take(count)
     |> Enum.map(fn image_data ->
-      cond do
-        # New format with photo_name (Places API New)
-        Map.has_key?(image_data, "photo_name") && image_data["photo_name"] ->
-          "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
-
-        # Legacy format with photo_reference (old Places API)
-        Map.has_key?(image_data, "photo_reference") && image_data["photo_reference"] ->
-          "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
-
-        # Very old formats for backward compatibility
-        Map.has_key?(image_data, "local_path") && image_data["local_path"] ->
-          ensure_full_url(image_data["local_path"])
-
-        Map.has_key?(image_data, "original_url") && image_data["original_url"] ->
-          image_data["original_url"]
-
-        true ->
-          nil
+      # Prefer local URL if available
+      if image_data["local_path"] do
+        ensure_full_url(image_data["local_path"])
+      else
+        image_data["original_url"]
       end
     end)
-    |> Enum.reject(&is_nil/1)
   end
 
   @doc """
@@ -185,6 +223,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
   @doc """
   Refreshes all venue Google Place images for maintenance purposes.
+
   Takes a limit parameter to control batch size.
   """
   def refresh_all_venue_images(max_venues \\ 100) do
@@ -213,9 +252,46 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   end
 
   @doc """
-  This is now a no-op since we no longer store physical files.
-  Kept for backward compatibility.
+  Deletes all Google Place images for a venue from the filesystem.
+  This function is meant to be called from a before_delete callback.
+
+  Returns :ok on success, or {:error, reason} on failure.
   """
+  def delete_venue_images(%Venue{google_place_images: images, slug: slug, id: venue_id} = venue) when is_list(images) and length(images) > 0 do
+    Logger.info("🗑️ Deleting Google Place images for venue: #{venue.name}")
+
+    # Track successes
+    Enum.each(images, fn image ->
+      position = image["position"] || 0
+      # Create the scope that matches what was used when storing
+      scope = {venue_id, slug, position}
+
+      # We need to try to delete both the original and thumb versions
+      versions = [:original, :thumb]
+
+      Enum.each(versions, fn version ->
+        # Generate filename - must match the format in the uploader
+        filename = "#{version}_google_place_#{position}"
+
+        # Try to delete the file using Waffle
+        try do
+          # Use the GooglePlaceImage uploader
+          GooglePlaceImage.delete({filename, scope})
+
+          # Log the result
+          Logger.debug("✅ Deleted image: #{filename}")
+        rescue
+          e ->
+            Logger.warning("⚠️ Failed to delete image #{filename}: #{inspect(e)}")
+        end
+      end)
+    end)
+
+    Logger.info("✅ Successfully deleted all Google Place images for venue: #{venue.name}")
+    :ok
+  end
+
+  # No images to delete
   def delete_venue_images(_venue), do: :ok
 
   # Server callbacks
@@ -228,59 +304,78 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
   # Private functions
 
-  defp process_image_references(venue, image_urls) do
+  defp process_image_list(venue, image_urls) do
     # Limit to max images
     image_urls = Enum.take(image_urls, @max_images)
 
-    # Extract photo references from each URL
-    image_data =
+    Logger.info("🔄 Processing #{length(image_urls)} images for venue #{venue.id} (#{venue.name})")
+
+    # Download and process each image with a position
+    image_results =
       image_urls
       |> Enum.with_index(1)
       |> Enum.map(fn {url, position} ->
-        cond do
-          # Handle new Places API (New) URLs
-          String.contains?(url, "places.googleapis.com/v1/") ->
-            extract_photo_name(url, position)
+        try do
+          # Add a slight delay between downloads (0.5-1.5 seconds)
+          # to avoid overwhelming the server
+          random_delay = :rand.uniform(1000) + 500
+          Process.sleep(random_delay)
 
-          # Handle old Places API URLs
-          String.contains?(url, "photoreference=") ->
-            extract_photo_reference(url, position)
-
-          # Skip invalid URLs
-          true ->
-            nil
+          Logger.debug("📥 Processing image #{position}/#{length(image_urls)} for venue #{venue.id}")
+          process_single_image(venue, url, position)
+        rescue
+          e ->
+            Logger.error("❌ Exception processing image #{position}: #{Exception.message(e)}")
+            {:error, {:exception, e}}
         end
       end)
-      |> Enum.reject(&is_nil/1)
+      |> Enum.filter(fn
+        %{} = result when is_map(result) -> true  # Keep successful results
+        {:error, _} -> false  # Filter out errors
+      end)
 
-    # Update venue with new image data
-    update_venue_with_images(venue, image_data)
-  end
-
-  defp extract_photo_name(url, position) do
-    # For Places API (New), extract the photo name from URL
-    # Format: https://places.googleapis.com/v1/places/PLACE_ID/photos/PHOTO_ID/media?key=API_KEY&maxHeightPx=800
-    case Regex.run(~r|v1/(places/[^/]+/photos/[^/]+)/media|, url) do
-      [_, photo_name] ->
-        %{
-          "photo_name" => photo_name,
-          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "position" => position
-        }
-      _ -> nil
+    # Update venue with new image data or return error if all failed
+    if Enum.any?(image_results) do
+      Logger.info("✅ Successfully processed #{length(image_results)} images for venue #{venue.id}")
+      update_venue_with_images(venue, image_results)
+    else
+      # If all images failed, try to store just the URLs as a fallback
+      Logger.warning("⚠️ All images failed processing for venue #{venue.id}, storing URLs instead")
+      store_image_urls_in_venue(venue, image_urls)
     end
   end
 
-  defp extract_photo_reference(url, position) do
-    # For old Places API, extract the photo reference from URL
-    case Regex.run(~r/photoreference=([^&]+)/, url) do
-      [_, photo_ref] ->
-        %{
-          "photo_reference" => photo_ref,
-          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "position" => position
-        }
-      _ -> nil
+  defp process_single_image(venue, url, position) do
+    photo_ref = extract_photo_reference_from_url(url)
+
+    if photo_ref do
+      case download_image(url) do
+        {:ok, image_file} ->
+          # Store image using Waffle
+          scope = {venue.id, venue.slug, position}
+
+          case upload_image(image_file, scope) do
+            {:ok, filename} ->
+              # Return successful image data
+              %{
+                "google_ref" => photo_ref,
+                "original_url" => url,
+                "local_path" => filename,
+                "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+                "position" => position
+              }
+
+            {:error, reason} ->
+              Logger.error("Failed to upload Google Place image: #{inspect(reason)}")
+              {:error, :upload_failed}
+          end
+
+        {:error, reason} ->
+          Logger.error("Failed to download Google Place image: #{inspect(reason)}")
+          {:error, :download_failed}
+      end
+    else
+      {:error, :invalid_url}
     end
   end
 
@@ -293,6 +388,149 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
     else
       # No images to update
       {:ok, venue}
+    end
+  end
+
+  defp download_image(url) do
+    Logger.info("📥 Downloading Google Place image: #{url}")
+
+    headers = [
+      {"User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+      {"Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},
+      {"Referer", "https://www.google.com/"}
+    ]
+
+    # If the URL is from the Places API v2 (contains places.googleapis.com/v1),
+    # then use the API key in the URL rather than adding it to the headers
+    {url_for_request, headers_for_request, options} =
+      if String.contains?(url, "places.googleapis.com/v1") do
+        # Keep the key in the URL and use the right options for the new API
+        {url, headers, [follow_redirect: true, recv_timeout: 15000]}
+      else
+        # For the old API, keep using the existing approach
+        {url, headers, [follow_redirect: true, recv_timeout: 15000]}
+      end
+
+    # Test if the URL looks valid
+    if not String.starts_with?(url_for_request, "http") do
+      Logger.error("❌ Invalid URL format: #{url_for_request}")
+      {:error, :invalid_url_format}
+    else
+      case @http_client.get(url_for_request, headers_for_request, options) do
+        {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+          # Check if we got a valid image (non-empty body)
+          if byte_size(body) > 100 do
+            # Create temp file with a random name and jpg extension
+            filename = "google_place_#{:crypto.strong_rand_bytes(8) |> Base.encode16()}.jpg"
+            temp_path = Path.join(System.tmp_dir!(), filename)
+
+            with :ok <- File.write(temp_path, body) do
+              Logger.info("✅ Successfully downloaded image to: #{temp_path}")
+              {:ok, %{path: temp_path, file_name: filename, content_type: "image/jpeg"}}
+            else
+              error ->
+                Logger.error("❌ Failed to write Google Place image to disk: #{inspect(error)}")
+                {:error, :file_write_failed}
+            end
+          else
+            Logger.error("❌ Empty or invalid image returned (body size: #{byte_size(body)} bytes)")
+            {:error, :invalid_image_data}
+          end
+
+        {:ok, %HTTPoison.Response{status_code: status}} ->
+          Logger.error("❌ Failed to download Google Place image, status code: #{status}")
+          {:error, "HTTP error: #{status}"}
+
+        {:error, %HTTPoison.Error{reason: reason} = error} ->
+          Logger.error("❌ HTTP request error: #{inspect(error)}")
+          {:error, reason}
+
+        error ->
+          Logger.error("❌ Unexpected error when downloading image: #{inspect(error)}")
+          {:error, :unknown_error}
+      end
+    end
+  end
+
+  defp upload_image(image_file, scope) do
+    try do
+      # Convert image_file to Plug.Upload format that Waffle expects
+      upload = if is_map(image_file) and Map.has_key?(image_file, :path) do
+        # Already in the right format
+        %Plug.Upload{
+          path: image_file.path,
+          filename: image_file.file_name,
+          content_type: image_file.content_type
+        }
+      else
+        # Convert to expected format
+        %Plug.Upload{
+          path: image_file[:path] || image_file["path"],
+          filename: image_file[:file_name] || image_file["file_name"],
+          content_type: image_file[:content_type] || image_file["content_type"] || "image/jpeg"
+        }
+      end
+
+      # Log what we're uploading for debugging
+      Logger.debug("""
+      📤 Uploading image:
+        Path: #{upload.path}
+        Filename: #{upload.filename}
+        Content-Type: #{upload.content_type}
+        Scope: #{inspect(scope)}
+      """)
+
+      # Store the file using Waffle
+      case GooglePlaceImage.store({upload, scope}) do
+        {:ok, filename} ->
+          # Get URL path for the file - don't include any file extension as that's handled by Waffle
+          path = GooglePlaceImage.url({filename, scope}, :original)
+          # Strip the /priv/static prefix if it exists
+          path = String.replace(path, ~r{^/priv/static}, "")
+          Logger.info("✅ Successfully uploaded image to: #{path}")
+          {:ok, path}
+
+        error ->
+          Logger.error("❌ Waffle upload failed: #{inspect(error)}")
+          {:error, error}
+      end
+    rescue
+      e ->
+        Logger.error("❌ Exception during image upload: #{inspect(e)}")
+        {:error, :upload_exception}
+    end
+  end
+
+  # Extract photo reference from URL
+  defp extract_photo_reference_from_url(url) do
+    cond do
+      # For Places API (New) URLs - photos:getFullSizeImage endpoint
+      String.contains?(url, "photos:getFullSizeImage") ->
+        case Regex.run(~r/photoreference=([^&]+)/, url) do
+          [_, photo_ref] -> photo_ref
+          _ -> nil
+        end
+
+      # For Places API (New) URLs - places/{place_id}/photos/{photo_id}/media endpoint
+      String.contains?(url, "/photos/") && String.contains?(url, "/media") ->
+        case Regex.run(~r{/photos/([^/]+)/media}, url) do
+          [_, photo_id] -> photo_id
+          _ -> nil
+        end
+
+      # For Google Maps CDN URL format (PhotoService.GetPhoto)
+      String.contains?(url, "PhotoService.GetPhoto") ->
+        case Regex.run(~r/1s([^&]+)/, url) do
+          [_, photo_id] -> photo_id
+          _ -> nil
+        end
+
+      # For standard Places API
+      true ->
+        case Regex.run(~r/photoreference=([^&]+)/, url) do
+          [_, photo_ref] -> photo_ref
+          _ -> nil
+        end
     end
   end
 
@@ -315,29 +553,23 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
     end
   end
 
-  defp get_google_api_key do
-    # First try to get from .env file
-    env_key = case File.read(".env") do
-      {:ok, contents} ->
-        contents
-        |> String.split("\n", trim: true)
-        |> Enum.find_value(fn line ->
-          case String.split(line, "=", parts: 2) do
-            ["GOOGLE_MAPS_API_KEY", value] -> String.trim(value)
-            _ -> nil
-          end
-        end)
-      _ -> nil
-    end
+  # Store original image URLs in the venue's google_place_images field
+  defp store_image_urls_in_venue(venue, image_urls) do
+    Logger.info("📝 Storing #{length(image_urls)} image URLs for venue #{venue.id}")
 
-    env_var_key = System.get_env("GOOGLE_MAPS_API_KEY")
-    config_key = Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
+    image_data = Enum.with_index(image_urls, 1)
+      |> Enum.map(fn {url, position} ->
+        %{
+          "original_url" => url,
+          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "position" => position,
+          "google_ref" => extract_photo_reference_from_url(url)
+        }
+      end)
 
-    # Use the first non-empty key found
-    cond do
-      env_key && env_key != "" -> env_key
-      env_var_key && env_var_key != "" -> env_var_key
-      true -> config_key
-    end
+    # Update venue with new image data
+    venue
+    |> Venue.changeset(%{google_place_images: image_data})
+    |> Repo.update()
   end
 end

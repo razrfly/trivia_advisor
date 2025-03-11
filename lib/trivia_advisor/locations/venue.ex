@@ -2,6 +2,7 @@ defmodule TriviaAdvisor.Locations.Venue do
   use Ecto.Schema
   import Ecto.Changeset
   alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   schema "venues" do
     field :name, :string
@@ -101,4 +102,25 @@ defmodule TriviaAdvisor.Locations.Venue do
     {Decimal.to_float(lat), Decimal.to_float(lng)}
   end
   def coordinates(_), do: nil
+
+  @doc """
+  Callback that gets called before deleting a venue
+  to clean up associated Google Place images
+  """
+  def before_delete(venue) do
+    # Delete all associated Google Place images
+    GooglePlaceImageStore.delete_venue_images(venue)
+    venue
+  end
+
+  @doc """
+  Callback to clean up images when the google_place_images field is updated to empty
+  """
+  def after_update(%{changes: %{google_place_images: []}} = changeset) do
+    # If google_place_images was changed to an empty list, delete the images
+    venue = changeset.data
+    GooglePlaceImageStore.delete_venue_images(venue)
+    changeset
+  end
+  def after_update(changeset), do: changeset
 end

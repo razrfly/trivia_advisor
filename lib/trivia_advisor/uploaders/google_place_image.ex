@@ -35,15 +35,21 @@ defmodule TriviaAdvisor.Uploaders.GooglePlaceImage do
 
   # Generate a unique filename - tuple format
   def filename(version, {file, {_venue_id, _venue_slug, position}}) do
-    file_name = Path.rootname(file.file_name)
-    file_extension = Path.extname(file.file_name)
-    "#{version}_#{file_name}_#{position}#{file_extension}"
+    # Use a fixed base name to avoid issues with weird original names
+    # Get the file extension from the original file but don't use it
+    # Waffle will handle the extension based on the file content
+    _file_extension = Path.extname(file.file_name) |> String.downcase()
+    # Create filename without extension - Waffle will add it
+    "#{version}_google_place_#{position}"
   end
 
   # Generate a unique filename - map format
   def filename(version, {file, %{position: position}}) do
-    file_name = Path.rootname(file.file_name)
-    file_extension = Path.extname(file.file_name)
-    "#{version}_#{file_name}_#{position}#{file_extension}"
+    # Use a fixed base name to avoid issues with weird original names
+    # Get the file extension from the original file but don't use it
+    # Waffle will handle the extension based on the file content
+    _file_extension = Path.extname(file.file_name) |> String.downcase()
+    # Create filename without extension - Waffle will add it
+    "#{version}_google_place_#{position}"
   end
 end
