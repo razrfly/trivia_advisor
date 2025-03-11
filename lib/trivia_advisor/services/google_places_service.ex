@@ -10,6 +10,7 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
   alias TriviaAdvisor.Locations.Venue
 
   @max_images_per_venue 15
+  @http_client Application.compile_env(:trivia_advisor, :http_client, HTTPoison)
 
   # Client API
 
