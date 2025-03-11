@@ -2,8 +2,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   use Oban.Worker,
     queue: :default,
     max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
-    priority: TriviaAdvisor.Scraping.RateLimiter.priority(),
-    timeout: 300  # 5 minute timeout to prevent jobs from hanging
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
 
