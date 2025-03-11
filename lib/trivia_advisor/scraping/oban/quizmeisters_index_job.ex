@@ -1,11 +1,15 @@
 defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
-  use Oban.Worker, queue: :default
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
 
   # Aliases for the Quizmeisters scraper functionality
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
+  alias TriviaAdvisor.Scraping.RateLimiter
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -32,9 +36,9 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
           Logger.info("🧪 Testing mode: Limited to #{limited_count} venues (out of #{venue_count} total)")
         end
 
-        # Enqueue detail jobs for each venue
-        enqueued_count = enqueue_detail_jobs(venues_to_process, source.id)
-        Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing")
+        # Enqueue detail jobs for each venue with rate limiting
+        enqueued_count = enqueue_detail_jobs_with_rate_limiting(venues_to_process, source.id)
+        Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing with rate limiting")
 
         # Return success with venue count
         {:ok, %{venue_count: venue_count, enqueued_jobs: enqueued_count, source_id: source.id}}
@@ -48,26 +52,21 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
     end
   end
 
-  # Enqueue detail jobs for each venue
-  defp enqueue_detail_jobs(venues, source_id) do
-    Logger.info("🔄 Enqueueing detail jobs for #{length(venues)} venues...")
+  # Enqueue detail jobs for each venue with rate limiting
+  defp enqueue_detail_jobs_with_rate_limiting(venues, source_id) do
+    Logger.info("🔄 Enqueueing detail jobs for #{length(venues)} venues with rate limiting...")
 
-    # For each venue, create a detail job
-    Enum.reduce(venues, 0, fn venue, count ->
-      # Create a job with the venue data and source ID
-      %{
-        venue: venue,
-        source_id: source_id
-      }
-      |> TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob.new()
-      |> Oban.insert()
-      |> case do
-        {:ok, _job} -> count + 1
-        {:error, error} ->
-          Logger.error("❌ Failed to enqueue detail job for venue: #{inspect(error)}")
-          count
+    # Use the RateLimiter to schedule jobs with a delay
+    RateLimiter.schedule_detail_jobs(
+      venues,
+      TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob,
+      fn venue ->
+        %{
+          venue: venue,
+          source_id: source_id
+        }
       end
-    end)
+    )
   end
 
   # The following function is copied from the existing Quizmeisters scraper
