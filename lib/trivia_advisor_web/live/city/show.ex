@@ -326,25 +326,47 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
       # Format the venue data for display
       Enum.map(results, fn %{venue: venue, distance_km: distance} ->
-        # Extract event source data if available
-        event_source_data = get_event_source_data(venue)
+        try do
+          # Extract event source data if available
+          event_source_data = get_event_source_data(venue)
 
-        %{
-          venue: %{
-            id: venue.id,
-            name: venue.name,
-            slug: venue.slug,
-            address: venue.address,
-            description: get_venue_description(venue),
-            hero_image_url: get_venue_image(venue),
-            rating: get_venue_rating(venue),
-            events: Map.get(venue, :events, []),
-            last_seen_at: event_source_data[:last_seen_at],
-            source_name: event_source_data[:source_name],
-            source_url: event_source_data[:source_url]
-          },
-          distance_km: distance
-        }
+          %{
+            venue: %{
+              id: venue.id,
+              name: venue.name,
+              slug: venue.slug,
+              address: venue.address,
+              description: get_venue_description(venue),
+              hero_image_url: get_venue_image(venue),
+              rating: get_venue_rating(venue),
+              events: Map.get(venue, :events, []),
+              last_seen_at: event_source_data[:last_seen_at],
+              source_name: event_source_data[:source_name],
+              source_url: event_source_data[:source_url]
+            },
+            distance_km: distance
+          }
+        rescue
+          e ->
+            Logger.error("Error processing venue data: #{inspect(e)}")
+            # Return a simplified venue object with just the essential data
+            %{
+              venue: %{
+                id: venue.id,
+                name: venue.name,
+                slug: venue.slug,
+                address: venue.address || "No address available",
+                description: "Information for this venue is temporarily unavailable.",
+                hero_image_url: "/images/default-venue.jpg",
+                rating: 4.0,
+                events: [],
+                last_seen_at: nil,
+                source_name: nil,
+                source_url: nil
+              },
+              distance_km: distance
+            }
+        end
       end)
     rescue
       e ->
@@ -669,35 +691,64 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       # If no suburbs selected, just return all venues in radius
       get_venues_near_city(city, radius)
     else
-      # For each selected suburb, get venues within 10km of it
-      suburb_venues = Enum.flat_map(selected_suburbs, fn suburb ->
-        Locations.find_venues_near_city(suburb, radius_km: 10, load_relations: true)
-      end)
+      try do
+        # For each selected suburb, get venues within 10km of it
+        suburb_venues = Enum.flat_map(selected_suburbs, fn suburb ->
+          Locations.find_venues_near_city(suburb, radius_km: 10, load_relations: true)
+        end)
 
-      # Deduplicate venues and format them the same way as in get_venues_near_city
-      suburb_venues
-      |> Enum.uniq_by(fn %{venue: venue} -> venue.id end)
-      |> Enum.map(fn %{venue: venue, distance_km: distance} ->
-        # Extract event source data if available
-        event_source_data = get_event_source_data(venue)
+        # Deduplicate venues and format them the same way as in get_venues_near_city
+        suburb_venues
+        |> Enum.uniq_by(fn %{venue: venue} -> venue.id end)
+        |> Enum.map(fn %{venue: venue, distance_km: distance} ->
+          try do
+            # Extract event source data if available
+            event_source_data = get_event_source_data(venue)
 
-        %{
-          venue: %{
-            id: venue.id,
-            name: venue.name,
-            slug: venue.slug,
-            address: venue.address,
-            description: get_venue_description(venue),
-            hero_image_url: get_venue_image(venue),
-            rating: get_venue_rating(venue),
-            events: Map.get(venue, :events, []),
-            last_seen_at: event_source_data[:last_seen_at],
-            source_name: event_source_data[:source_name],
-            source_url: event_source_data[:source_url]
-          },
-          distance_km: distance
-        }
-      end)
+            %{
+              venue: %{
+                id: venue.id,
+                name: venue.name,
+                slug: venue.slug,
+                address: venue.address,
+                description: get_venue_description(venue),
+                hero_image_url: get_venue_image(venue),
+                rating: get_venue_rating(venue),
+                events: Map.get(venue, :events, []),
+                last_seen_at: event_source_data[:last_seen_at],
+                source_name: event_source_data[:source_name],
+                source_url: event_source_data[:source_url]
+              },
+              distance_km: distance
+            }
+          rescue
+            e ->
+              Logger.error("Error processing suburb venue data: #{inspect(e)}")
+              # Return a simplified venue object with just the essential data
+              %{
+                venue: %{
+                  id: venue.id,
+                  name: venue.name,
+                  slug: venue.slug,
+                  address: venue.address || "No address available",
+                  description: "Information for this venue is temporarily unavailable.",
+                  hero_image_url: "/images/default-venue.jpg",
+                  rating: 4.0,
+                  events: [],
+                  last_seen_at: nil,
+                  source_name: nil,
+                  source_url: nil
+                },
+                distance_km: distance
+              }
+          end
+        end)
+      rescue
+        e ->
+          Logger.error("Error filtering venues by suburbs: #{inspect(e)}")
+          # Fall back to default venues
+          get_venues_near_city(city, radius)
+      end
     end
   end
 end

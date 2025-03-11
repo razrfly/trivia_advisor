@@ -79,7 +79,9 @@ defmodule TriviaAdvisor.MixProject do
       {:oban, "~> 2.19"},
       {:oban_web, "~> 2.11"},
       {:plug, "~> 1.16"},
-      {:igniter, "~> 0.5", only: [:dev]}
+      {:igniter, "~> 0.5", only: [:dev]},
+      {:sentry, "~> 10.2.0"},
+      {:hackney, "~> 1.8"}
     ]
   end
 
