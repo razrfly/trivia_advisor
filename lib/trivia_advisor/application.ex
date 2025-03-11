@@ -7,6 +7,13 @@ defmodule TriviaAdvisor.Application do
 
   @impl true
   def start(_type, _args) do
+    # Add Sentry logger handler to capture crashed process exceptions
+    if Application.get_env(:trivia_advisor, :env) == :prod do
+      :logger.add_handler(:sentry_handler, Sentry.LoggerHandler, %{
+        config: %{metadata: [:file, :line]}
+      })
+    end
+
     children = [
       TriviaAdvisorWeb.Telemetry,
       TriviaAdvisor.Repo,

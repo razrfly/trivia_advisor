@@ -55,6 +55,9 @@ COPY assets assets
 # compile assets
 RUN mix assets.deploy
 
+# Package Sentry source code for better error reporting
+RUN mix sentry.package_source_code
+
 # Compile the release
 RUN mix compile
 

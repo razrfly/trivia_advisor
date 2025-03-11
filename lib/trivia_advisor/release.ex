@@ -34,6 +34,13 @@ defmodule TriviaAdvisor.Release do
     {:ok, _, _} = Ecto.Migrator.with_repo(repo, &Ecto.Migrator.run(&1, :down, to: version))
   end
 
+  def package_sentry_source do
+    if Mix.env() == :prod do
+      load_app()
+      Mix.Tasks.Sentry.PackageSourceCode.run([])
+    end
+  end
+
   defp repos do
     Application.fetch_env!(@app, :ecto_repos)
   end

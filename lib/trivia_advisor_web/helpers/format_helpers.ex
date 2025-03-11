@@ -246,9 +246,18 @@ defmodule TriviaAdvisorWeb.Helpers.FormatHelpers do
 
       if event do
         # Get most recent event source
-        event_source = event.event_sources
+        # Filter out event_sources with nil or invalid last_seen_at before sorting
+        valid_event_sources = Enum.filter(event.event_sources, fn es ->
+          is_struct(es.last_seen_at, DateTime) || is_struct(es.last_seen_at, NaiveDateTime)
+        end)
+
+        event_source = if Enum.any?(valid_event_sources) do
+          valid_event_sources
           |> Enum.sort_by(& &1.last_seen_at, {:desc, DateTime})
           |> List.first()
+        else
+          List.first(event.event_sources)
+        end
 
         if event_source do
           source_data = get_source_name_from_event_source(event_source)
