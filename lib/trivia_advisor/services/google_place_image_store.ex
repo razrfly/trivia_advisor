@@ -206,6 +206,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
       if image_data["local_path"] do
         ensure_full_url(image_data["local_path"])
       else
+        Logger.warning("⚠️ Image for venue #{venue.id} (#{venue.name}) missing local_path, falling back to original_url")
         image_data["original_url"]
       end
     end)
@@ -463,10 +464,9 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
           case upload_image(image_file, scope) do
             {:ok, filename} ->
-              # Return successful image data
+              # Return successful image data - focusing on local_path rather than original_url
               %{
                 "google_ref" => photo_ref,
-                "original_url" => url,
                 "local_path" => filename,
                 "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
                 "position" => position
@@ -672,18 +672,33 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
     end
   end
 
-  # Store original image URLs in the venue's google_place_images field
+  # Store images by downloading them from URLs and storing locally
   defp store_image_urls_in_venue(venue, image_urls) do
-    Logger.info("📝 Storing #{length(image_urls)} image URLs for venue #{venue.id}")
+    Logger.info("📝 Attempting to download and store #{length(image_urls)} images for venue #{venue.id}")
 
-    image_data = Enum.with_index(image_urls, 1)
+    # Try to download each image and store locally
+    image_data =
+      image_urls
+      |> Enum.with_index(1)
       |> Enum.map(fn {url, position} ->
-        %{
-          "original_url" => url,
-          "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "position" => position,
-          "google_ref" => extract_photo_reference_from_url(url)
-        }
+        # Try to actually download and store the image
+        result = process_single_image(venue, url, position)
+
+        # If successful, use the result with local_path
+        # Otherwise fall back to just storing the URL
+        case result do
+          %{} = image when is_map(image) ->
+            Logger.info("✅ Successfully downloaded and stored image #{position} for venue #{venue.id}")
+            image
+          _ ->
+            Logger.warning("⚠️ Failed to download image #{position}, storing URL reference only")
+            %{
+              "google_ref" => extract_photo_reference_from_url(url),
+              "original_url" => url,
+              "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+              "position" => position
+            }
+        end
       end)
 
     # Update venue with new image data
