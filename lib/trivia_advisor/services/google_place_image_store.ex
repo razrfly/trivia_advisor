@@ -602,8 +602,20 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
       # Store the file using Waffle
       case GooglePlaceImage.store({upload, scope}) do
         {:ok, filename} ->
-          # Get URL path for the file - don't include any file extension as that's handled by Waffle
-          path = GooglePlaceImage.url({filename, scope}, :original)
+          # Better handling of filename types
+          filename_str = case filename do
+            bin when is_binary(bin) -> bin
+            atom when is_atom(atom) -> Atom.to_string(atom)
+            list when is_list(list) ->
+              if List.ascii_printable?(list), do: List.to_string(list), else: inspect(list)
+            other ->
+              Logger.warn("⚠️ Unexpected filename type: #{inspect(other)}")
+              inspect(other)
+          end
+
+          # Get URL path for the file
+          path = GooglePlaceImage.url({filename_str, scope}, :original)
+
           # Strip the /priv/static prefix if it exists
           path = String.replace(path, ~r{^/priv/static}, "")
           Logger.info("✅ Successfully uploaded image to: #{path}")
@@ -615,7 +627,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
       end
     rescue
       e ->
-        Logger.error("❌ Exception during image upload: #{inspect(e)}")
+        Logger.error("❌ Exception during image upload: #{Exception.message(e)}")
         {:error, :upload_exception}
     end
   end
