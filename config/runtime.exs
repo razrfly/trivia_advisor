@@ -93,7 +93,8 @@ if config_env() == :prod do
   # Configure Waffle to use Tigris S3-compatible storage in production
   config :waffle,
     storage: Waffle.Storage.S3,
-    bucket: System.get_env("BUCKET_NAME", "trivia-advisor")
+    bucket: System.get_env("BUCKET_NAME", "trivia-advisor"),
+    virtual_host: true
 
   # Configure S3 client for access to Tigris
   config :ex_aws,
