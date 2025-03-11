@@ -463,11 +463,15 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
           scope = {venue.id, venue.slug, position}
 
           case upload_image(image_file, scope) do
-            {:ok, filename} ->
-              # Return successful image data - focusing on local_path rather than original_url
+            {:ok, _filename} ->
+              # Return successful image data - using consistent format for local_path
+              # Instead of relying on the returned filename, calculate expected path
+              expected_local_path = calculate_expected_local_path(venue, position)
+
               %{
                 "google_ref" => photo_ref,
-                "local_path" => filename,
+                "local_path" => expected_local_path,
+                "original_url" => url, # Also store original URL for reference
                 "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
                 "position" => position
               }
@@ -727,6 +731,11 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
     end
   end
 
+  # Calculate the expected local path for a Google Place image based on venue slug and position
+  defp calculate_expected_local_path(venue, position) do
+    "/uploads/google_place_images/#{venue.slug}/original_google_place_#{position}.jpg"
+  end
+
   # Store images by downloading them from URLs and storing locally
   defp store_image_urls_in_venue(venue, image_urls) do
     Logger.info("📝 Attempting to download and store #{length(image_urls)} images for venue #{venue.id}")
@@ -740,16 +749,21 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
         result = process_single_image(venue, url, position)
 
         # If successful, use the result with local_path
-        # Otherwise fall back to just storing the URL
+        # Otherwise fall back to just storing the URL with a calculated local_path
         case result do
           %{} = image when is_map(image) ->
             Logger.info("✅ Successfully downloaded and stored image #{position} for venue #{venue.id}")
             image
           _ ->
-            Logger.warning("⚠️ Failed to download image #{position}, storing URL reference only")
+            Logger.warning("⚠️ Failed to download image #{position}, storing URL reference with expected local_path")
+            # Calculate the expected local path for the image based on venue and position
+            expected_local_path = calculate_expected_local_path(venue, position)
+            Logger.info("📝 Adding expected local_path: #{expected_local_path}")
+
             %{
               "google_ref" => extract_photo_reference_from_url(url),
               "original_url" => url,
+              "local_path" => expected_local_path, # Add the expected local_path even though file may not exist
               "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
               "position" => position
             }
