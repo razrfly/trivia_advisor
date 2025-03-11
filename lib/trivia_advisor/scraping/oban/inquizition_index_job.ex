@@ -1,5 +1,8 @@
 defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
-  use Oban.Worker, queue: :default, max_attempts: 3
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
   import Ecto.Query
@@ -9,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionDetailJob
+  alias TriviaAdvisor.Scraping.RateLimiter
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -39,13 +43,63 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
       should_process_venue?(venue, existing_venues_with_events)
     end)
 
-    detail_jobs = enqueue_detail_jobs(venues_to_enqueue, source.id)
+    # Use the RateLimiter to schedule detail jobs with delay
+    enqueued_count = RateLimiter.schedule_jobs_with_delay(
+      venues_to_enqueue,
+      fn venue_data, _index, scheduled_in ->
+        # Extract venue from the ok tuple
+        [ok: venue] = venue_data
 
-    Logger.info("📥 Enqueued #{length(detail_jobs)} Inquizition detail jobs")
+        # Special case for The White Horse which has known time data
+        time_text = cond do
+          venue.name == "The White Horse" && (is_nil(Map.get(venue, :time_text)) || Map.get(venue, :time_text) == "") ->
+            "Sundays, 7pm"
+          true ->
+            Map.get(venue, :time_text) || ""
+        end
+
+        # Extract day_of_week and start_time from time_text if not already present
+        {day_of_week, start_time} = cond do
+          venue.name == "The White Horse" && (is_nil(Map.get(venue, :day_of_week)) || is_nil(Map.get(venue, :start_time))) ->
+            {7, "19:00"}  # Sunday at 7pm
+          true ->
+            {
+              Map.get(venue, :day_of_week) || extract_day_of_week(%{time_text: time_text}),
+              Map.get(venue, :start_time) || extract_start_time(%{time_text: time_text})
+            }
+        end
+
+        # Build venue data for the detail job
+        venue_data = %{
+          "name" => venue.name,
+          "address" => venue.address,
+          "phone" => venue.phone,
+          "website" => venue.website,
+          "source_id" => source.id,
+          "time_text" => time_text,
+          "day_of_week" => day_of_week,
+          "start_time" => start_time,
+          "frequency" => Map.get(venue, :frequency) || "weekly",
+          "entry_fee" => Map.get(venue, :entry_fee) || "2.50",
+          "description" => Map.get(venue, :description),
+          "hero_image" => Map.get(venue, :hero_image),
+          "hero_image_url" => Map.get(venue, :hero_image_url),
+          "facebook" => Map.get(venue, :facebook),
+          "instagram" => Map.get(venue, :instagram),
+          "source_url" => Map.get(venue, :source_url) || ""
+        }
+
+        # Create the job with the scheduled_in parameter
+        %{venue_data: venue_data}
+        |> InquizitionDetailJob.new(schedule_in: scheduled_in)
+      end
+    )
+
+    Logger.info("📥 Enqueued #{enqueued_count} Inquizition detail jobs with rate limiting")
 
     {:ok, %{
       venue_count: total_venues,
-      enqueued_jobs: length(detail_jobs)
+      enqueued_jobs: enqueued_count
     }}
   end
 
@@ -155,69 +209,4 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     |> String.trim()
   end
   defp normalize_address(nil), do: ""
-
-  # Enqueue detail jobs for venues that need processing
-  defp enqueue_detail_jobs(venues_to_process, source_id) do
-    Enum.map(venues_to_process, fn [ok: venue] ->
-      # Special case for The White Horse which has known time data
-      time_text = cond do
-        venue.name == "The White Horse" && (is_nil(Map.get(venue, :time_text)) || Map.get(venue, :time_text) == "") ->
-          "Sundays, 7pm"
-        true ->
-          Map.get(venue, :time_text) || ""
-      end
-
-      # Extract day_of_week and start_time from time_text if not already present
-      {day_of_week, start_time} = cond do
-        venue.name == "The White Horse" && (is_nil(Map.get(venue, :day_of_week)) || is_nil(Map.get(venue, :start_time))) ->
-          {7, "19:00"}  # Sunday at 7pm
-        true ->
-          {
-            Map.get(venue, :day_of_week) || extract_day_of_week(%{time_text: time_text}),
-            Map.get(venue, :start_time) || extract_start_time(%{time_text: time_text})
-          }
-      end
-
-      # Extract all required venue details - ensure keys are strings to match expected format
-      venue_data = %{
-        "name" => venue.name,
-        "address" => venue.address,
-        "phone" => venue.phone,
-        "website" => venue.website,
-        "source_id" => source_id,
-        "time_text" => time_text,
-        "day_of_week" => day_of_week,
-        "start_time" => start_time,
-        "frequency" => Map.get(venue, :frequency) || "weekly",
-        "entry_fee" => Map.get(venue, :entry_fee) || "2.50",
-        "description" => Map.get(venue, :description),
-        "hero_image" => Map.get(venue, :hero_image),
-        "hero_image_url" => Map.get(venue, :hero_image_url),
-        "facebook" => Map.get(venue, :facebook),
-        "instagram" => Map.get(venue, :instagram),
-        "source_url" => Map.get(venue, :source_url) || ""
-      }
-
-      # Create job with venue_data directly in args - this is the key change
-      job_result = %{venue_data: venue_data}
-      |> InquizitionDetailJob.new()
-
-      Logger.debug("📥 Enqueuing detail job for venue: #{venue.name}")
-      Logger.debug("Job args: #{inspect(%{venue_data: venue_data})}")
-
-      # Insert the job
-      case Oban.insert(job_result) do
-        {:ok, _oban_job} ->
-          Logger.debug("✓ Job successfully inserted for venue: #{venue.name}")
-          venue.name
-        {:error, error} ->
-          Logger.error("❌ Failed to insert job for venue #{venue.name}: #{inspect(error)}")
-          nil
-        other ->
-          Logger.error("❌ Unexpected result when inserting job for venue #{venue.name}: #{inspect(other)}")
-          nil
-      end
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
 end

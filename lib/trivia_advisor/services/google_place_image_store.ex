@@ -454,21 +454,33 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
   defp upload_image(image_file, scope) do
     try do
+      # First ensure we have a valid image_file map
+      if is_nil(image_file) do
+        Logger.error("❌ Image file is nil")
+        raise "Image file cannot be nil"
+      end
+
       # Convert image_file to Plug.Upload format that Waffle expects
       upload = if is_map(image_file) and Map.has_key?(image_file, :path) do
         # Already in the right format
         %Plug.Upload{
-          path: image_file.path,
-          filename: image_file.file_name,
-          content_type: image_file.content_type
+          path: image_file.path || "",
+          filename: image_file.file_name || "image.jpg",
+          content_type: image_file.content_type || "image/jpeg"
         }
       else
         # Convert to expected format
         %Plug.Upload{
-          path: image_file[:path] || image_file["path"],
-          filename: image_file[:file_name] || image_file["file_name"],
+          path: image_file[:path] || image_file["path"] || "",
+          filename: image_file[:file_name] || image_file["file_name"] || "image.jpg",
           content_type: image_file[:content_type] || image_file["content_type"] || "image/jpeg"
         }
+      end
+
+      # Validate that we have a valid path
+      if upload.path == "" or !File.exists?(upload.path) do
+        Logger.error("❌ Invalid or missing file path: #{inspect(upload.path)}")
+        raise "Invalid or missing file path"
       end
 
       # Log what we're uploading for debugging
