@@ -1,5 +1,8 @@
 defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
-  use Oban.Worker, queue: :default, max_attempts: 3
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
 

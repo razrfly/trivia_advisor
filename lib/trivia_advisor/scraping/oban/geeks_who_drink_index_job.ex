@@ -6,6 +6,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.{NonceExtractor, VenueExtractor}
+  alias TriviaAdvisor.Scraping.RateLimiter
 
   @impl Oban.Worker
   def perform(_job) do
@@ -31,20 +32,18 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
 
             Logger.info("✅ Successfully fetched #{length(venues)} venues from GeeksWhoDrink")
 
-            # Enqueue detail jobs for each venue
-            Logger.info("🔄 Enqueueing detail jobs for #{length(venues)} venues...")
+            # Enqueue detail jobs with rate limiting
+            enqueued_count = RateLimiter.schedule_detail_jobs(
+              venues,
+              TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob,
+              fn venue_data ->
+                %{venue: venue_data, source_id: source.id}
+              end
+            )
 
-            Enum.each(venues, fn venue_data ->
-              # Log which venue we're processing for debugging
-              Logger.info("🔄 Processing venue: #{venue_data.title}")
+            Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing")
 
-              # Enqueue a detail job for this venue
-              %{venue: venue_data, source_id: source.id}
-              |> TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob.new()
-              |> Oban.insert()
-            end)
-
-            {:ok, %{venue_count: length(venues)}}
+            {:ok, %{venue_count: length(venues), enqueued_jobs: enqueued_count}}
 
           {:error, reason} ->
             Logger.error("❌ Failed to fetch venues: #{inspect(reason)}")

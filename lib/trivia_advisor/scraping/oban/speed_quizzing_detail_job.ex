@@ -1,5 +1,8 @@
 defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
-  use Oban.Worker, queue: :default, max_attempts: 3
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
 
