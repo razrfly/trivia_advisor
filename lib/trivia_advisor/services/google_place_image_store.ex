@@ -259,6 +259,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   """
   def delete_venue_images(%Venue{google_place_images: images, slug: slug, id: venue_id} = venue) when is_list(images) and length(images) > 0 do
     Logger.info("🗑️ Deleting Google Place images for venue: #{venue.name}")
+    Logger.info("🔍 Image data: #{inspect(images)}")
 
     # Track successes
     Enum.each(images, fn image ->
@@ -275,11 +276,49 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
 
         # Try to delete the file using Waffle
         try do
-          # Use the GooglePlaceImage uploader
-          GooglePlaceImage.delete({filename, scope})
+          # First try using direct file deletion
+          if image["local_path"] do
+            # Extract the path from the database
+            local_path = image["local_path"]
 
-          # Log the result
-          Logger.debug("✅ Deleted image: #{filename}")
+            # Apply different path resolution approaches
+            paths_to_try = [
+              # Approach 1: The path as stored in the database
+              Path.join([Application.app_dir(:trivia_advisor), "priv/static", local_path]),
+
+              # Approach 2: Directly use the full path when the local_path already includes priv/static
+              local_path,
+
+              # Approach 3: Try uploads directory in priv/static
+              Path.join([Application.app_dir(:trivia_advisor), "priv/static/uploads/google_place_images", "#{slug}/#{filename}.jpg"]),
+
+              # Approach 4: Try uploads directory without app_dir (for dev environment)
+              Path.join(["priv/static", local_path])
+            ]
+
+            # Try each path
+            deleted = Enum.reduce_while(paths_to_try, false, fn path, _acc ->
+              Logger.info("🔍 Attempting to delete file at path: #{path}")
+
+              if File.exists?(path) do
+                File.rm!(path)
+                Logger.info("✅ Successfully deleted image: #{path}")
+                {:halt, true}  # Stop trying other paths
+              else
+                {:cont, false}  # Continue to next path
+              end
+            end)
+
+            # Log if we couldn't find the file in any location
+            unless deleted do
+              Logger.warning("⚠️ File not found at any standard path, tried: #{inspect(paths_to_try)}")
+            end
+          else
+            # Fallback to Waffle if no local_path
+            Logger.info("🔍 No local_path in image data, falling back to Waffle")
+            GooglePlaceImage.delete({filename, scope})
+            Logger.info("✅ Deleted image with Waffle: #{filename}")
+          end
         rescue
           e ->
             Logger.warning("⚠️ Failed to delete image #{filename}: #{inspect(e)}")
@@ -287,12 +326,80 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
       end)
     end)
 
+    # Delete empty directories - try both with and without app_dir
+    delete_empty_directories(venue.slug)
+
     Logger.info("✅ Successfully deleted all Google Place images for venue: #{venue.name}")
     :ok
   end
 
-  # No images to delete
+  # No images to delete, but still try to delete empty directories
+  def delete_venue_images(%Venue{slug: slug} = venue) when not is_nil(slug) do
+    Logger.info("🗑️ No Google Place images to delete for venue: #{venue.name}, but cleaning up directories")
+    delete_empty_directories(venue.slug)
+    :ok
+  end
+
+  # Fallback for nil cases
   def delete_venue_images(_venue), do: :ok
+
+  # Helper to delete empty directories for a venue by slug
+  defp delete_empty_directories(slug) when is_binary(slug) do
+    # Define all possible paths where venue directories might exist
+    directory_paths = [
+      # Google place images directories
+      Path.join([Application.app_dir(:trivia_advisor), "priv/static/uploads/google_place_images", slug]),
+      Path.join(["priv/static/uploads/google_place_images", slug]),
+
+      # Regular venue images directories
+      Path.join([Application.app_dir(:trivia_advisor), "priv/static/uploads/venues", slug]),
+      Path.join(["priv/static/uploads/venues", slug])
+    ]
+
+    # Try to delete each directory if it exists and is empty
+    Enum.each(directory_paths, fn dir_path ->
+      try do
+        if File.exists?(dir_path) do
+          case File.ls(dir_path) do
+            {:ok, []} ->
+              # Directory exists and is empty
+              File.rmdir(dir_path)
+              Logger.info("✅ Deleted empty directory: #{dir_path}")
+
+            {:ok, files} ->
+              # Directory exists and has files - attempt to delete them all
+              Logger.info("🔍 Found #{length(files)} remaining files in: #{dir_path}")
+
+              # Delete each file in the directory
+              Enum.each(files, fn file ->
+                file_path = Path.join(dir_path, file)
+                if File.exists?(file_path) && not File.dir?(file_path) do
+                  File.rm!(file_path)
+                  Logger.info("✅ Deleted remaining file: #{file_path}")
+                end
+              end)
+
+              # Try to delete directory again after emptying
+              case File.ls(dir_path) do
+                {:ok, []} ->
+                  File.rmdir(dir_path)
+                  Logger.info("✅ Deleted directory after emptying: #{dir_path}")
+                _ ->
+                  Logger.warning("⚠️ Directory still not empty after cleanup: #{dir_path}")
+              end
+
+            {:error, reason} ->
+              Logger.warning("⚠️ Could not read directory #{dir_path}: #{inspect(reason)}")
+          end
+        end
+      rescue
+        e ->
+          Logger.warning("⚠️ Error while trying to delete directory #{dir_path}: #{inspect(e)}")
+      end
+    end)
+  end
+
+  defp delete_empty_directories(_), do: :ok
 
   # Server callbacks
 
