@@ -11,8 +11,8 @@ config :trivia_advisor, Oban,
   engine: Oban.Engines.Basic,
   notifier: Oban.Notifiers.Postgres,
   queues: [
-    default: 10,
-    google_api: [limit: 2]  # Remove rate limiting as it's not supported in this Oban version
+    default: 20,
+    google_api: [limit: 5]
   ],
   repo: TriviaAdvisor.Repo,
   plugins: [
