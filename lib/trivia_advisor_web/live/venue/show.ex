@@ -629,7 +629,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images_count + event_image_count
   end
 
-  # Modified version to never return nil and properly combine all image sources with randomization
+  # Modified version to never return nil and properly combine all image sources with consistent ordering
   defp get_venue_image_at_position(venue, position) do
     # Get the event and its hero image if available
     {_event, event_image_url} = if venue.events && Enum.any?(venue.events) do
@@ -646,7 +646,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images = if venue.google_place_images && is_list(venue.google_place_images) do
       venue.google_place_images
       |> Enum.filter(fn img -> is_map(img) end)
-      |> Enum.shuffle()  # Randomize Google images
+      |> Enum.sort_by(fn img -> Map.get(img, "position", 999) end)  # Sort by position instead of shuffle
     else
       []
     end
