@@ -133,7 +133,7 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
     Logger.debug("🌐 Calling Places API (New) with URL: #{url}")
     Logger.debug("🔐 Using headers: #{inspect(headers)}")
 
-    case HTTPoison.get(url, headers, [timeout: 10000, recv_timeout: 10000]) do
+    case @http_client.get(url, headers, [timeout: 10000, recv_timeout: 10000]) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         response = Jason.decode!(body)
         photos = get_photos_from_response_new(response, api_key)
@@ -164,7 +164,7 @@ defmodule TriviaAdvisor.Services.GooglePlacesService do
 
     Logger.debug("🌐 Calling Standard Places API with URL: #{inspect(url)}")
 
-    case HTTPoison.get(url, [], [timeout: 10000, recv_timeout: 10000]) do
+    case @http_client.get(url, [], [timeout: 10000, recv_timeout: 10000]) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         response = Jason.decode!(body)
 
