@@ -499,7 +499,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   defp get_venue_image(venue) do
     try do
       # First check for stored Google Place images
-      if Enum.any?(venue.google_place_images) do
+      if venue.google_place_images && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
         TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
       else
         # First try Unsplash
@@ -629,7 +629,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images_count + event_image_count
   end
 
-  # Modified version to never return nil and properly combine all image sources
+  # Modified version to never return nil and properly combine all image sources with consistent ordering
   defp get_venue_image_at_position(venue, position) do
     # Get the event and its hero image if available
     {_event, event_image_url} = if venue.events && Enum.any?(venue.events) do
@@ -646,6 +646,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images = if venue.google_place_images && is_list(venue.google_place_images) do
       venue.google_place_images
       |> Enum.filter(fn img -> is_map(img) end)
+      |> Enum.sort_by(fn img -> Map.get(img, "position", 999) end)  # Sort by position instead of shuffle
     else
       []
     end
@@ -657,13 +658,25 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     all_images = if event_image_url, do: [event_image_url | all_images], else: all_images
 
     # Add all Google images
+    api_key = get_google_api_key()
     google_image_urls = google_images
     |> Enum.map(fn image_data ->
       cond do
+        # Handle Places API (New) format with photo_name
+        Map.has_key?(image_data, "photo_name") && image_data["photo_name"] ->
+          "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
+
+        # Handle legacy Places API format with photo_reference
+        Map.has_key?(image_data, "photo_reference") && image_data["photo_reference"] ->
+          "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
+
+        # Handle other legacy formats
         Map.has_key?(image_data, "local_path") && image_data["local_path"] ->
           ensure_full_url(image_data["local_path"])
+
         Map.has_key?(image_data, "original_url") && image_data["original_url"] ->
           image_data["original_url"]
+
         true ->
           nil
       end
@@ -679,6 +692,18 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       # If no image exists for this position, use a placeholder
       # to ensure src attribute is never missing
       "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
+    end
+  end
+
+  # Add function to get the Google API key
+  defp get_google_api_key do
+    # First try to get from environment variable directly
+    case System.get_env("GOOGLE_MAPS_API_KEY") do
+      key when is_binary(key) and byte_size(key) > 0 ->
+        key
+      _ ->
+        # Fall back to application config
+        Application.get_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI)[:google_maps_api_key]
     end
   end
 

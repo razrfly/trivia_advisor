@@ -314,9 +314,18 @@ defmodule TriviaAdvisor.Locations do
 
   """
   def update_venue(%Venue{} = venue, attrs) do
-    venue
+    changeset = venue
     |> Venue.changeset(attrs)
-    |> Repo.update()
+
+    result = Repo.update(changeset)
+
+    case result do
+      {:ok, updated_venue} ->
+        # Call after_update callback to handle image cleanup if needed
+        Venue.after_update(changeset)
+        {:ok, updated_venue}
+      error -> error
+    end
   end
 
   @doc """
@@ -332,7 +341,10 @@ defmodule TriviaAdvisor.Locations do
 
   """
   def delete_venue(%Venue{} = venue) do
-    Repo.delete_with_callbacks(venue)
+    # Call before_delete callback to handle image cleanup
+    venue
+    |> Venue.before_delete()
+    |> Repo.delete()
   end
 
   @doc """

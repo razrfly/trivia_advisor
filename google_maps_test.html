@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Google Maps API Test</title>
+  <style>
+    #map {
+      height: 400px;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Google Maps API Test</h1>
+  <div id="map"></div>
+  <script>
+    function initMap() {
+      // Create a map centered at Sydney
+      const map = new google.maps.Map(document.getElementById("map"), {
+        zoom: 13,
+        center: { lat: -33.8688, lng: 151.2093 }, // Sydney
+      });
+      
+      // Add a marker
+      new google.maps.Marker({
+        position: { lat: -33.8688, lng: 151.2093 },
+        map,
+        title: "Sydney",
+      });
+    }
+  </script>
+  
+  <!-- Replace YOUR_API_KEY with your actual API key -->
+  <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDQNKhl40KzSnWJj-PI8tiRZoFHzFrR2IY&callback=initMap">
+  </script>
+</body>
+</html> 

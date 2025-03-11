@@ -6,6 +6,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
   # Aliases for Question One scraper functionality
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
+  alias TriviaAdvisor.Scraping.RateLimiter
 
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
@@ -39,7 +40,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
           Logger.info("🧪 Testing mode: Limited to #{limited_count} venues (out of #{venue_count} total)")
         end
 
-        # Enqueue detail jobs for each venue
+        # Enqueue detail jobs for each venue using the RateLimiter
         enqueued_count = enqueue_detail_jobs(venues_to_process, source.id)
         Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing")
 
@@ -59,31 +60,18 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
   defp enqueue_detail_jobs(venues, source_id) do
     Logger.info("🔄 Enqueueing detail jobs for #{length(venues)} venues...")
 
-    # For each venue, create a detail job with the URL and title
-    Enum.reduce(venues, 0, fn venue, count ->
-      url = Map.get(venue, :url)
-      title = Map.get(venue, :title)
-
-      if is_nil(url) do
-        Logger.warning("⚠️ Skipping venue with missing URL: #{inspect(venue)}")
-        count
-      else
-        # Create a job with the venue URL, title, and source ID
+    # Use the RateLimiter to schedule jobs with a delay
+    RateLimiter.schedule_detail_jobs(
+      venues,
+      TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob,
+      fn venue ->
         %{
-          url: url,
-          title: title,
+          url: Map.get(venue, :url),
+          title: Map.get(venue, :title),
           source_id: source_id
         }
-        |> TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob.new()
-        |> Oban.insert()
-        |> case do
-          {:ok, _job} -> count + 1
-          {:error, error} ->
-            Logger.error("❌ Failed to enqueue detail job for venue #{title}: #{inspect(error)}")
-            count
-        end
       end
-    end)
+    )
   end
 
   # The following functions are adapted from the Question One scraper

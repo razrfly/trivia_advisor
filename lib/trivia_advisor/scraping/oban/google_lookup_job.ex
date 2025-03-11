@@ -342,10 +342,24 @@ defmodule TriviaAdvisor.Scraping.Oban.GoogleLookupJob do
 
   # Process images
   defp process_images(venue, _image_urls) do
+    # Log what we're doing
+    Logger.info("🔄 Processing images for venue: #{venue.name} (place_id: #{venue.place_id})")
+
     # Use the existing GooglePlaceImageStore functionality
-    case GooglePlaceImageStore.process_venue_images(venue) do
-      {:ok, updated_venue} -> {:ok, updated_venue}
-      error -> error
+    result = GooglePlaceImageStore.process_venue_images(venue)
+
+    # Log the result for debugging
+    case result do
+      {:ok, updated_venue} ->
+        Logger.info("""
+        ✅ Successfully processed images for venue: #{venue.name}
+        Image count: #{length(updated_venue.google_place_images)}
+        Image data: #{inspect(updated_venue.google_place_images)}
+        """)
+        {:ok, updated_venue}
+      {:error, reason} ->
+        Logger.error("❌ Failed to process images: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 

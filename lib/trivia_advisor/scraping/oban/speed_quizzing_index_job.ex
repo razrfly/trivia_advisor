@@ -6,6 +6,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   # Aliases for the SpeedQuizzing scraper functionality
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
+  alias TriviaAdvisor.Scraping.RateLimiter
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -52,31 +53,19 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   defp enqueue_detail_jobs(events, source_id) do
     Logger.info("🔄 Enqueueing detail jobs for #{length(events)} events...")
 
-    # For each event, create a detail job with the event ID
-    Enum.reduce(events, 0, fn event, count ->
-      event_id = Map.get(event, "event_id")
-
-      if is_nil(event_id) do
-        Logger.warning("⚠️ Skipping event with missing ID: #{inspect(event)}")
-        count
-      else
-        # Create a job with the event ID and source ID
+    # Use the RateLimiter to schedule jobs with a delay
+    RateLimiter.schedule_detail_jobs(
+      events,
+      TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
+      fn event ->
         %{
-          event_id: event_id,
+          event_id: Map.get(event, "event_id"),
           source_id: source_id,
           lat: Map.get(event, "lat"),
           lng: Map.get(event, "lon")
         }
-        |> TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob.new()
-        |> Oban.insert()
-        |> case do
-          {:ok, _job} -> count + 1
-          {:error, error} ->
-            Logger.error("❌ Failed to enqueue detail job for event ID #{event_id}: #{inspect(error)}")
-            count
-        end
       end
-    end)
+    )
   end
 
   # The following functions are copied from the existing SpeedQuizzing scraper

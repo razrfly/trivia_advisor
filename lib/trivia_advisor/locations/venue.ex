@@ -2,6 +2,7 @@ defmodule TriviaAdvisor.Locations.Venue do
   use Ecto.Schema
   import Ecto.Changeset
   alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   schema "venues" do
     field :name, :string
@@ -22,21 +23,6 @@ defmodule TriviaAdvisor.Locations.Venue do
     has_many :events, TriviaAdvisor.Events.Event
 
     timestamps(type: :utc_datetime)
-  end
-
-  # Add before_delete callback to delete Google Place images when the venue is deleted
-  def before_delete(venue) do
-    require Logger
-
-    if venue.google_place_images && length(venue.google_place_images) > 0 do
-      Logger.info("🗑️ Deleting Google Place images for venue: #{venue.name}")
-
-      # Call the GooglePlaceImageStore to delete the images
-      # Note: delete_venue_images currently always returns :ok
-      # This will be updated when Waffle adds proper error handling (issue #86)
-      TriviaAdvisor.Services.GooglePlaceImageStore.delete_venue_images(venue)
-      Logger.info("✅ Successfully deleted Google Place images for venue: #{venue.name}")
-    end
   end
 
   @url_regex ~r/^https?:\/\/[^\s\/$.?#].[^\s]*$/i
@@ -131,4 +117,25 @@ defmodule TriviaAdvisor.Locations.Venue do
     {Decimal.to_float(lat), Decimal.to_float(lng)}
   end
   def coordinates(_), do: nil
+
+  @doc """
+  Callback that gets called before deleting a venue
+  to clean up associated Google Place images
+  """
+  def before_delete(venue) do
+    # Delete all associated Google Place images
+    GooglePlaceImageStore.delete_venue_images(venue)
+    venue
+  end
+
+  @doc """
+  Callback to clean up images when the google_place_images field is updated to empty
+  """
+  def after_update(%{changes: %{google_place_images: []}} = changeset) do
+    # If google_place_images was changed to an empty list, delete the images
+    venue = changeset.data
+    GooglePlaceImageStore.delete_venue_images(venue)
+    changeset
+  end
+  def after_update(changeset), do: changeset
 end

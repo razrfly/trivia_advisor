@@ -38,10 +38,13 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     "https://placehold.co/600x400/png"
   end
 
-  # Generate a unique filename, converting webp/avif to jpg for thumbnails
+  # Generate a unique filename, without adding extension (Waffle adds it automatically)
   def filename(version, {file, _scope}) do
+    # Extract the base filename without extension
     file_name = Path.rootname(file.file_name)
-    file_extension = Path.extname(file.file_name)
-    "#{version}_#{file_name}#{file_extension}"
+    # Sanitize the filename to ensure it's URL-safe
+    file_name = String.replace(file_name, ~r/[^a-zA-Z0-9\-_]/, "-")
+    # Return just the version prefix and sanitized name (Waffle adds extension)
+    "#{version}_#{file_name}"
   end
 end
