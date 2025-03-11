@@ -580,57 +580,152 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
   # Get a venue image URL
   defp get_venue_image(venue) do
-    # First try to get an image from the venue's events (most events should have hero images)
-    event_image = if Map.get(venue, :events) && Enum.any?(venue.events) do
-      # Find first event with a hero image
-      venue.events
-      |> Enum.find_value(fn event ->
-        if event.hero_image && event.hero_image.file_name do
-          image_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
-          # Remove the /priv/static prefix if it exists
-          String.replace(image_url, ~r{^/priv/static}, "")
+    try do
+      # First try to get an image from the venue's events (most events should have hero images)
+      event_image = if is_map(venue) && Map.get(venue, :events) && is_list(venue.events) && Enum.any?(venue.events) do
+        # Find first event with a hero image
+        venue.events
+        |> Enum.find_value(fn event ->
+          if is_map(event) && event.hero_image && is_map(event.hero_image) && event.hero_image.file_name do
+            try do
+              image_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+              # Remove the /priv/static prefix if it exists
+              String.replace(image_url, ~r{^/priv/static}, "")
+            rescue
+              _ -> nil
+            end
+          end
+        end)
+      end
+
+      # Check for stored Google Place images
+      google_place_image = if is_map(venue) && Map.get(venue, :google_place_images) && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
+        try do
+          TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
+        rescue
+          _ -> nil
         end
-      end)
+      end
+
+      # Check for hero_image_url in metadata
+      metadata_image = if is_map(venue) && Map.has_key?(venue, :metadata) && is_map(venue.metadata) do
+        venue.metadata["hero_image_url"] ||
+        venue.metadata["hero_image"] ||
+        venue.metadata["image_url"] ||
+        venue.metadata["image"]
+      end
+
+      # Check if venue has a field for hero_image directly
+      venue_image = if is_map(venue) do
+        Map.get(venue, :hero_image_url) ||
+        Map.get(venue, :hero_image) ||
+        Map.get(venue, :image_url) ||
+        Map.get(venue, :image)
+      end
+
+      # Use the first available image or fall back to placeholder
+      image_url = event_image || google_place_image || metadata_image || venue_image
+
+      if is_binary(image_url) do
+        process_image_url(image_url)
+      else
+        "/images/default-venue.jpg"
+      end
+    rescue
+      e ->
+        Logger.error("Error getting venue image: #{inspect(e)}")
+        "/images/default-venue.jpg"
     end
+  end
 
-    # Check for hero_image_url in metadata
-    metadata_image = if Map.has_key?(venue, :metadata) do
-      venue.metadata["hero_image_url"] ||
-      venue.metadata["hero_image"] ||
-      venue.metadata["image_url"] ||
-      venue.metadata["image"]
+  # Helper to process image URLs to ensure they're full URLs
+  defp process_image_url(path) do
+    # Return a default image if path is nil or not a binary
+    if is_nil(path) or not is_binary(path) do
+      "/images/default-venue.jpg"
+    else
+      try do
+        cond do
+          # Already a full URL
+          String.starts_with?(path, "http") ->
+            path
+
+          # Check if using S3 storage in production
+          Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
+            # Get S3 configuration
+            s3_config = Application.get_env(:ex_aws, :s3, [])
+            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+
+            # For Tigris S3-compatible storage, we need to use a public URL pattern
+            # that doesn't rely on object ACLs
+            host = case s3_config[:host] do
+              h when is_binary(h) -> h
+              _ -> "fly.storage.tigris.dev"
+            end
+
+            # Format path correctly for S3 (remove leading slash)
+            s3_path = if String.starts_with?(path, "/"), do: String.slice(path, 1..-1//1), else: path
+
+            # Construct the full S3 URL
+            # Using direct virtual host style URL
+            "https://#{bucket}.#{host}/#{s3_path}"
+
+          # Local development
+          true ->
+            if String.starts_with?(path, "/") do
+              "#{TriviaAdvisorWeb.Endpoint.url()}#{path}"
+            else
+              "#{TriviaAdvisorWeb.Endpoint.url()}/#{path}"
+            end
+        end
+      rescue
+        e ->
+          Logger.error("Error constructing URL from path #{inspect(path)}: #{Exception.message(e)}")
+          "/images/default-venue.jpg"
+      end
     end
-
-    # Check if venue has a field for hero_image directly
-    venue_image = Map.get(venue, :hero_image_url) ||
-                  Map.get(venue, :hero_image) ||
-                  Map.get(venue, :image_url) ||
-                  Map.get(venue, :image)
-
-    # Check for stored Google Place images
-    google_place_image = if Map.get(venue, :google_place_images) && Enum.any?(venue.google_place_images) do
-      TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
-    end
-
-    # Use the first available image or fall back to placeholder
-    event_image || google_place_image || metadata_image || venue_image || "/images/default-venue.jpg"
   end
 
   # Get a city image URL from Unsplash service or use a fallback
-  defp get_city_image(name) do
+  defp get_city_image(name) when is_binary(name) do
     try do
       # Try to get a cached/fetched image from the Unsplash service
-      UnsplashService.get_city_image(name)
+      case UnsplashService.get_city_image(name) do
+        {:ok, image_url} when is_binary(image_url) ->
+          image_url
+        image_url when is_binary(image_url) ->
+          image_url
+        _ ->
+          # If Unsplash service returned nil or an error, use fallback
+          get_fallback_city_image(name)
+      end
     rescue
       # If the service is not yet started or there's any other error, use hardcoded fallbacks
       e ->
         Logger.error("Error fetching Unsplash image: #{inspect(e)}")
-        case name do
-          "London" -> "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
-          "New York" -> "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
-          "Sydney" -> "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
-          _ -> "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?q=80&w=2000" # Default urban image
-        end
+        get_fallback_city_image(name)
+    end
+  end
+
+  defp get_city_image(_), do: "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?q=80&w=2000"
+
+  # Helper to get fallback city images based on city name
+  defp get_fallback_city_image(name) do
+    cond do
+      String.contains?(String.downcase(name), "london") ->
+        "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
+      String.contains?(String.downcase(name), "new york") ->
+        "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
+      String.contains?(String.downcase(name), "sydney") ->
+        "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
+      String.contains?(String.downcase(name), "melbourne") ->
+        "https://images.unsplash.com/photo-1545044846-351ba102b6d5?q=80&w=2000"
+      String.contains?(String.downcase(name), "paris") ->
+        "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=2000"
+      String.contains?(String.downcase(name), "tokyo") ->
+        "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=2000"
+      true ->
+        "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?q=80&w=2000" # Default urban image
     end
   end
 

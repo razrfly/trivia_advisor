@@ -631,67 +631,126 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   # Modified version to never return nil and properly combine all image sources with consistent ordering
   defp get_venue_image_at_position(venue, position) do
+    # Return default image if venue is nil
+    if is_nil(venue), do: return_default_image()
+
     # Get the event and its hero image if available
-    {_event, event_image_url} = if venue.events && Enum.any?(venue.events) do
-      event = List.first(venue.events)
-      image_url = if event.hero_image && event.hero_image.file_name,
-        do: TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event}),
-        else: nil
-      {event, image_url}
-    else
-      {nil, nil}
-    end
+    {_event, event_image_url} =
+      try do
+        if venue.events && is_list(venue.events) && Enum.any?(venue.events) do
+          event = List.first(venue.events)
+
+          # More careful checks for hero_image
+          image_url =
+            if event &&
+               is_map(event) &&
+               Map.has_key?(event, :hero_image) &&
+               event.hero_image &&
+               is_map(event.hero_image) &&
+               Map.has_key?(event.hero_image, :file_name) &&
+               event.hero_image.file_name do
+              try do
+                TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+              rescue
+                _ -> nil
+              end
+            else
+              nil
+            end
+
+          {event, image_url}
+        else
+          {nil, nil}
+        end
+      rescue
+        _ -> {nil, nil}
+      end
 
     # Get Google images if available (ensuring they're valid)
-    google_images = if venue.google_place_images && is_list(venue.google_place_images) do
-      venue.google_place_images
-      |> Enum.filter(fn img -> is_map(img) end)
-      |> Enum.sort_by(fn img -> Map.get(img, "position", 999) end)  # Sort by position instead of shuffle
-    else
-      []
-    end
+    google_images =
+      try do
+        if venue.google_place_images && is_list(venue.google_place_images) do
+          venue.google_place_images
+          |> Enum.filter(fn img -> is_map(img) end)
+          |> Enum.sort_by(fn img -> Map.get(img, "position", 999) end)  # Sort by position instead of shuffle
+        else
+          []
+        end
+      rescue
+        _ -> []
+      end
 
     # Combine all available images with hero image first
     all_images = []
 
     # Add hero image first if available
-    all_images = if event_image_url, do: [event_image_url | all_images], else: all_images
+    all_images = if is_binary(event_image_url), do: [event_image_url | all_images], else: all_images
 
-    # Add all Google images
-    api_key = get_google_api_key()
-    google_image_urls = google_images
-    |> Enum.map(fn image_data ->
-      cond do
-        # Handle Places API (New) format with photo_name
-        Map.has_key?(image_data, "photo_name") && image_data["photo_name"] ->
-          "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
+    # Add all Google images safely
+    google_image_urls =
+      try do
+        api_key = get_google_api_key()
 
-        # Handle legacy Places API format with photo_reference
-        Map.has_key?(image_data, "photo_reference") && image_data["photo_reference"] ->
-          "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
+        if api_key && is_binary(api_key) do
+          google_images
+          |> Enum.map(fn image_data ->
+            try do
+              cond do
+                # Handle Places API (New) format with photo_name
+                is_map(image_data) &&
+                Map.has_key?(image_data, "photo_name") &&
+                is_binary(image_data["photo_name"]) ->
+                  "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
 
-        # Handle other legacy formats
-        Map.has_key?(image_data, "local_path") && image_data["local_path"] ->
-          ensure_full_url(image_data["local_path"])
+                # Handle legacy Places API format with photo_reference
+                is_map(image_data) &&
+                Map.has_key?(image_data, "photo_reference") &&
+                is_binary(image_data["photo_reference"]) ->
+                  "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
 
-        Map.has_key?(image_data, "original_url") && image_data["original_url"] ->
-          image_data["original_url"]
+                # Handle other legacy formats
+                is_map(image_data) &&
+                Map.has_key?(image_data, "local_path") &&
+                is_binary(image_data["local_path"]) ->
+                  ensure_full_url(image_data["local_path"])
 
-        true ->
-          nil
+                is_map(image_data) &&
+                Map.has_key?(image_data, "original_url") &&
+                is_binary(image_data["original_url"]) ->
+                  image_data["original_url"]
+
+                true ->
+                  nil
+              end
+            rescue
+              _ -> nil
+            end
+          end)
+          |> Enum.filter(fn url -> is_binary(url) end)
+        else
+          []
+        end
+      rescue
+        _ -> []
       end
-    end)
-    |> Enum.filter(fn url -> url != nil end)
 
     all_images = all_images ++ google_image_urls
 
     # Now get the image at the requested position
-    if position < length(all_images) do
-      Enum.at(all_images, position)
+    if position < length(all_images) && Enum.any?(all_images) do
+      image = Enum.at(all_images, position)
+      if is_binary(image), do: image, else: return_default_image(venue)
     else
-      # If no image exists for this position, use a placeholder
-      # to ensure src attribute is never missing
+      # If no image exists for this position, use a default image
+      return_default_image(venue)
+    end
+  end
+
+  defp return_default_image(venue \\ nil) do
+    if venue && is_map(venue) && Map.has_key?(venue, :name) && is_binary(venue.name) do
       "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
+    else
+      "/images/default-venue.jpg"
     end
   end
 
@@ -718,11 +777,49 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   # Helper to ensure URL is a full URL
   defp ensure_full_url(path) do
-    if String.starts_with?(path, "http") do
-      path
+    # Return a default image if path is nil or not a binary
+    if is_nil(path) or not is_binary(path) do
+      return_default_image()
     else
-      # Simplistic approach - in a real app use your app's URL config
-      "#{TriviaAdvisorWeb.Endpoint.url()}#{path}"
+      try do
+        cond do
+          # Already a full URL
+          String.starts_with?(path, "http") ->
+            path
+
+          # Check if using S3 storage in production
+          Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
+            # Get S3 configuration
+            s3_config = Application.get_env(:ex_aws, :s3, [])
+            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+
+            # For Tigris S3-compatible storage, we need to use a public URL pattern
+            # that doesn't rely on object ACLs
+            host = case s3_config[:host] do
+              h when is_binary(h) -> h
+              _ -> "fly.storage.tigris.dev"
+            end
+
+            # Format path correctly for S3 (remove leading slash)
+            s3_path = if String.starts_with?(path, "/"), do: String.slice(path, 1..-1//1), else: path
+
+            # Construct the full S3 URL
+            # Using direct virtual host style URL
+            "https://#{bucket}.#{host}/#{s3_path}"
+
+          # Local development - use the app's URL config
+          true ->
+            if String.starts_with?(path, "/") do
+              "#{TriviaAdvisorWeb.Endpoint.url()}#{path}"
+            else
+              "#{TriviaAdvisorWeb.Endpoint.url()}/#{path}"
+            end
+        end
+      rescue
+        e ->
+          Logger.error("Error constructing URL from path #{inspect(path)}: #{Exception.message(e)}")
+          return_default_image()
+      end
     end
   end
 

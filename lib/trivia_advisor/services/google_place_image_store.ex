@@ -672,14 +672,57 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
   end
 
   defp ensure_full_url(path) do
-    if String.starts_with?(path, "http") do
-      path
+    # Return a default image if path is nil or not a binary
+    if is_nil(path) or not is_binary(path) do
+      "https://placehold.co/600x400/png"
     else
-      # Add the static path prefix if needed
-      if String.starts_with?(path, "/") do
-        path
-      else
-        "/#{path}"
+      try do
+        cond do
+          # Already a full URL
+          String.starts_with?(path, "http") ->
+            path
+
+          # Check if using S3 storage in production
+          Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
+            # Get S3 configuration
+            s3_config = Application.get_env(:ex_aws, :s3, [])
+            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+
+            # For Tigris S3-compatible storage, we need to use a public URL pattern
+            # that doesn't rely on object ACLs
+            host = case s3_config[:host] do
+              h when is_binary(h) -> h
+              _ -> "fly.storage.tigris.dev"
+            end
+
+            # Format path correctly for S3 (remove leading slash)
+            s3_path = if String.starts_with?(path, "/"), do: String.slice(path, 1..-1//1), else: path
+
+            # Construct the full S3 URL
+            # Using direct virtual host style URL
+            "https://#{bucket}.#{host}/#{s3_path}"
+
+          # Local development
+          true ->
+            # Use endpoint URL to construct full URL for local environment
+            endpoint_url =
+              try do
+                TriviaAdvisorWeb.Endpoint.url()
+              rescue
+                # If endpoint not available (e.g. in test environment)
+                _ -> "http://localhost:4000"
+              end
+
+            if String.starts_with?(path, "/") do
+              "#{endpoint_url}#{path}"
+            else
+              "#{endpoint_url}/#{path}"
+            end
+        end
+      rescue
+        e ->
+          Logger.error("Error constructing URL from path #{inspect(path)}: #{Exception.message(e)}")
+          "https://placehold.co/600x400/png"
       end
     end
   end
