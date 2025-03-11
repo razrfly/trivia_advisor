@@ -212,11 +212,12 @@ defmodule Mix.Tasks.SyncDb do
     # Step 2: Download files from Tigris
     Logger.info("Downloading files from Tigris bucket: #{bucket_name}...")
 
-    # First - explicitly handle the venues directory which seems to be missing
-    Logger.info("EXPLICITLY checking for venues directory...")
+    # Step 2a: First explicitly download the venues directory
+    Logger.info("Downloading venues directory...")
     download_venues(bucket_name)
 
-    # Then download the rest
+    # Step 2b: Download remaining directories
+    Logger.info("Downloading remaining directories...")
     download_files_from_bucket(bucket_name)
   end
 
@@ -266,10 +267,10 @@ defmodule Mix.Tasks.SyncDb do
     File.mkdir_p!(@uploads_dir)
 
     # Define the directories we specifically want to check and download
+    # Remove uploads/venues/ since we handle it separately
     directories_to_check = [
       "",
       "uploads/google_place_images/",
-      "uploads/venues/",
       "uploads/venue_images/",
       "uploads/performers/",
       "uploads/performer_images/"

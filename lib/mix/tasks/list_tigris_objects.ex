@@ -118,7 +118,7 @@ defmodule Mix.Tasks.ListTigrisObjects do
       # Extract the top-level directory from the key
       directory = case String.split(key, "/", parts: 2) do
         [dir, _] -> dir
-        [single] -> "root"
+        [_single] -> "root"
       end
 
       # Update the accumulator with the new key under its directory
