@@ -609,7 +609,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
             list when is_list(list) ->
               if List.ascii_printable?(list), do: List.to_string(list), else: inspect(list)
             other ->
-              Logger.warn("⚠️ Unexpected filename type: #{inspect(other)}")
+              Logger.warning("⚠️ Unexpected filename type: #{inspect(other)}", [])
               inspect(other)
           end
 
