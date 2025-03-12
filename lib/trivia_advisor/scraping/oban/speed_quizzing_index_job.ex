@@ -1,12 +1,22 @@
 defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
-  use Oban.Worker, queue: :default
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
+  import Ecto.Query
 
   # Aliases for the SpeedQuizzing scraper functionality
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.RateLimiter
+  alias TriviaAdvisor.Events.EventSource
+  alias TriviaAdvisor.Locations.Venue
+  alias TriviaAdvisor.Events.Event
+
+  # Days threshold for skipping recently updated events
+  @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -34,11 +44,11 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         end
 
         # Enqueue detail jobs for each event
-        enqueued_count = enqueue_detail_jobs(events_to_process, source.id)
-        Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing")
+        {enqueued_count, skipped_count} = enqueue_detail_jobs(events_to_process, source.id)
+        Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing, skipped #{skipped_count} recent events")
 
         # Return success with event count
-        {:ok, %{event_count: event_count, enqueued_jobs: enqueued_count, source_id: source.id}}
+        {:ok, %{event_count: event_count, enqueued_jobs: enqueued_count, skipped_jobs: skipped_count, source_id: source.id}}
 
       {:error, reason} ->
         # Log the error
@@ -51,11 +61,23 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
 
   # Enqueue detail jobs for each event
   defp enqueue_detail_jobs(events, source_id) do
-    Logger.info("🔄 Enqueueing detail jobs for #{length(events)} events...")
+    Logger.info("🔄 Checking and enqueueing detail jobs for #{length(events)} events...")
+
+    # Filter out events that were recently updated
+    {events_to_process, skipped_events} = Enum.split_with(events, fn event ->
+      # Check if this event (by coordinates) needs to be processed
+      should_process_event?(event, source_id)
+    end)
+
+    skipped_count = length(skipped_events)
+
+    if skipped_count > 0 do
+      Logger.info("⏩ Skipping #{skipped_count} events updated within the last #{@skip_if_updated_within_days} days")
+    end
 
     # Use the RateLimiter to schedule jobs with a delay
-    RateLimiter.schedule_detail_jobs(
-      events,
+    enqueued_count = RateLimiter.schedule_detail_jobs(
+      events_to_process,
       TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
       fn event ->
         %{
@@ -66,6 +88,60 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         }
       end
     )
+
+    {enqueued_count, skipped_count}
+  end
+
+  # Check if an event should be processed based on last update time
+  defp should_process_event?(event, source_id) do
+    # Get latitude and longitude
+    lat = Map.get(event, "lat")
+    lng = Map.get(event, "lon")
+
+    # If no coordinates, we should process it
+    if is_nil(lat) || is_nil(lng) || lat == "" || lng == "" do
+      true
+    else
+      # Find existing venues/events near these coordinates
+      case find_events_near_coordinates(lat, lng, source_id) do
+        [] ->
+          # No existing events nearby, should process
+          true
+        events_sources ->
+          # Check if any of these events were updated within the threshold
+          not Enum.any?(events_sources, fn event_source ->
+            recently_updated?(event_source)
+          end)
+      end
+    end
+  end
+
+  # Find events near coordinates
+  defp find_events_near_coordinates(lat, lng, source_id) do
+    # Parse coordinates to float
+    {lat_float, _} = Float.parse(lat)
+    {lng_float, _} = Float.parse(lng)
+
+    # Look for venues near these coordinates within 50 meters
+    query = from v in Venue,
+      join: e in Event, on: e.venue_id == v.id,
+      join: es in EventSource, on: es.event_id == e.id and es.source_id == ^source_id,
+      where: fragment("ST_DWithin(ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 50)", ^lng_float, ^lat_float, v.longitude, v.latitude),
+      select: es
+
+    Repo.all(query)
+  end
+
+  # Check if an event was recently updated
+  defp recently_updated?(event_source) do
+    # Calculate the threshold date
+    threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
+
+    # Compare the last_seen_at with the threshold
+    case event_source.last_seen_at do
+      nil -> false
+      last_seen_at -> DateTime.compare(last_seen_at, threshold_date) == :gt
+    end
   end
 
   # The following functions are copied from the existing SpeedQuizzing scraper

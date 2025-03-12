@@ -17,7 +17,9 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
     # Max attempts before giving up
     max_attempts: 5,
     # Job priority (lower numbers = higher priority)
-    priority: 3
+    priority: 3,
+    # Days threshold for skipping recently updated content
+    skip_if_updated_within_days: 5
   }
 
   @doc """
@@ -34,6 +36,11 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
   Returns the default job delay interval in seconds.
   """
   def job_delay_interval, do: @defaults.job_delay_interval
+
+  @doc """
+  Returns the default days threshold for skipping recently updated content.
+  """
+  def skip_if_updated_within_days, do: @defaults.skip_if_updated_within_days
 
   @doc """
   Schedules a batch of jobs with incremental delays.
