@@ -11,6 +11,14 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.RateLimiter
 
+  # Strict timeout values to prevent hanging requests
+  @http_options [
+    follow_redirect: true,
+    timeout: 15_000,        # 15 seconds for connect timeout
+    recv_timeout: 15_000,   # 15 seconds for receive timeout
+    hackney: [pool: false]  # Don't use connection pooling for scrapers
+  ]
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
     Logger.info("🔄 Starting Quizmeisters Index Job...")
@@ -74,28 +82,47 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   defp fetch_venues do
     api_url = "https://storerocket.io/api/user/kDJ3BbK4mn/locations"
 
-    case HTTPoison.get(api_url, [], [timeout: 30000, recv_timeout: 30000]) do
-      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-        case Jason.decode(body) do
-          {:ok, %{"results" => %{"locations" => locations}}} when is_list(locations) ->
-            {:ok, locations}
+    # Create a task with timeout for the API request
+    task = Task.async(fn ->
+      case HTTPoison.get(api_url, [], @http_options) do
+        {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+          case Jason.decode(body) do
+            {:ok, %{"results" => %{"locations" => locations}}} when is_list(locations) ->
+              {:ok, locations}
 
-          {:error, reason} ->
-            Logger.error("Failed to parse JSON response: #{inspect(reason)}")
-            {:error, "Failed to parse JSON response"}
+            {:error, reason} ->
+              Logger.error("Failed to parse JSON response: #{inspect(reason)}")
+              {:error, "Failed to parse JSON response"}
 
-          _ ->
-            Logger.error("Unexpected response format")
-            {:error, "Unexpected response format"}
-        end
+            _ ->
+              Logger.error("Unexpected response format")
+              {:error, "Unexpected response format"}
+          end
 
-      {:ok, %HTTPoison.Response{status_code: status}} ->
-        Logger.error("HTTP #{status}: Failed to fetch venues")
-        {:error, "HTTP #{status}"}
+        {:ok, %HTTPoison.Response{status_code: status}} ->
+          Logger.error("HTTP #{status}: Failed to fetch venues")
+          {:error, "HTTP #{status}"}
 
-      {:error, reason} ->
-        Logger.error("Request failed: #{inspect(reason)}")
-        {:error, "Request failed: #{inspect(reason)}"}
+        {:error, %HTTPoison.Error{reason: :timeout}} ->
+          Logger.error("Timeout fetching Quizmeisters venues")
+          {:error, "HTTP request timeout"}
+
+        {:error, %HTTPoison.Error{reason: :connect_timeout}} ->
+          Logger.error("Connection timeout fetching Quizmeisters venues")
+          {:error, "HTTP connection timeout"}
+
+        {:error, reason} ->
+          Logger.error("Request failed: #{inspect(reason)}")
+          {:error, "Request failed: #{inspect(reason)}"}
+      end
+    end)
+
+    # Wait for the task with a hard timeout
+    case Task.yield(task, 30_000) || Task.shutdown(task) do
+      {:ok, result} -> result
+      nil ->
+        Logger.error("Task timeout when fetching Quizmeisters venues")
+        {:error, "Task timeout"}
     end
   end
 end
