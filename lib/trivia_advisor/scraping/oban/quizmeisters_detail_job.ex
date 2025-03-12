@@ -33,9 +33,18 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
         Logger.info("✅ Successfully processed venue: #{venue.name}")
         {:ok, %{venue_id: venue.id, event_id: event_struct.id}}
 
-      {:ok, %{venue: venue, event: event}} ->
+      {:ok, %{venue: venue, event: event}} when is_map(event) ->
         # Handle the case where event is already unwrapped
         Logger.info("✅ Successfully processed venue: #{venue.name}")
+        {:ok, %{venue_id: venue.id, event_id: event.id}}
+
+      # Handle nested structure cases
+      {:ok, %{venue: venue, event: {:ok, %{event: event}}}} ->
+        Logger.info("✅ Successfully processed venue: #{venue.name} with nested event result")
+        {:ok, %{venue_id: venue.id, event_id: event.id}}
+
+      {:ok, %{venue: venue, event: %{event: event}}} ->
+        Logger.info("✅ Successfully processed venue: #{venue.name} with map-wrapped event")
         {:ok, %{venue_id: venue.id, event_id: event.id}}
 
       {:error, reason} ->
@@ -243,12 +252,16 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                       {:ok, %{venue: venue, event: updated_event}}
                     {:error, changeset} ->
                       Logger.error("❌ Failed to update existing event with performer_id: #{inspect(changeset.errors)}")
-                      # Continue with normal event processing
-                      process_event_with_performer(venue, event_data, source.id, performer_id)
+                      # Continue with normal event processing - note that this result is a tuple with event inside
+                      result = process_event_with_performer(venue, event_data, source.id, performer_id)
+                      Logger.debug("🔍 Process event with performer result: #{inspect(result)}")
+                      result
                   end
                 else
                   # No existing event or no performer, proceed with normal event processing
-                  process_event_with_performer(venue, event_data, source.id, performer_id)
+                  result = process_event_with_performer(venue, event_data, source.id, performer_id)
+                  Logger.debug("🔍 Process event with performer result: #{inspect(result)}")
+                  result
                 end
 
               error ->
@@ -306,18 +319,24 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     Logger.debug("🎭 Processing event with performer_id: #{inspect(performer_id)}")
     Logger.debug("🎭 Event data: #{inspect(Map.take(event_data, ["raw_title", "name", "performer_id"]))}")
 
-    # Handle the double-wrapped tuple from process_event
-    case EventStore.process_event(venue, event_data, source_id) do
-      {:ok, event} ->
+    # Process the event and handle ALL possible result patterns
+    result = EventStore.process_event(venue, event_data, source_id)
+    Logger.debug("🎭 EventStore.process_event result: #{inspect(result)}")
+
+    case result do
+      {:ok, event} when is_map(event) ->
+        # Pattern match succeeded, event is a map as expected
+        event_performer_id = Map.get(event, :performer_id)
+
         # Verify the performer_id was set on the event
-        if event.performer_id == performer_id do
+        if event_performer_id == performer_id do
           Logger.info("✅ Successfully set performer_id #{performer_id} on event #{event.id}")
           {:ok, %{venue: venue, event: event}}
         else
-          Logger.warning("⚠️ Event #{event.id} has performer_id #{event.performer_id} but expected #{performer_id}")
+          Logger.warning("⚠️ Event #{event.id} has performer_id #{event_performer_id} but expected #{performer_id}")
 
           # Try to update the event directly if performer_id wasn't set
-          if not is_nil(performer_id) and (is_nil(event.performer_id) or event.performer_id != performer_id) do
+          if not is_nil(performer_id) and (is_nil(event_performer_id) or event_performer_id != performer_id) do
             Logger.info("🔄 Attempting to update event #{event.id} with performer_id #{performer_id}")
 
             # Direct update to ensure performer_id is set
@@ -344,9 +363,26 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
             {:ok, %{venue: venue, event: event}}
           end
         end
+
+      # Handle unexpected tuple structure (this is the fix for the badkey error)
+      {:ok, {:ok, event}} when is_map(event) ->
+        Logger.warning("⚠️ Received nested OK tuple, unwrapping event")
+        process_event_with_performer(venue, event_data, source_id, performer_id)
+
+      # Any other variation of success result
+      {:ok, unexpected} ->
+        Logger.warning("⚠️ Unexpected event format from EventStore.process_event: #{inspect(unexpected)}")
+        # Try to safely proceed
+        {:ok, %{venue: venue, event: unexpected}}
+
       {:error, reason} ->
         Logger.error("❌ Failed to process event: #{inspect(reason)}")
         {:error, reason}
+
+      # Handle completely unexpected result
+      unexpected ->
+        Logger.error("❌ Completely unexpected result from EventStore.process_event: #{inspect(unexpected)}")
+        {:error, "Unexpected result format from EventStore.process_event"}
     end
   end
 

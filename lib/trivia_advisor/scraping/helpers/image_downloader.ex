@@ -147,24 +147,27 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     - url: The URL of the performer image to download
 
   ## Returns
-    - A file struct with `file_name` and `updated_at` keys if successful, in the format
-      Waffle expects for storage in the database
+    - A Plug.Upload struct if successful, compatible with Waffle's cast_attachments
     - `nil` if the download fails
   """
   def download_performer_image(url) do
     case download_image(url, "performer_image") do
       %{filename: filename, path: path} = _downloaded ->
-        # Create expected directory structure and copy files manually
-        # This is what should be done by the API consumer, but we're making it easier
+        # Create a Plug.Upload struct compatible with Waffle's cast_attachments
+        content_type = case Path.extname(filename) |> String.downcase() do
+          ".jpg" -> "image/jpeg"
+          ".jpeg" -> "image/jpeg"
+          ".png" -> "image/png"
+          ".gif" -> "image/gif"
+          ".webp" -> "image/webp"
+          ".avif" -> "image/avif"
+          _ -> "image/jpeg" # Default
+        end
 
-        # Here we're converting from the download format (filename/path)
-        # to the storage format (file_name/updated_at) that Waffle expects
-        # when storing the file metadata in the database
-        %{
-          file_name: filename,
-          updated_at: NaiveDateTime.utc_now(),
-          # Keep the path so it can be used to copy the file
-          _temp_path: path
+        %Plug.Upload{
+          path: path,
+          filename: filename,
+          content_type: content_type
         }
       nil -> nil
     end

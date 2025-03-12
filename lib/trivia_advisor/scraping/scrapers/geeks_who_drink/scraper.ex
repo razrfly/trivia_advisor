@@ -382,11 +382,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
 
         # Download the profile image
         profile_image = case TriviaAdvisor.Scraping.Helpers.ImageDownloader.download_performer_image(image_url) do
-          %{file_name: file_name, _temp_path: temp_path} = image_data when not is_nil(temp_path) ->
-            Logger.info("✅ Downloaded performer image to: #{temp_path}, filename: #{file_name}")
+          %Plug.Upload{filename: filename, path: path} = image_data when not is_nil(path) ->
+            Logger.info("✅ Downloaded performer image to: #{path}, filename: #{filename}")
 
             # Verify the file exists and is not empty
-            case File.stat(temp_path) do
+            case File.stat(path) do
               {:ok, %{size: size}} when size > 0 ->
                 Logger.info("✅ Image file exists and has size: #{size} bytes")
                 image_data
