@@ -324,8 +324,13 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       # Get venues near the city within the specified radius
       results = Locations.find_venues_near_city(city, radius_km: radius, load_relations: true)
 
+      # Filter out venues without events
+      results_with_events = Enum.filter(results, fn %{venue: venue} ->
+        venue.events && Enum.any?(venue.events)
+      end)
+
       # Format the venue data for display
-      Enum.map(results, fn %{venue: venue, distance_km: distance} ->
+      Enum.map(results_with_events, fn %{venue: venue, distance_km: distance} ->
         try do
           # Extract event source data if available
           event_source_data = get_event_source_data(venue)
@@ -382,7 +387,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     case Locations.get_city_by_slug(slug) do
       %{} = city ->
         # If found, format the data for display
-        venues_count = Locations.count_venues_near_city(city, radius_km: 50)
+        # Use count_venues_with_events_near_city to only count venues with events
+        venues_count = Locations.count_venues_with_events_near_city(city, radius_km: 50)
 
         {:ok, %{
           id: city.id,
@@ -697,8 +703,13 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           Locations.find_venues_near_city(suburb, radius_km: 10, load_relations: true)
         end)
 
+        # Filter out venues without events
+        suburb_venues_with_events = Enum.filter(suburb_venues, fn %{venue: venue} ->
+          venue.events && Enum.any?(venue.events)
+        end)
+
         # Deduplicate venues and format them the same way as in get_venues_near_city
-        suburb_venues
+        suburb_venues_with_events
         |> Enum.uniq_by(fn %{venue: venue} -> venue.id end)
         |> Enum.map(fn %{venue: venue, distance_km: distance} ->
           try do
