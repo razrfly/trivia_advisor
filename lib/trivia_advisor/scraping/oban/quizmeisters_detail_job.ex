@@ -1,5 +1,7 @@
 defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
-  use Oban.Worker, queue: :default, max_attempts: 3
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: 5
 
   require Logger
 
@@ -131,7 +133,14 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   defp fetch_venue_details(venue_data, source) do
     Logger.info("Processing venue: #{venue_data.title}")
 
-    case HTTPoison.get(venue_data.url, [], follow_redirect: true) do
+    # Add HTTP timeout configs
+    http_opts = [
+      follow_redirect: true,
+      timeout: 30000,        # 30 seconds for connect timeout
+      recv_timeout: 30000    # 30 seconds for receive timeout
+    ]
+
+    case HTTPoison.get(venue_data.url, [], http_opts) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         with {:ok, document} <- Floki.parse_document(body),
              {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, venue_data.url, venue_data.raw_title) do
