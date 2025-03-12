@@ -188,13 +188,20 @@ defmodule TriviaAdvisor.Events.EventStore do
 
   # Normalize keys to atoms for consistent access
   # This allows the function to work with both string and atom keys
+  # Uses String.to_existing_atom first to prevent atom exhaustion risk
   defp normalize_keys(map) when is_map(map) do
-    map
-    |> Enum.map(fn
-      {key, value} when is_binary(key) -> {String.to_atom(key), value}
-      {key, value} -> {key, value}
+    Enum.reduce(map, %{}, fn {k, v}, acc ->
+      atom_key = if is_binary(k) do
+        try do
+          String.to_existing_atom(k)
+        rescue
+          ArgumentError -> String.to_atom(k)  # Fallback when atom doesn't exist
+        end
+      else
+        k
+      end
+      Map.put(acc, atom_key, v)
     end)
-    |> Map.new()
   end
 
   defp find_existing_event(venue_id, day_of_week) do
