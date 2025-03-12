@@ -19,6 +19,13 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Ensure upload directory exists
     ensure_upload_dir()
 
+    # Convert string keys to atoms for consistent access
+    # This allows the function to work with both string and atom keys
+    event_data = normalize_keys(event_data)
+
+    # Log the performer_id from event_data
+    Logger.info("🎭 Processing event for venue #{venue.name} with performer_id: #{inspect(Map.get(event_data, :performer_id))}")
+
     # Preload required associations
     venue = Repo.preload(venue, [city: :country])
 
@@ -70,6 +77,10 @@ defmodule TriviaAdvisor.Events.EventStore do
       _ -> %{}
     end
 
+    # Get performer_id from event_data, ensuring it's properly passed through
+    performer_id = Map.get(event_data, :performer_id)
+    Logger.info("🎭 Using performer_id: #{inspect(performer_id)} for event at venue: #{venue.name}")
+
     attrs = %{
       name: event_data.raw_title,  # Keep the raw title
       venue_id: venue.id,
@@ -78,27 +89,52 @@ defmodule TriviaAdvisor.Events.EventStore do
       frequency: frequency,
       entry_fee_cents: parse_currency(event_data.fee_text, venue) || 0,  # Always default to 0 if nil
       description: event_data.description,
-      performer_id: Map.get(event_data, :performer_id, nil)  # Safely access performer_id with default nil
+      performer_id: performer_id  # Use the extracted performer_id
     }
     |> Map.merge(hero_image_attrs)  # Merge in hero image if downloaded
+
+    Logger.debug("🎭 Event attributes: #{inspect(attrs)}")
 
     Repo.transaction(fn ->
       # First try to find by venue and day
       existing_event = find_existing_event(attrs.venue_id, attrs.day_of_week)
+
+      # Log the existing event if found
+      if existing_event do
+        Logger.info("🔄 Found existing event #{existing_event.id} for venue #{venue.name} on day #{attrs.day_of_week}")
+        Logger.info("🎭 Existing event has performer_id: #{inspect(existing_event.performer_id)}")
+      else
+        Logger.info("🆕 Creating new event for venue #{venue.name} on day #{attrs.day_of_week}")
+      end
 
       # Process the event
       result = case existing_event do
         nil -> create_event(attrs)
         event ->
           if event_changed?(event, attrs) do
+            # Check if performer_id is changing
+            if event.performer_id != attrs.performer_id do
+              Logger.info("🎭 Updating performer_id from #{inspect(event.performer_id)} to #{inspect(attrs.performer_id)}")
+            end
             update_event(event, attrs)
           else
-            {:ok, event}
+            # If no changes, but performer_id is different, update just that field
+            if not is_nil(attrs.performer_id) and event.performer_id != attrs.performer_id do
+              Logger.info("🎭 Event not changed but performer_id is different. Updating just performer_id from #{inspect(event.performer_id)} to #{inspect(attrs.performer_id)}")
+              event
+              |> Ecto.Changeset.change(%{performer_id: attrs.performer_id})
+              |> Repo.update()
+            else
+              {:ok, event}
+            end
           end
       end
 
       case result do
         {:ok, event} ->
+          # Log the result
+          Logger.info("✅ Event processed successfully with ID: #{event.id}, performer_id: #{inspect(event.performer_id)}")
+
           # Pass all needed data to upsert_event_source
           case upsert_event_source(
             event.id,
@@ -113,6 +149,8 @@ defmodule TriviaAdvisor.Events.EventStore do
           end
 
         {:error, changeset} ->
+          Logger.error("❌ Failed to process event: #{inspect(changeset.errors)}")
+
           # If the failure was specifically due to hero_image, try again without it
           if hero_image_error?(changeset) do
             Logger.warning("Retrying event creation without hero image due to validation error")
@@ -146,6 +184,17 @@ defmodule TriviaAdvisor.Events.EventStore do
           end
       end
     end)
+  end
+
+  # Normalize keys to atoms for consistent access
+  # This allows the function to work with both string and atom keys
+  defp normalize_keys(map) when is_map(map) do
+    map
+    |> Enum.map(fn
+      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      {key, value} -> {key, value}
+    end)
+    |> Map.new()
   end
 
   defp find_existing_event(venue_id, day_of_week) do
@@ -211,6 +260,9 @@ defmodule TriviaAdvisor.Events.EventStore do
     end
   end
 
+  # Check if event has changed in a way that requires an update
+  # Note: We're not including performer_id here because we want to update it separately
+  # if it's the only thing that changed
   defp event_changed?(event, attrs) do
     Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description]) !=
     Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description])
@@ -252,102 +304,77 @@ defmodule TriviaAdvisor.Events.EventStore do
     end
   end
 
-  # Download image to temp file and return path
+  # Check if the changeset error is specifically related to the hero_image
+  defp hero_image_error?(changeset) do
+    Enum.any?(changeset.errors, fn {field, _} -> field == :hero_image end)
+  end
+
+  # Download hero image from URL
   defp download_hero_image(url) do
-    Logger.debug("Attempting to download hero image from URL: #{url}")
+    try do
+      # Create a temporary file path
+      temp_dir = System.tmp_dir!()
+      random_id = :crypto.strong_rand_bytes(16) |> Base.encode16()
+      temp_file = Path.join(temp_dir, "hero_image_#{random_id}")
 
-    # Add browser-like headers to avoid potential restrictions
-    headers = [
-      {"User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"},
-      {"Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"},
-      {"Accept-Language", "en-US,en;q=0.9"}
-    ]
+      # Download the image
+      case HTTPoison.get(url, [], follow_redirect: true, max_redirects: 5) do
+        {:ok, %{status_code: 200, body: body, headers: headers}} ->
+          # Get content type from headers
+          content_type = Enum.find_value(headers, fn
+            {"Content-Type", value} -> value
+            {"content-type", value} -> value
+            _ -> nil
+          end)
 
-    # Set reasonable timeout
-    options = [follow_redirect: true, recv_timeout: 30000]
+          # Determine file extension from content type
+          extension = case content_type do
+            "image/jpeg" -> ".jpg"
+            "image/jpg" -> ".jpg"
+            "image/png" -> ".png"
+            "image/gif" -> ".gif"
+            "image/webp" -> ".webp"
+            _ ->
+              # If content type is not recognized, try to get extension from URL
+              url_ext = Path.extname(url) |> String.downcase()
+              if url_ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"] do
+                url_ext
+              else
+                ".jpg" # Default to jpg
+              end
+          end
 
-    case HTTPoison.get(url, headers, options) do
-      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-        # Get existing filename and extension from URL
-        filename = Path.basename(url)
-        existing_extension = Path.extname(filename) |> String.downcase()
+          # Update the file path with the extension
+          final_temp_file = temp_file <> extension
 
-        # Detect content type and extension based on file content
-        {content_type, extension} = detect_image_type(body, existing_extension)
-        Logger.debug("Detected content type: #{content_type}, using extension: #{extension}")
+          # Write the file
+          File.write!(final_temp_file, body)
 
-        # Create temp file with proper extension
-        temp_path = Path.join(
-          System.tmp_dir!(),
-          "hero_image_#{:crypto.strong_rand_bytes(16) |> Base.encode16}#{extension}"
-        )
-
-        with :ok <- File.write(temp_path, body) do
-          Logger.debug("Successfully wrote image to: #{temp_path}")
-
-          # Create a proper %Plug.Upload{} struct that Waffle expects
-          # Important: Use original filename as-is
+          # Create a proper file struct for Waffle
           {:ok, %Plug.Upload{
-            path: temp_path,
-            filename: filename,
-            content_type: content_type
+            path: final_temp_file,
+            filename: Path.basename(final_temp_file),
+            content_type: content_type || "image/jpeg"
           }}
-        else
-          error ->
-            Logger.error("Failed to write image file: #{inspect(error)}")
-            {:error, :file_write_failed}
-        end
-      {:ok, response} ->
-        Logger.error("Failed to download image, status code: #{response.status_code}")
-        Logger.debug("Response headers: #{inspect(response.headers)}")
-        {:error, :download_failed}
-      {:error, reason} ->
-        Logger.error("Failed to download image: #{inspect(reason)}")
-        {:error, :download_failed}
+
+        {:ok, %{status_code: status}} ->
+          Logger.error("Failed to download hero image from #{url} with status #{status}")
+          {:error, "HTTP #{status}"}
+
+        {:error, error} ->
+          Logger.error("Error downloading hero image from #{url}: #{inspect(error)}")
+          {:error, "Download error"}
+      end
+    rescue
+      e ->
+        Logger.error("Error downloading hero image from #{url}: #{inspect(e)}")
+        {:error, "Exception: #{Exception.message(e)}"}
     end
   end
 
-  # Detect image type from binary content
-  defp detect_image_type(<<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, _::binary>>, _) do
-    {"image/png", ".png"}
-  end
-  defp detect_image_type(<<0xFF, 0xD8, 0xFF, _::binary>>, _) do
-    {"image/jpeg", ".jpg"}
-  end
-  defp detect_image_type(<<"RIFF", _::binary-size(4), "WEBP", _::binary>>, _) do
-    {"image/webp", ".webp"}
-  end
-  defp detect_image_type(<<0x47, 0x49, 0x46, 0x38, _::binary>>, _) do
-    {"image/gif", ".gif"}
-  end
-  defp detect_image_type(_, ext) when ext in [".jpg", ".jpeg"] do
-    {"image/jpeg", ext}
-  end
-  defp detect_image_type(_, ext) when ext in [".png"] do
-    {"image/png", ext}
-  end
-  defp detect_image_type(_, ext) when ext in [".webp"] do
-    {"image/webp", ext}
-  end
-  defp detect_image_type(_, ext) when ext in [".gif"] do
-    {"image/gif", ext}
-  end
-  defp detect_image_type(_, _) do
-    # Default to JPEG if we can't detect the type
-    {"image/jpeg", ".jpg"}
-  end
-
-  # Make sure the directory exists
+  # Ensure the upload directory exists
   defp ensure_upload_dir do
-    path = Path.join(Application.app_dir(:trivia_advisor), "priv/static/uploads/venues")
-    File.mkdir_p!(path)
-  end
-
-  # Check if changeset has errors related to hero_image
-  defp hero_image_error?(changeset) do
-    Enum.any?(changeset.errors, fn
-      {:hero_image, _} -> true
-      _ -> false
-    end)
+    dir = Path.join(["priv", "static", "uploads", "events"])
+    File.mkdir_p!(dir)
   end
 end

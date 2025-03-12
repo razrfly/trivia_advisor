@@ -10,7 +10,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Locations.VenueStore
-  alias TriviaAdvisor.Events.{EventStore, Performer}
+  alias TriviaAdvisor.Events.{EventStore, Performer, Event}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   # Strict timeout values to prevent hanging requests
@@ -169,45 +169,86 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                 final_data = Map.put(merged_data, :venue_id, venue.id)
                 VenueHelpers.log_venue_details(final_data)
 
-                # Process performer if present
+                # Process performer if present - add detailed logging
                 performer_id = case final_data.performer do
                   %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
+                    Logger.info("🎭 Found performer data for #{venue.name}: Name: #{name}, Image URL: #{String.slice(image_url, 0, 50)}...")
+
                     # Use a timeout for image downloads too
                     case safe_download_performer_image(image_url) do
                       {:ok, profile_image} ->
-                        case Performer.find_or_create(%{
+                        Logger.info("📸 Successfully downloaded performer image for #{name}")
+
+                        # Create or update performer
+                        performer_attrs = %{
                           name: name,
                           profile_image: profile_image,
                           source_id: source.id
-                        }) do
-                          {:ok, performer} -> performer.id
-                          _ -> nil
+                        }
+
+                        Logger.debug("🎭 Performer attributes: #{inspect(performer_attrs)}")
+
+                        case Performer.find_or_create(performer_attrs) do
+                          {:ok, performer} ->
+                            Logger.info("✅ Successfully created/updated performer #{performer.id} (#{performer.name}) for venue #{venue.name}")
+                            performer.id
+                          {:error, changeset} ->
+                            Logger.error("❌ Failed to create/update performer: #{inspect(changeset.errors)}")
+                            nil
                         end
-                      {:error, _} -> nil
+                      {:error, reason} ->
+                        Logger.error("❌ Failed to download performer image: #{inspect(reason)}")
+                        nil
                     end
-                  _ -> nil
+                  nil ->
+                    Logger.info("ℹ️ No performer data found for #{venue.name}")
+                    nil
+                  _ ->
+                    Logger.info("⚠️ Invalid performer data format for #{venue.name}")
+                    nil
                 end
 
                 # Process the event using EventStore like QuestionOne
+                # IMPORTANT: Use string keys for the event_data map to ensure compatibility with EventStore.process_event
                 event_data = %{
-                  raw_title: final_data.raw_title,
-                  name: venue.name,
-                  time_text: format_time_text(final_data.day_of_week, final_data.start_time),
-                  description: final_data.description,
-                  fee_text: "Free", # All Quizmeisters events are free
-                  hero_image_url: final_data.hero_image_url,
-                  source_url: venue_data.url,
-                  performer_id: performer_id
+                  "raw_title" => final_data.raw_title,
+                  "name" => venue.name,
+                  "time_text" => format_time_text(final_data.day_of_week, final_data.start_time),
+                  "description" => final_data.description,
+                  "fee_text" => "Free", # All Quizmeisters events are free
+                  "hero_image_url" => final_data.hero_image_url,
+                  "source_url" => venue_data.url,
+                  "performer_id" => performer_id
                 }
 
-                # Handle the double-wrapped tuple from process_event
-                case EventStore.process_event(venue, event_data, source.id) do
-                  {:ok, event} ->
-                    Logger.info("✅ Successfully processed event for venue: #{venue.name}")
-                    {:ok, %{venue: venue, event: event}}
-                  {:error, reason} ->
-                    Logger.error("❌ Failed to process event: #{inspect(reason)}")
-                    {:error, reason}
+                # Log whether we have a performer_id
+                if performer_id do
+                  Logger.info("🎭 Adding performer_id #{performer_id} to event for venue #{venue.name}")
+                else
+                  Logger.info("⚠️ No performer_id for event at venue #{venue.name}")
+                end
+
+                # Directly update an existing event if it exists
+                existing_event = find_existing_event(venue.id, final_data.day_of_week)
+
+                if existing_event && performer_id do
+                  # If we have an existing event and a performer, update the performer_id directly
+                  Logger.info("🔄 Found existing event #{existing_event.id} for venue #{venue.name}, updating performer_id to #{performer_id}")
+
+                  case existing_event
+                       |> Ecto.Changeset.change(%{performer_id: performer_id})
+                       |> Repo.update() do
+                    {:ok, updated_event} ->
+                      Logger.info("✅ Successfully updated existing event #{updated_event.id} with performer_id #{updated_event.performer_id}")
+                      {:ok, %{venue: venue, event: updated_event}}
+                    {:error, changeset} ->
+                      Logger.error("❌ Failed to update existing event with performer_id: #{inspect(changeset.errors)}")
+                      # Continue with normal event processing
+                      process_event_with_performer(venue, event_data, source.id, performer_id)
+                  end
+                else
+                  # No existing event or no performer, proceed with normal event processing
+                  process_event_with_performer(venue, event_data, source.id, performer_id)
                 end
 
               error ->
@@ -244,6 +285,68 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       nil ->
         Logger.error("Task timeout when processing venue: #{venue_data.title}")
         {:error, "Task timeout"}
+    end
+  end
+
+  # Find an existing event by venue_id and day_of_week
+  defp find_existing_event(venue_id, day_of_week) do
+    import Ecto.Query
+
+    Repo.one(
+      from e in Event,
+      where: e.venue_id == ^venue_id and
+             e.day_of_week == ^day_of_week,
+      limit: 1
+    )
+  end
+
+  # Process event with performer_id
+  defp process_event_with_performer(venue, event_data, source_id, performer_id) do
+    # Log the event data and performer_id before processing
+    Logger.debug("🎭 Processing event with performer_id: #{inspect(performer_id)}")
+    Logger.debug("🎭 Event data: #{inspect(Map.take(event_data, ["raw_title", "name", "performer_id"]))}")
+
+    # Handle the double-wrapped tuple from process_event
+    case EventStore.process_event(venue, event_data, source_id) do
+      {:ok, event} ->
+        # Verify the performer_id was set on the event
+        if event.performer_id == performer_id do
+          Logger.info("✅ Successfully set performer_id #{performer_id} on event #{event.id}")
+          {:ok, %{venue: venue, event: event}}
+        else
+          Logger.warning("⚠️ Event #{event.id} has performer_id #{event.performer_id} but expected #{performer_id}")
+
+          # Try to update the event directly if performer_id wasn't set
+          if not is_nil(performer_id) and (is_nil(event.performer_id) or event.performer_id != performer_id) do
+            Logger.info("🔄 Attempting to update event #{event.id} with performer_id #{performer_id}")
+
+            # Direct update to ensure performer_id is set
+            case Repo.get(Event, event.id) do
+              nil ->
+                Logger.error("❌ Could not find event with ID #{event.id}")
+                {:ok, %{venue: venue, event: event}}
+              event_to_update ->
+                event_to_update
+                |> Ecto.Changeset.change(%{performer_id: performer_id})
+                |> Repo.update()
+                |> case do
+                  {:ok, updated_event} ->
+                    Logger.info("✅ Successfully updated event #{updated_event.id} with performer_id #{updated_event.performer_id}")
+                    # Return the updated event instead of the original one
+                    {:ok, %{venue: venue, event: updated_event}}
+                  {:error, changeset} ->
+                    Logger.error("❌ Failed to update event with performer_id: #{inspect(changeset.errors)}")
+                    {:ok, %{venue: venue, event: event}}
+                end
+            end
+          else
+            Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+            {:ok, %{venue: venue, event: event}}
+          end
+        end
+      {:error, reason} ->
+        Logger.error("❌ Failed to process event: #{inspect(reason)}")
+        {:error, reason}
     end
   end
 
