@@ -134,13 +134,14 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
     end
   end
 
-  # Find venues near specific coordinates (within approximately 100 meters)
+  # Find venues near specific coordinates (within 50 meters)
   defp find_venues_near_coordinates(lat, lng) do
-    # Use ST_Distance to find venues within 0.1 km (about 100 meters)
-    # This is a rough proximity check that could be refined
+    # Use ST_DWithin for a more accurate and efficient 50 meter radius search
+    # ST_DWithin is optimized for this type of proximity query
     from(v in Venue,
+      where: not is_nil(v.lat) and not is_nil(v.lng),
       where: fragment(
-        "ST_Distance(ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) < 100",
+        "ST_DWithin(ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, 50)",
         ^lng, ^lat, type(v.lng, :float), type(v.lat, :float)
       )
     )
