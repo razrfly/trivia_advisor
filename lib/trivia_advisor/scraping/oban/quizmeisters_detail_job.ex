@@ -1,7 +1,8 @@
 defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   use Oban.Worker,
     queue: :default,
-    max_attempts: 5
+    max_attempts: 5,
+    priority: 3
 
   require Logger
 
@@ -13,11 +14,11 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Events.{EventStore, Performer, Event}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
-  # Strict timeout values to prevent hanging requests
+  # Increased timeout values to prevent hanging requests
   @http_options [
     follow_redirect: true,
-    timeout: 15_000,        # 15 seconds for connect timeout
-    recv_timeout: 15_000,   # 15 seconds for receive timeout
+    timeout: 30_000,        # 30 seconds for connect timeout
+    recv_timeout: 30_000,   # 30 seconds for receive timeout
     hackney: [pool: false]  # Don't use connection pooling for scrapers
   ]
 
@@ -188,7 +189,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                       {:ok, profile_image} ->
                         Logger.info("📸 Successfully downloaded performer image for #{name}")
 
-                        # Create or update performer
+                        # Create or update performer - with timeout protection
                         performer_attrs = %{
                           name: name,
                           profile_image: profile_image,
@@ -197,12 +198,37 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
                         Logger.debug("🎭 Performer attributes: #{inspect(performer_attrs)}")
 
-                        case Performer.find_or_create(performer_attrs) do
-                          {:ok, performer} ->
+                        # Wrap performer creation in a Task with timeout to prevent it from blocking the job
+                        performer_task = Task.async(fn ->
+                          Performer.find_or_create(performer_attrs)
+                        end)
+
+                        case Task.yield(performer_task, 30_000) || Task.shutdown(performer_task) do
+                          {:ok, {:ok, performer}} ->
                             Logger.info("✅ Successfully created/updated performer #{performer.id} (#{performer.name}) for venue #{venue.name}")
                             performer.id
-                          {:error, changeset} ->
+                          {:ok, {:error, changeset}} ->
                             Logger.error("❌ Failed to create/update performer: #{inspect(changeset.errors)}")
+                            nil
+                          _ ->
+                            Logger.error("⏱️ Timeout creating/updating performer for #{name}")
+                            nil
+                        end
+                      {:ok, nil} ->
+                        # Image download returned nil but not an error
+                        Logger.warning("⚠️ Image download returned nil for performer #{name}, proceeding without image")
+
+                        # Try to create performer without image
+                        performer_attrs = %{
+                          name: name,
+                          source_id: source.id
+                        }
+
+                        case Performer.find_or_create(performer_attrs) do
+                          {:ok, performer} ->
+                            Logger.info("✅ Created performer #{performer.id} without image")
+                            performer.id
+                          _ ->
                             nil
                         end
                       {:error, reason} ->
@@ -292,8 +318,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       end
     end)
 
-    # Wait for the task with a hard timeout
-    case Task.yield(task, 30_000) || Task.shutdown(task) do
+    # Wait for the task with a longer timeout
+    case Task.yield(task, 60_000) || Task.shutdown(task) do
       {:ok, result} -> result
       nil ->
         Logger.error("Task timeout when processing venue: #{venue_data.title}")
@@ -313,14 +339,25 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     )
   end
 
-  # Process event with performer_id
+  # Process event with performer_id with timeout protection
   defp process_event_with_performer(venue, event_data, source_id, performer_id) do
     # Log the event data and performer_id before processing
     Logger.debug("🎭 Processing event with performer_id: #{inspect(performer_id)}")
     Logger.debug("🎭 Event data: #{inspect(Map.take(event_data, ["raw_title", "name", "performer_id"]))}")
 
-    # Process the event and handle ALL possible result patterns
-    result = EventStore.process_event(venue, event_data, source_id)
+    # Process the event with timeout protection
+    event_task = Task.async(fn ->
+      EventStore.process_event(venue, event_data, source_id)
+    end)
+
+    # Use a generous timeout for event processing
+    result = case Task.yield(event_task, 45_000) || Task.shutdown(event_task) do
+      {:ok, result} -> result
+      nil ->
+        Logger.error("⏱️ Timeout in EventStore.process_event for venue #{venue.name}")
+        {:error, "EventStore.process_event timeout"}
+    end
+
     Logger.debug("🎭 EventStore.process_event result: #{inspect(result)}")
 
     case result do
@@ -388,13 +425,25 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
   # Safe wrapper around ImageDownloader.download_performer_image with timeout
   defp safe_download_performer_image(url) do
-    task = Task.async(fn -> ImageDownloader.download_performer_image(url) end)
+    # Skip nil URLs early
+    if is_nil(url) or String.trim(url) == "" do
+      {:error, "Invalid image URL"}
+    else
+      task = Task.async(fn -> ImageDownloader.download_performer_image(url) end)
 
-    case Task.yield(task, 20_000) || Task.shutdown(task) do
-      {:ok, result} when not is_nil(result) -> {:ok, result}
-      _ ->
-        Logger.error("Timeout or error downloading performer image from #{url}")
-        {:error, "Image download timeout"}
+      # Increase timeout for image downloads
+      case Task.yield(task, 40_000) || Task.shutdown(task) do
+        {:ok, nil} ->
+          # Explicit handling for nil result
+          {:ok, nil}
+        {:ok, result} ->
+          # Handle non-nil result
+          {:ok, result}
+        _ ->
+          Logger.error("Timeout or error downloading performer image from #{url}")
+          # Return nil instead of error to allow processing to continue
+          {:ok, nil}
+      end
     end
   end
 
