@@ -74,7 +74,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   defp fetch_venues do
     api_url = "https://storerocket.io/api/user/kDJ3BbK4mn/locations"
 
-    case HTTPoison.get(api_url) do
+    case HTTPoison.get(api_url, [], [timeout: 30000, recv_timeout: 30000]) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         case Jason.decode(body) do
           {:ok, %{"results" => %{"locations" => locations}}} when is_list(locations) ->

@@ -672,6 +672,41 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
+  Count the total number of venues with events near a city within a specified radius.
+  This function filters out venues without any associated events.
+
+  ## Options
+    * `:radius_km` - search radius in kilometers (default: 50)
+
+  ## Examples
+
+      iex> count_venues_with_events_near_city(city, radius_km: 25)
+      120
+
+  """
+  def count_venues_with_events_near_city(%City{} = city, opts \\ []) do
+    {lat, lng} = City.coordinates(city)
+    radius_km = Keyword.get(opts, :radius_km, 50)
+
+    # PostGIS query using ST_DWithin and a join with events table
+    # to count only venues that have associated events
+    query = from v in Venue,
+      join: e in assoc(v, :events),
+      select: count(v.id, :distinct),
+      where: fragment(
+        "ST_DWithin(
+          ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography,
+          ST_SetSRID(ST_MakePoint(CAST(? AS FLOAT), CAST(? AS FLOAT)), 4326)::geography,
+          ?
+        )",
+        ^lng, ^lat, v.longitude, v.latitude, ^(radius_km * 1000)
+      )
+
+    # Run the query
+    Repo.one(query) || 0
+  end
+
+  @doc """
   Loads all important relationships for a venue.
 
   ## Examples
