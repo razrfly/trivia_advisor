@@ -13,6 +13,14 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
+  # Strict timeout values to prevent hanging requests
+  @http_options [
+    follow_redirect: true,
+    timeout: 15_000,        # 15 seconds for connect timeout
+    recv_timeout: 15_000,   # 15 seconds for receive timeout
+    hackney: [pool: false]  # Don't use connection pooling for scrapers
+  ]
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
@@ -133,95 +141,121 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   defp fetch_venue_details(venue_data, source) do
     Logger.info("Processing venue: #{venue_data.title}")
 
-    # Add HTTP timeout configs
-    http_opts = [
-      follow_redirect: true,
-      timeout: 30000,        # 30 seconds for connect timeout
-      recv_timeout: 30000    # 30 seconds for receive timeout
-    ]
+    # Start a task with timeout to handle hanging HTTP requests
+    task = Task.async(fn ->
+      case HTTPoison.get(venue_data.url, [], @http_options) do
+        {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+          with {:ok, document} <- Floki.parse_document(body),
+               {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, venue_data.url, venue_data.raw_title) do
 
-    case HTTPoison.get(venue_data.url, [], http_opts) do
-      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-        with {:ok, document} <- Floki.parse_document(body),
-             {:ok, extracted_data} <- VenueExtractor.extract_venue_data(document, venue_data.url, venue_data.raw_title) do
+            # First merge the extracted data with the API data
+            merged_data = Map.merge(venue_data, extracted_data)
 
-          # First merge the extracted data with the API data
-          merged_data = Map.merge(venue_data, extracted_data)
+            # Then process through VenueStore with social media data
+            venue_store_data = %{
+              name: merged_data.name,
+              address: merged_data.address,
+              phone: merged_data.phone,
+              website: merged_data.website,
+              facebook: merged_data.facebook,
+              instagram: merged_data.instagram,
+              latitude: merged_data.latitude,
+              longitude: merged_data.longitude,
+              postcode: merged_data.postcode
+            }
 
-          # Then process through VenueStore with social media data
-          venue_store_data = %{
-            name: merged_data.name,
-            address: merged_data.address,
-            phone: merged_data.phone,
-            website: merged_data.website,
-            facebook: merged_data.facebook,
-            instagram: merged_data.instagram,
-            latitude: merged_data.latitude,
-            longitude: merged_data.longitude,
-            postcode: merged_data.postcode
-          }
+            case VenueStore.process_venue(venue_store_data) do
+              {:ok, venue} ->
+                final_data = Map.put(merged_data, :venue_id, venue.id)
+                VenueHelpers.log_venue_details(final_data)
 
-          case VenueStore.process_venue(venue_store_data) do
-            {:ok, venue} ->
-              final_data = Map.put(merged_data, :venue_id, venue.id)
-              VenueHelpers.log_venue_details(final_data)
+                # Process performer if present
+                performer_id = case final_data.performer do
+                  %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
+                    # Use a timeout for image downloads too
+                    case safe_download_performer_image(image_url) do
+                      {:ok, profile_image} ->
+                        case Performer.find_or_create(%{
+                          name: name,
+                          profile_image: profile_image,
+                          source_id: source.id
+                        }) do
+                          {:ok, performer} -> performer.id
+                          _ -> nil
+                        end
+                      {:error, _} -> nil
+                    end
+                  _ -> nil
+                end
 
-              # Process performer if present
-              performer_id = case final_data.performer do
-                %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
-                  # Download the image directly
-                  profile_image = ImageDownloader.download_performer_image(image_url)
+                # Process the event using EventStore like QuestionOne
+                event_data = %{
+                  raw_title: final_data.raw_title,
+                  name: venue.name,
+                  time_text: format_time_text(final_data.day_of_week, final_data.start_time),
+                  description: final_data.description,
+                  fee_text: "Free", # All Quizmeisters events are free
+                  hero_image_url: final_data.hero_image_url,
+                  source_url: venue_data.url,
+                  performer_id: performer_id
+                }
 
-                  case Performer.find_or_create(%{
-                    name: name,
-                    profile_image: profile_image,
-                    source_id: source.id
-                  }) do
-                    {:ok, performer} -> performer.id
-                    _ -> nil
-                  end
-                _ -> nil
-              end
+                # Handle the double-wrapped tuple from process_event
+                case EventStore.process_event(venue, event_data, source.id) do
+                  {:ok, event} ->
+                    Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+                    {:ok, %{venue: venue, event: event}}
+                  {:error, reason} ->
+                    Logger.error("❌ Failed to process event: #{inspect(reason)}")
+                    {:error, reason}
+                end
 
-              # Process the event using EventStore like QuestionOne
-              event_data = %{
-                raw_title: final_data.raw_title,
-                name: venue.name,
-                time_text: format_time_text(final_data.day_of_week, final_data.start_time),
-                description: final_data.description,
-                fee_text: "Free", # All Quizmeisters events are free
-                hero_image_url: final_data.hero_image_url,
-                source_url: venue_data.url,
-                performer_id: performer_id
-              }
-
-              # Handle the double-wrapped tuple from process_event
-              case EventStore.process_event(venue, event_data, source.id) do
-                {:ok, event} ->
-                  Logger.info("✅ Successfully processed event for venue: #{venue.name}")
-                  {:ok, %{venue: venue, event: event}}
-                {:error, reason} ->
-                  Logger.error("❌ Failed to process event: #{inspect(reason)}")
-                  {:error, reason}
-              end
-
-            error ->
-              Logger.error("Failed to process venue: #{inspect(error)}")
-              {:error, error}
+              error ->
+                Logger.error("Failed to process venue: #{inspect(error)}")
+                {:error, error}
+            end
+          else
+            {:error, reason} ->
+              Logger.error("Failed to extract venue data: #{reason}")
+              {:error, reason}
           end
-        else
-          {:error, reason} ->
-            Logger.error("Failed to extract venue data: #{reason}")
-            {:error, reason}
-        end
 
-      {:ok, %HTTPoison.Response{status_code: status}} ->
-        Logger.error("HTTP #{status} when fetching venue: #{venue_data.url}")
-        {:error, "HTTP #{status}"}
+        {:ok, %HTTPoison.Response{status_code: status}} ->
+          Logger.error("HTTP #{status} when fetching venue: #{venue_data.url}")
+          {:error, "HTTP #{status}"}
 
-      {:error, error} ->
-        Logger.error("Error fetching venue #{venue_data.url}: #{inspect(error)}")
-        {:error, error}
+        {:error, %HTTPoison.Error{reason: :timeout}} ->
+          Logger.error("Timeout fetching venue #{venue_data.url}")
+          {:error, "HTTP request timeout"}
+
+        {:error, %HTTPoison.Error{reason: :connect_timeout}} ->
+          Logger.error("Connection timeout fetching venue #{venue_data.url}")
+          {:error, "HTTP connection timeout"}
+
+        {:error, error} ->
+          Logger.error("Error fetching venue #{venue_data.url}: #{inspect(error)}")
+          {:error, error}
+      end
+    end)
+
+    # Wait for the task with a hard timeout
+    case Task.yield(task, 30_000) || Task.shutdown(task) do
+      {:ok, result} -> result
+      nil ->
+        Logger.error("Task timeout when processing venue: #{venue_data.title}")
+        {:error, "Task timeout"}
+    end
+  end
+
+  # Safe wrapper around ImageDownloader.download_performer_image with timeout
+  defp safe_download_performer_image(url) do
+    task = Task.async(fn -> ImageDownloader.download_performer_image(url) end)
+
+    case Task.yield(task, 20_000) || Task.shutdown(task) do
+      {:ok, result} when not is_nil(result) -> {:ok, result}
+      _ ->
+        Logger.error("Timeout or error downloading performer image from #{url}")
+        {:error, "Image download timeout"}
     end
   end
 
