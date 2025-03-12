@@ -178,13 +178,11 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
     end
   end
 
-  # Extracts event data from the HTML content
-  defp extract_events(html) do
-    {:error, "This function is deprecated in favor of the JSON API approach"}
-  end
 
-  # Parses the HTML from the response body
-  defp parse_html(response_body) do
-    {:error, "This function is deprecated in favor of the JSON API approach"}
-  end
+  # Note: HTML scraping functions have been removed
+  # They were previously used for parsing the SpeedQuizzing website
+  # but have been replaced by the JSON API approach
 end
+  # Note: HTML scraping functions were removed
+  # They were previously used for parsing the SpeedQuizzing website
+  # but have been replaced by the JSON API approach
