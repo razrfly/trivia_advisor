@@ -81,7 +81,7 @@ defmodule TriviaAdvisor.Events.Performer do
                 |> String.trim("-")
 
               # Create the directory structure
-              dir = Path.join(["priv", "static", "uploads", "performer_profile_images", "#{performer_name}-#{performer_id}"])
+              dir = Path.join(["priv", "static", "uploads", "performers", "#{performer_name}-#{performer_id}"])
               File.mkdir_p!(dir)
 
               # Copy the file for both original and thumbnail versions

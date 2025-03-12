@@ -381,7 +381,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                       <img
                         src={
                           cond do
-                            is_map(event.performer.profile_image) -> TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer})
+                            is_map(event.performer.profile_image) -> ensure_full_url(TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer}))
                             is_binary(event.performer.profile_image) -> event.performer.profile_image
                             true -> nil
                           end

@@ -49,7 +49,7 @@ defmodule TriviaAdvisor.Uploaders.ProfileImage do
       "temp"
     end
 
-    dir = "uploads/performer_profile_images/#{performer_name}-#{performer_id}"
+    dir = "uploads/performers/#{performer_name}-#{performer_id}"
     Logger.debug("📁 Using storage directory: #{dir}")
     dir
   end
