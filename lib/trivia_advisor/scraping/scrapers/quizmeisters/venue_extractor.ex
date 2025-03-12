@@ -92,12 +92,23 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor do
           |> Floki.text()
           |> String.trim()
 
-        profile_image = elements
-          |> Floki.find(".host-image:not(.placeholder)")
-          |> Floki.attribute("src")
-          |> List.first()
+        # Find all host images
+        images = elements
+          |> Floki.find(".host-image")
+          |> Enum.filter(fn img ->
+            # Filter out placeholder images
+            class = Floki.attribute(img, "class") |> List.first() || ""
+            not String.contains?(class, "placeholder") and not String.contains?(class, "w-condition-invisible")
+          end)
+
+        # Get the src attribute of the first real image
+        profile_image = case images do
+          [] -> nil
+          [img | _] -> Floki.attribute(img, "src") |> List.first()
+        end
 
         if name != "" or profile_image do
+          Logger.debug("✅ Found performer: #{name}, image: #{profile_image != nil}")
           %{
             name: name,
             profile_image: profile_image

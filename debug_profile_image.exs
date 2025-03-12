@@ -49,7 +49,7 @@ defmodule Debug do
             |> String.replace(~r/[^a-z0-9]+/, "-")
             |> String.trim("-")
 
-          expected_dir = Path.join(["priv", "static", "uploads", "performer_profile_images", "#{performer_name}-#{performer.id}"])
+          expected_dir = Path.join(["priv", "static", "uploads", "performers", "#{performer_name}-#{performer.id}"])
           IO.puts("Expected directory: #{expected_dir}")
 
           # Check if the expected directory exists and has files
