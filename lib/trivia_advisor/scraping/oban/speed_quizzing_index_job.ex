@@ -46,24 +46,6 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         # Enqueue detail jobs for each event
         {enqueued_count, skipped_count} = enqueue_detail_jobs(events_to_process, source.id)
 
-        # Add this explicit debug output
-        IO.puts("************* RESULTS ***************")
-        IO.puts("* Total events: #{event_count}")
-        IO.puts("* Limited to: #{limited_count}")
-        IO.puts("* Enqueued jobs: #{enqueued_count}")
-        IO.puts("* Skipped events: #{skipped_count}")
-        IO.puts("*************************************")
-
-        # Write results to a file for debugging
-        File.write!("/tmp/sq_job_results.txt", """
-        *** SpeedQuizzingIndexJob Results ***
-        Run at: #{DateTime.utc_now()}
-        Total events: #{event_count}
-        Limited to: #{limited_count}
-        Enqueued jobs: #{enqueued_count}
-        Skipped events: #{skipped_count}
-        """)
-
         # Add to application log with distinct prefix
         Logger.info("🔢 RESULTS_COUNT: total=#{event_count} limited=#{limited_count} enqueued=#{enqueued_count} skipped=#{skipped_count}")
 
