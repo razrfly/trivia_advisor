@@ -20,10 +20,25 @@ defmodule TriviaAdvisor.Events.Performer do
     if profile_image && profile_image.file_name do
       Logger.info("🗑️ Deleting profile image files for performer: #{performer.name}")
 
-      # Note: Waffle.Actions.Delete.delete/2 currently always returns :ok
-      # This will be updated when Waffle adds proper error handling (issue #86)
-      Waffle.Actions.Delete.delete({profile_image.file_name, performer}, [])
-      Logger.info("✅ Successfully deleted profile image files for performer: #{performer.name}")
+      # Construct the storage directory path
+      performer_name = performer.name
+        |> String.downcase()
+        |> String.replace(~r/[^a-z0-9]+/, "-")
+        |> String.trim("-")
+
+      dir = Path.join(["priv", "static", "uploads", "performers", "#{performer_name}-#{performer.id}"])
+
+      if File.exists?(dir) do
+        # Manually delete the directory and all its contents
+        case File.rm_rf(dir) do
+          {:ok, _} ->
+            Logger.info("✅ Successfully deleted profile image files for performer: #{performer.name}")
+          {:error, reason, _} ->
+            Logger.error("❌ Error deleting profile images: #{inspect(reason)}")
+        end
+      else
+        Logger.info("⚠️ No profile image directory found at #{dir}")
+      end
     end
   end
   # Catch-all for performers without images

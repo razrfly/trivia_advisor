@@ -43,25 +43,12 @@ defmodule TriviaAdvisor.Events.Event do
     # Get the new image filename if it exists
     new_image = attrs[:hero_image] && attrs[:hero_image].filename
 
-    # Log the performer_id from attrs
-    Logger.debug("🎭 Event changeset received performer_id: #{inspect(Map.get(attrs, :performer_id))}")
-
-    changeset = event
+    event
     |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :performer_id])
     |> maybe_cast_hero_image(attrs, current_image, new_image)
     |> validate_required([:name, :venue_id, :day_of_week, :start_time])
     |> foreign_key_constraint(:venue_id)
     |> foreign_key_constraint(:performer_id)
-
-    # Log the changeset after processing
-    if Map.has_key?(attrs, :performer_id) do
-      Logger.debug("🎭 Event changeset after processing: performer_id=#{inspect(get_field(changeset, :performer_id))}, valid?=#{changeset.valid?}")
-      if not changeset.valid? do
-        Logger.error("❌ Event changeset errors: #{inspect(changeset.errors)}")
-      end
-    end
-
-    changeset
   end
 
   defp maybe_cast_hero_image(changeset, attrs, current_image, new_image) do
