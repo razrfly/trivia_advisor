@@ -2,11 +2,18 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   use Oban.Worker, queue: :default
 
   require Logger
+  import Ecto.Query
+
+  # Configurable threshold for how recent an event update needs to be to skip processing
+  # This can be moved to application config later for all scrapers
+  @skip_if_updated_within_days 5
 
   # Aliases for the SpeedQuizzing scraper functionality
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.RateLimiter
+  alias TriviaAdvisor.Events.{Event, EventSource}
+  alias TriviaAdvisor.Locations.Venue
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -14,6 +21,9 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
 
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
+
+    # Check if a max_jobs parameter is specified to limit production runs
+    max_jobs = Map.get(args, "max_jobs")
 
     # Get the SpeedQuizzing source
     source = Repo.get_by!(Source, slug: "speed-quizzing")
@@ -25,20 +35,31 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         event_count = length(events)
         Logger.info("✅ Successfully fetched #{event_count} events from SpeedQuizzing index page")
 
-        # Apply limit if specified
-        events_to_process = if limit, do: Enum.take(events, limit), else: events
+        # Apply limit or max_jobs if specified (prioritize limit for backwards compatibility)
+        events_to_process = cond do
+          limit -> Enum.take(events, limit)
+          max_jobs -> Enum.take(events, max_jobs)
+          true -> events
+        end
         limited_count = length(events_to_process)
 
-        if limit do
-          Logger.info("🧪 Testing mode: Limited to #{limited_count} events (out of #{event_count} total)")
+        # Log appropriate message based on which limitation is applied
+        cond do
+          limit ->
+            Logger.info("🧪 Testing mode: Limited to #{limited_count} events (out of #{event_count} total)")
+          max_jobs ->
+            Logger.info("⚙️ Production limit: Processing #{limited_count} events (out of #{event_count} total)")
+          true ->
+            :ok
         end
 
         # Enqueue detail jobs for each event
-        enqueued_count = enqueue_detail_jobs(events_to_process, source.id)
+        {enqueued_count, skipped_count} = enqueue_detail_jobs(events_to_process, source.id)
         Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing")
+        Logger.info("🔄 Skipped #{skipped_count} recently updated events")
 
         # Return success with event count
-        {:ok, %{event_count: event_count, enqueued_jobs: enqueued_count, source_id: source.id}}
+        {:ok, %{event_count: event_count, enqueued_jobs: enqueued_count, skipped_jobs: skipped_count, source_id: source.id}}
 
       {:error, reason} ->
         # Log the error
@@ -49,13 +70,21 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
     end
   end
 
-  # Enqueue detail jobs for each event
+  # Enqueue detail jobs for each event, now with filtering for recently updated venues
   defp enqueue_detail_jobs(events, source_id) do
-    Logger.info("🔄 Enqueueing detail jobs for #{length(events)} events...")
+    Logger.info("🔄 Checking #{length(events)} events for recent updates...")
+
+    # Split events into those to process and those to skip
+    {events_to_process, events_to_skip} = Enum.split_with(events, fn event ->
+      # Check if this event should be processed (not recently updated)
+      should_process_event?(event, source_id)
+    end)
+
+    Logger.info("🔄 Enqueueing detail jobs for #{length(events_to_process)} events...")
 
     # Use the RateLimiter to schedule jobs with a delay
-    RateLimiter.schedule_detail_jobs(
-      events,
+    enqueued_count = RateLimiter.schedule_detail_jobs(
+      events_to_process,
       TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
       fn event ->
         %{
@@ -66,7 +95,78 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         }
       end
     )
+
+    {enqueued_count, length(events_to_skip)}
   end
+
+  # Helper function to determine if an event should be processed based on recent updates
+  defp should_process_event?(event, source_id) do
+    # Skip processing if we have no coordinates - need them to find venues
+    lat = Map.get(event, "lat")
+    lng = Map.get(event, "lng") || Map.get(event, "lon")
+
+    if is_nil(lat) or is_nil(lng) do
+      true # Process events without coordinates - we can't match them reliably
+    else
+      # Try to find matching venues by location
+      venues = find_venues_near_coordinates(lat, lng)
+
+      if Enum.empty?(venues) do
+        true # No matching venue found, so process this event
+      else
+        # Check if any of these venues have events from this source updated recently
+        venue_ids = Enum.map(venues, & &1.id)
+
+        # Calculate cutoff date (e.g., 5 days ago)
+        cutoff_date = DateTime.add(DateTime.utc_now(), -1 * @skip_if_updated_within_days * 24 * 60 * 60, :second)
+
+        # Query to find if any matching events exist and were updated in last N days
+        recent_event_sources =
+          from(es in EventSource,
+            join: e in Event, on: es.event_id == e.id,
+            where: e.venue_id in ^venue_ids,
+            where: es.source_id == ^source_id,
+            where: es.last_seen_at >= ^cutoff_date,
+            limit: 1
+          )
+          |> Repo.all()
+
+        # If no recent event sources, we should process this event
+        Enum.empty?(recent_event_sources)
+      end
+    end
+  end
+
+  # Function to find venues near given coordinates
+  defp find_venues_near_coordinates(lat, lng) do
+    # Convert strings to floats if needed
+    {lat, lng} = {ensure_float(lat), ensure_float(lng)}
+
+    # Use a small radius (e.g., 50 meters) to find matching venues
+    # This query uses PostGIS ST_Distance instead of <@> operator
+    query =
+      from(v in Venue,
+        where: not is_nil(v.latitude) and not is_nil(v.longitude),
+        where: fragment(
+          "ST_Distance(ST_SetSRID(ST_MakePoint(?, ?), 4326), ST_SetSRID(ST_MakePoint(?, ?), 4326)) < ?",
+          v.longitude, v.latitude, ^lng, ^lat, 0.05
+        ),
+        limit: 5
+      )
+
+    Repo.all(query)
+  end
+
+  # Helper to ensure we have floats
+  defp ensure_float(value) when is_binary(value) do
+    case Float.parse(value) do
+      {float, _} -> float
+      :error -> nil
+    end
+  end
+  defp ensure_float(value) when is_float(value), do: value
+  defp ensure_float(value) when is_integer(value), do: value * 1.0
+  defp ensure_float(_), do: nil
 
   # The following functions are copied from the existing SpeedQuizzing scraper
   # to avoid modifying the original code
