@@ -13,7 +13,7 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
   # Default configuration - can be adjusted in one place
   @defaults %{
     # Basic job delay between each job in seconds
-    job_delay_interval: 5,
+    job_delay_interval: 2,
     # Max attempts before giving up
     max_attempts: 5,
     # Job priority (lower numbers = higher priority)
