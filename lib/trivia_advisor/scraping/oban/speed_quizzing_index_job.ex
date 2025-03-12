@@ -19,7 +19,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: args, id: job_id} = _job) do
     Logger.info("🔄 Starting SpeedQuizzing Index Job...")
 
     # Check if a limit is specified (for testing)
@@ -45,14 +45,47 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
 
         # Enqueue detail jobs for each event
         {enqueued_count, skipped_count} = enqueue_detail_jobs(events_to_process, source.id)
+
+        # Add to application log with distinct prefix
+        Logger.info("🔢 RESULTS_COUNT: total=#{event_count} limited=#{limited_count} enqueued=#{enqueued_count} skipped=#{skipped_count}")
+
+        # Create metadata for reporting
+        metadata = %{
+          "total_events" => event_count,
+          "limited_to" => limited_count,
+          "enqueued_jobs" => enqueued_count,
+          "skipped_events" => skipped_count,
+          "applied_limit" => limit,
+          "source_id" => source.id,
+          "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+
+        # Direct SQL update of the job's meta column
+        Repo.update_all(
+          from(j in "oban_jobs", where: j.id == ^job_id),
+          set: [meta: metadata]
+        )
+
         Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing, skipped #{skipped_count} recent events")
 
-        # Return success with event count
+        # Return success
         {:ok, %{event_count: event_count, enqueued_jobs: enqueued_count, skipped_jobs: skipped_count, source_id: source.id}}
 
       {:error, reason} ->
         # Log the error
         Logger.error("❌ Failed to fetch SpeedQuizzing events: #{inspect(reason)}")
+
+        # Update job metadata with error
+        error_metadata = %{
+          "error" => inspect(reason),
+          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+
+        # Direct SQL update of the job's meta column
+        Repo.update_all(
+          from(j in "oban_jobs", where: j.id == ^job_id),
+          set: [meta: error_metadata]
+        )
 
         # Return the error
         {:error, reason}
