@@ -1,12 +1,11 @@
 defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
-  use Oban.Worker, queue: :default
+  use Oban.Worker,
+    queue: :default,
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
   import Ecto.Query
-
-  # Configurable threshold for how recent an event update needs to be to skip processing
-  # This can be moved to application config later for all scrapers
-  @skip_if_updated_within_days 5
 
   # Aliases for the SpeedQuizzing scraper functionality
   alias TriviaAdvisor.Repo
@@ -99,147 +98,92 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
     {enqueued_count, length(events_to_skip)}
   end
 
-  # Helper function to determine if an event should be processed based on recent updates
+  # Helper function to determine if we should process an event
+  # Skips events with venues that have been updated recently
   defp should_process_event?(event, source_id) do
-    # Skip processing if we have no coordinates - need them to find venues
-    lat = Map.get(event, "lat")
-    lng = Map.get(event, "lng") || Map.get(event, "lon")
+    # Get latitude and longitude from the event
+    event_lat = Map.get(event, "lat") |> String.to_float()
+    event_lng = Map.get(event, "lon") |> String.to_float()
 
-    if is_nil(lat) or is_nil(lng) do
-      true # Process events without coordinates - we can't match them reliably
+    # Find any venues near these coordinates that might be associated with this event
+    venues = find_venues_near_coordinates(event_lat, event_lng)
+
+    # If there are no nearby venues, we need to process this event to create the venue
+    if Enum.empty?(venues) do
+      true
     else
-      # Try to find matching venues by location
-      venues = find_venues_near_coordinates(lat, lng)
+      # Check if any venue has a recently updated event source
+      cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * RateLimiter.skip_if_updated_within_days() * 24 * 60 * 60, :second)
 
-      if Enum.empty?(venues) do
-        true # No matching venue found, so process this event
-      else
-        # Check if any of these venues have events from this source updated recently
-        venue_ids = Enum.map(venues, & &1.id)
+      # We should process the event if we don't have any recently updated sources
+      venues
+      |> Enum.all?(fn venue ->
+        # Get venue ID
+        venue_id = venue.id
 
-        # Calculate cutoff date (e.g., 5 days ago)
-        cutoff_date = DateTime.add(DateTime.utc_now(), -1 * @skip_if_updated_within_days * 24 * 60 * 60, :second)
+        # Find event sources associated with this venue and the current source
+        recent_sources = from(e in Event,
+          join: es in EventSource, on: es.event_id == e.id,
+          where: e.venue_id == ^venue_id and es.source_id == ^source_id and es.last_seen_at > ^cutoff_date,
+          select: es
+        ) |> Repo.aggregate(:count)
 
-        # Query to find if any matching events exist and were updated in last N days
-        recent_event_sources =
-          from(es in EventSource,
-            join: e in Event, on: es.event_id == e.id,
-            where: e.venue_id in ^venue_ids,
-            where: es.source_id == ^source_id,
-            where: es.last_seen_at >= ^cutoff_date,
-            limit: 1
-          )
-          |> Repo.all()
-
-        # If no recent event sources, we should process this event
-        Enum.empty?(recent_event_sources)
-      end
+        # True if no recent sources (meaning we should process), false otherwise
+        recent_sources == 0
+      end)
     end
   end
 
-  # Function to find venues near given coordinates
+  # Find venues near specific coordinates (within approximately 100 meters)
   defp find_venues_near_coordinates(lat, lng) do
-    # Convert strings to floats if needed
-    {lat, lng} = {ensure_float(lat), ensure_float(lng)}
-
-    # Use a small radius (e.g., 50 meters) to find matching venues
-    # This query uses PostGIS ST_Distance instead of <@> operator
-    query =
-      from(v in Venue,
-        where: not is_nil(v.latitude) and not is_nil(v.longitude),
-        where: fragment(
-          "ST_Distance(ST_SetSRID(ST_MakePoint(?, ?), 4326), ST_SetSRID(ST_MakePoint(?, ?), 4326)) < ?",
-          v.longitude, v.latitude, ^lng, ^lat, 0.05
-        ),
-        limit: 5
+    # Use ST_Distance to find venues within 0.1 km (about 100 meters)
+    # This is a rough proximity check that could be refined
+    from(v in Venue,
+      where: fragment(
+        "ST_Distance(ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography) < 100",
+        ^lng, ^lat, type(v.lng, :float), type(v.lat, :float)
       )
-
-    Repo.all(query)
+    )
+    |> Repo.all()
   end
 
-  # Helper to ensure we have floats
-  defp ensure_float(value) when is_binary(value) do
-    case Float.parse(value) do
-      {float, _} -> float
-      :error -> nil
-    end
-  end
-  defp ensure_float(value) when is_float(value), do: value
-  defp ensure_float(value) when is_integer(value), do: value * 1.0
-  defp ensure_float(_), do: nil
-
-  # The following functions are copied from the existing SpeedQuizzing scraper
-  # to avoid modifying the original code
-
+  # Fetches the JSON data for all events from the SpeedQuizzing API
   defp fetch_events_json do
-    index_url = "https://www.speedquizzing.com/find/"
+    # URL for the SpeedQuizzing API that returns all events
+    url = "https://hub.speed-quizzing.com/api/events"
 
-    case HTTPoison.get(index_url, [], follow_redirect: true) do
-      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
-        with {:ok, document} <- Floki.parse_document(body),
-             {:ok, json} <- extract_events_json(document),
-             {:ok, events} <- parse_events_json(json) do
-          {:ok, events}
-        else
-          {:error, reason} ->
-            Logger.error("Failed to extract or parse events JSON: #{inspect(reason)}")
-            {:error, reason}
+    # Attempt to fetch the JSON data
+    case Finch.build(:get, url) |> Finch.request(TriviaAdvisor.Finch) do
+      {:ok, %Finch.Response{status: 200, body: body}} ->
+        # Parse the JSON body
+        case Jason.decode(body) do
+          {:ok, json_data} ->
+            # Extract data array from the JSON response
+            data = Map.get(json_data, "data", [])
+            {:ok, data}
+
+          {:error, error} ->
+            Logger.error("❌ Failed to parse SpeedQuizzing JSON response: #{inspect(error)}")
+            {:error, "Failed to parse JSON: #{inspect(error)}"}
         end
 
-      {:ok, %HTTPoison.Response{status_code: status}} ->
-        Logger.error("HTTP #{status}: Failed to fetch index page")
-        {:error, "HTTP #{status}"}
+      {:ok, %Finch.Response{status: status}} ->
+        Logger.error("❌ SpeedQuizzing API returned non-200 status: #{status}")
+        {:error, "API returned status #{status}"}
 
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        Logger.error("Request failed: #{inspect(reason)}")
-        {:error, "Request failed: #{inspect(reason)}"}
+      {:error, error} ->
+        Logger.error("❌ Failed to fetch SpeedQuizzing events data: #{inspect(error)}")
+        {:error, "Request failed: #{inspect(error)}"}
     end
   end
 
-  defp extract_events_json(document) do
-    script_content = document
-    |> Floki.find("script:not([src])")
-    |> Enum.map(&Floki.raw_html/1)
-    |> Enum.find(fn html ->
-      String.contains?(html, "var events = JSON.parse(")
-    end)
-
-    case script_content do
-      nil ->
-        {:error, "Events JSON not found in page"}
-      content ->
-        # Extract the JSON string within the single quotes
-        regex = ~r/var events = JSON\.parse\('(.+?)'\)/s
-        case Regex.run(regex, content) do
-          [_, json_str] ->
-            # Unescape single quotes and other characters
-            unescaped = json_str
-            |> String.replace("\\'", "'")
-            |> String.replace("\\\\", "\\")
-            {:ok, unescaped}
-          _ ->
-            {:error, "Failed to extract JSON string"}
-        end
-    end
+  # Extracts event data from the HTML content
+  defp extract_events(html) do
+    {:error, "This function is deprecated in favor of the JSON API approach"}
   end
 
-  defp parse_events_json(json_str) do
-    case Jason.decode(json_str) do
-      {:ok, events} when is_list(events) ->
-        # Add a source_id field to each event for easier tracking
-        events = Enum.map(events, fn event ->
-          Map.put(event, "source_id", "speed-quizzing")
-        end)
-        {:ok, events}
-
-      {:error, %Jason.DecodeError{} = error} ->
-        Logger.error("JSON decode error: #{Exception.message(error)}")
-        Logger.error("Problematic JSON: #{json_str}")
-        {:error, "JSON parsing error: #{Exception.message(error)}"}
-
-      error ->
-        Logger.error("Unexpected error parsing JSON: #{inspect(error)}")
-        {:error, "Unexpected JSON parsing error"}
-    end
+  # Parses the HTML from the response body
+  defp parse_html(response_body) do
+    {:error, "This function is deprecated in favor of the JSON API approach"}
   end
 end
