@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{Event, EventStore, EventSource}
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @base_url "https://inquizition.com/find-a-quiz/"
   @standard_fee_text "£2.50" # Standard fee for all Inquizition quizzes
@@ -143,6 +144,33 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
       instagram: venue_data["instagram"]
     }
 
+    # HANDLE PROBLEMATIC VENUES: For venues with duplicate names like "The Railway",
+    # look them up first to see if they exist
+    venue_attrs = if venue_attrs.name == "The Railway" do
+      # Check if this venue already exists with this address
+      case find_venue_by_name_and_address(venue_attrs.name, venue_attrs.address) do
+        %{id: id} when not is_nil(id) ->
+          # Found a match - add a unique suffix to the name to avoid ambiguity in wait_for_completion
+          Logger.info("🔍 Found duplicate name venue '#{venue_attrs.name}' with address '#{venue_attrs.address}' - adding suffix")
+          %{venue_attrs | name: "#{venue_attrs.name} (#{venue_attrs.address})"}
+
+        nil ->
+          # Not found - check if any "The Railway" exists at all
+          case Repo.all(from v in TriviaAdvisor.Locations.Venue, where: v.name == ^venue_attrs.name) do
+            [] ->
+              # No venue with this name exists yet
+              venue_attrs
+
+            venues when venues != [] ->
+              # Add a unique suffix to avoid ambiguity
+              Logger.info("🔍 Avoiding duplicate name '#{venue_attrs.name}' - adding suffix")
+              %{venue_attrs | name: "#{venue_attrs.name} (#{venue_attrs.address})"}
+          end
+      end
+    else
+      venue_attrs
+    end
+
     # Log what we're doing for debugging
     Logger.info("""
     🏢 Processing venue in Detail Job:
@@ -157,6 +185,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     case VenueStore.process_venue(venue_attrs) do
       {:ok, venue} ->
         Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+        # Add this explicitly in the detail job - this is where image processing should happen
+        # Get venue images using the Google Places API if needed
+        venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
         # Get fee from venue_data or use standard
         fee_text = venue_data["entry_fee"] || @standard_fee_text
@@ -261,6 +293,14 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
         {:error, reason}
     end
   end
+
+  # Helper function to find a venue by both name and address
+  defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: v.name == ^name and v.address == ^address,
+      limit: 1)
+  end
+  defp find_venue_by_name_and_address(_, _), do: nil
 
   # Find existing event for a venue from a specific source
   defp find_existing_event(venue_id, source_id) do
