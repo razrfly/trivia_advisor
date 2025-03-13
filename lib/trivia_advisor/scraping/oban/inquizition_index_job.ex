@@ -221,6 +221,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     if last_seen_at do
       # Venue exists - check if it was processed recently
       days_ago = RateLimiter.skip_if_updated_within_days()
+      Logger.debug("🔍 Skip threshold is #{days_ago} days - venue '#{name}'")
+
       cutoff_date = DateTime.add(DateTime.utc_now(), -days_ago * 24 * 60 * 60, :second)
 
       # Only process if last_seen_at is older than the cutoff date
@@ -276,14 +278,37 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   defp process_venues(venues_to_process, source_id) do
     Enum.map(venues_to_process, fn venue_data ->
       try do
-        # Process each venue that needs updating
-        result = Scraper.process_single_venue(venue_data, source_id)
+        # First try to find existing venue directly in the database without triggering any Google lookups
+        venue_name = venue_data["name"]
+        venue_address = venue_data["address"]
 
-        # Log the processing result
-        Logger.info("✅ Successfully processed venue: #{venue_data["name"]}")
+        existing_venue = case find_venue_by_name_and_address(venue_name, venue_address) do
+          %{id: id} = venue when not is_nil(id) ->
+            # Found exact venue - use it directly without calling process_venue
+            Logger.info("✅ Using existing venue directly: #{venue_name}")
+            venue
 
-        # Return the result directly (should be [ok: venue])
-        result
+          nil ->
+            # No exact match found - have to use full processing
+            # Process each venue that needs updating through the scraper
+            Logger.info("🔄 Processing venue with scraper: #{venue_name}")
+            result = Scraper.process_single_venue(venue_data, source_id)
+
+            # Extract the venue from the result format
+            case result do
+              [ok: venue] -> venue
+              _ -> nil
+            end
+        end
+
+        # Return in the expected format - [ok: venue]
+        if existing_venue do
+          Logger.info("✅ Successfully processed venue: #{venue_data["name"]}")
+          [ok: existing_venue]
+        else
+          Logger.error("❌ Failed to process venue: #{venue_data["name"]}")
+          nil
+        end
       rescue
         e ->
           Logger.error("❌ Error processing venue #{venue_data["name"]}: #{inspect(e)}")
@@ -295,6 +320,14 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
       end
     end)
   end
+
+  # Helper to find venue by name and address directly in the database
+  defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: v.name == ^name and v.address == ^address,
+      limit: 1)
+  end
+  defp find_venue_by_name_and_address(_, _), do: nil
 
   # Extract day of week from venue data, with fallback to parsing time_text
   defp extract_day_of_week(venue) do

@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{Event, EventStore, EventSource}
+  alias TriviaAdvisor.Services.GooglePlaceImageStore
 
   @base_url "https://inquizition.com/find-a-quiz/"
   @standard_fee_text "£2.50" # Standard fee for all Inquizition quizzes
@@ -160,7 +161,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
               # No venue with this name exists yet
               venue_attrs
 
-            venues when length(venues) > 0 ->
+            venues when venues != [] ->
               # Add a unique suffix to avoid ambiguity
               Logger.info("🔍 Avoiding duplicate name '#{venue_attrs.name}' - adding suffix")
               %{venue_attrs | name: "#{venue_attrs.name} (#{venue_attrs.address})"}
@@ -184,6 +185,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     case VenueStore.process_venue(venue_attrs) do
       {:ok, venue} ->
         Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+        # Add this explicitly in the detail job - this is where image processing should happen
+        # Get venue images using the Google Places API if needed
+        venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
         # Get fee from venue_data or use standard
         fee_text = venue_data["entry_fee"] || @standard_fee_text

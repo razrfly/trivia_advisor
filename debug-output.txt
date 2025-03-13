@@ -1,0 +1,18 @@
+Fetching venue data...
+Found 118 venues
+
+Fetching existing event sources...
+Found 123 existing event sources
+
+Testing venue skipping logic:
+Skip threshold (days): 5
+Cutoff date: 2025-03-08T09:40:31.676427Z
+
+Venue processing summary:
+Total venues: 118
+To process: 0
+To skip: 0
+
+Sample venues to PROCESS:
+
+Sample venues to SKIP:
