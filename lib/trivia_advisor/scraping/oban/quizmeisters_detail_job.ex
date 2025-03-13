@@ -404,7 +404,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       # Handle unexpected tuple structure (this is the fix for the badkey error)
       {:ok, {:ok, event}} when is_map(event) ->
         Logger.warning("⚠️ Received nested OK tuple, unwrapping event")
-        process_event_with_performer(venue, event_data, source_id, performer_id)
+        {:ok, %{venue: venue, event: event}}
 
       # Any other variation of success result
       {:ok, unexpected} ->
