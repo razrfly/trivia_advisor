@@ -5,10 +5,7 @@ defmodule TriviaAdvisor.Debug.Helpers do
   """
 
   require Logger
-  import Ecto.Query
   alias TriviaAdvisor.Repo
-  alias TriviaAdvisor.Locations.Venue
-  alias TriviaAdvisor.Events.{Event, EventSource}
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionIndexJob
