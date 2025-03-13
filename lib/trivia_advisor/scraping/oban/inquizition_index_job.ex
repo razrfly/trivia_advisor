@@ -23,10 +23,12 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
     # Get the Inquizition source
     source = Repo.get_by!(Source, name: "inquizition")
+    Logger.debug("📊 Found source: #{inspect(source)}")
 
     # First, pre-fetch all existing event sources for comparison
     # This lets us determine which venues to skip before any expensive processing
     existing_sources_by_venue = load_existing_sources(source.id)
+    Logger.debug("📊 Loaded #{map_size(existing_sources_by_venue)} existing sources")
 
     # Call the scraper to get all raw venue data (without processing)
     case try_fetch_venues() do
@@ -34,6 +36,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         # Count total venues found
         total_venues = length(raw_venues)
         Logger.info("📊 Found #{total_venues} total raw venues")
+        Logger.debug("📊 Raw venues: #{inspect(raw_venues)}")
 
         # Limit venues if needed (for testing)
         venues_to_process = if limit, do: Enum.take(raw_venues, limit), else: raw_venues
@@ -54,6 +57,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         skipped_count = length(to_skip)
 
         Logger.info("🧮 After filtering: Processing #{processed_count} venues, skipping #{skipped_count} venues")
+        Logger.debug("📊 Venues to process: #{inspect(to_process)}")
 
         # Log which venues are being skipped
         Enum.each(to_skip, fn venue_data ->
@@ -90,11 +94,20 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
         # Use the RateLimiter to schedule detail jobs with delay
         Logger.info("🔄 Scheduling jobs for #{length(processed_venues)} venues...")
+
+        # Log each venue being scheduled
+        Enum.each(processed_venues, fn [ok: %{venue: venue}] ->
+          Logger.debug("🔄 Will schedule detail job for: #{venue.name}")
+        end)
+
+        Logger.debug("🔄 Calling RateLimiter.schedule_jobs_with_delay with #{length(processed_venues)} venues")
+
         enqueued_count = RateLimiter.schedule_jobs_with_delay(
           processed_venues,
-          fn [ok: venue], _index, scheduled_in ->  # Match [ok: venue] format directly
-            # Extract time_text from venue or use empty string as default
-            time_text = Map.get(venue, :time_text) || ""
+          fn [ok: %{venue: venue, extra_data: extra_data}], index, scheduled_in ->
+            # Extract time_text from extra_data
+            time_text = Map.get(extra_data, :time_text) || ""
+            Logger.debug("🔄 Building venue data for job #{index} - #{venue.name}")
 
             # Extract day_of_week and start_time from venue or time_text
             {day_of_week, start_time} = {
@@ -122,9 +135,14 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
               "source_url" => generate_source_url(venue)
             }
 
+            Logger.debug("🔄 Created venue_data for job: #{inspect(venue_data)}")
+
             # Create the job with the scheduled_in parameter
-            %{venue_data: venue_data}
-            |> InquizitionDetailJob.new(schedule_in: scheduled_in)
+            job = %{venue_data: venue_data}
+              |> InquizitionDetailJob.new(schedule_in: scheduled_in)
+
+            Logger.debug("🔄 Created job for venue #{venue.name} to run in #{scheduled_in} seconds")
+            job
           end
         )
 
@@ -218,29 +236,34 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     # Get the last time this venue was seen (if ever)
     last_seen_at = Map.get(existing_sources_by_venue, venue_key)
 
-    if last_seen_at do
-      # Venue exists - check if it was processed recently
-      days_ago = RateLimiter.skip_if_updated_within_days()
-      Logger.debug("🔍 Skip threshold is #{days_ago} days - venue '#{name}'")
+    # TEMPORARY: Force processing for testing
+    Logger.info("🧪 TESTING MODE: Forcing venue processing for #{name}")
+    true
 
-      cutoff_date = DateTime.add(DateTime.utc_now(), -days_ago * 24 * 60 * 60, :second)
+    # Comment out the normal logic for testing
+    # if last_seen_at do
+    #   # Venue exists - check if it was processed recently
+    #   days_ago = RateLimiter.skip_if_updated_within_days()
+    #   Logger.debug("🔍 Skip threshold is #{days_ago} days - venue '#{name}'")
 
-      # Only process if last_seen_at is older than the cutoff date
-      case DateTime.compare(last_seen_at, cutoff_date) do
-        :lt ->
-          # Venue was last seen before cutoff date - should process
-          Logger.info("🔄 Will process venue '#{name}' - last seen #{DateTime.to_iso8601(last_seen_at)}")
-          true
-        _ ->
-          # Venue was seen recently - skip
-          Logger.info("⏩ Will skip venue '#{name}' - recently seen on #{DateTime.to_iso8601(last_seen_at)}")
-          false
-      end
-    else
-      # Venue has never been seen - should process
-      Logger.info("🆕 Will process new venue '#{name}'")
-      true
-    end
+    #   cutoff_date = DateTime.add(DateTime.utc_now(), -days_ago * 24 * 60 * 60, :second)
+
+    #   # Only process if last_seen_at is older than the cutoff date
+    #   case DateTime.compare(last_seen_at, cutoff_date) do
+    #     :lt ->
+    #       # Venue was last seen before cutoff date - should process
+    #       Logger.info("🔄 Will process venue '#{name}' - last seen #{DateTime.to_iso8601(last_seen_at)}")
+    #       true
+    #     _ ->
+    #       # Venue was seen recently - skip
+    #       Logger.info("⏩ Will skip venue '#{name}' - recently seen on #{DateTime.to_iso8601(last_seen_at)}")
+    #       false
+    #   end
+    # else
+    #   # Venue has never been seen - should process
+    #   Logger.info("🆕 Will process new venue '#{name}'")
+    #   true
+    # end
   end
 
   # Generate a consistent key for venue lookup based on name + address
@@ -275,49 +298,70 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   end
 
   # Process a list of venues that need updating
-  defp process_venues(venues_to_process, source_id) do
-    Enum.map(venues_to_process, fn venue_data ->
+  defp process_venues(venues_to_process, _source_id) do
+    Logger.info("📊 Starting process_venues with #{length(venues_to_process)} venues to process")
+    Logger.debug("📊 Venues to process details: #{inspect(venues_to_process)}")
+
+    # We don't need the source in this function currently
+
+    results = Enum.map(venues_to_process, fn venue_data ->
       try do
         # First try to find existing venue directly in the database without triggering any Google lookups
         venue_name = venue_data["name"]
         venue_address = venue_data["address"]
+        time_text = venue_data["time_text"] || ""
+        phone = venue_data["phone"]
+        website = venue_data["website"]
+
+        Logger.info("🔍 Looking up venue '#{venue_name}' in the database")
+        Logger.debug("🔍 Full venue data: #{inspect(venue_data)}")
 
         case find_venue_by_name_and_address(venue_name, venue_address) do
-          %{id: id} = _venue when not is_nil(id) ->
+          %{id: id} = existing_venue when not is_nil(id) ->
             # Found exact venue - use it directly without calling process_venue
             Logger.info("✅ Using existing venue directly: #{venue_name}")
-            # Return nil instead of [ok: venue] so this won't be scheduled for detail processing
-            Logger.info("⏩ Skipping detail job for existing venue: #{venue_name}")
-            nil
+            Logger.debug("✅ Existing venue details: #{inspect(existing_venue)}")
+            # Return the venue and additional data to schedule a detail job for updating
+            [ok: %{venue: existing_venue, extra_data: %{time_text: time_text}}]
 
           nil ->
-            # No exact match found - have to use full processing
-            # Process each venue that needs updating through the scraper
-            Logger.info("🔄 Processing venue with scraper: #{venue_name}")
-            result = Scraper.process_single_venue(venue_data, source_id)
+            # No exact match found - just prepare data for the detail job to process
+            # We don't want to do Google lookups here in the index job
+            Logger.info("🆕 Preparing new venue for detail job: #{venue_name}")
 
-            # Extract the venue from the result format
-            case result do
-              [ok: venue] ->
-                # Return the processed venue in the expected format for detail job scheduling
-                Logger.info("✅ Successfully processed venue: #{venue_data["name"]}")
-                [ok: venue]
-              _ ->
-                Logger.error("❌ Failed to process venue: #{venue_data["name"]}")
-                nil
-            end
+            # Create a bare venue struct with just the basic info
+            venue = %Venue{
+              name: venue_name,
+              address: venue_address,
+              phone: phone,
+              website: website
+            }
+
+            Logger.debug("🆕 New venue struct: #{inspect(venue)}")
+
+            # Return the venue with the time_text as extra data
+            [ok: %{venue: venue, extra_data: %{time_text: time_text}}]
         end
       rescue
         e ->
           Logger.error("❌ Error processing venue #{venue_data["name"]}: #{inspect(e)}")
+          Logger.error("❌ Stack trace: #{Exception.format_stacktrace(__STACKTRACE__)}")
           {:error, "Processing error: #{Exception.message(e)}"}
       catch
         kind, reason ->
           Logger.error("❌ Caught #{kind} processing venue #{venue_data["name"]}: #{inspect(reason)}")
+          Logger.error("❌ Stack trace: #{Exception.format_stacktrace(__STACKTRACE__)}")
           {:error, "Caught #{kind}: #{inspect(reason)}"}
       end
     end)
-    |> Enum.filter(fn result -> result != nil end)  # Filter out nil results
+
+    Logger.debug("📊 Raw results from processing: #{inspect(results)}")
+
+    filtered_results = Enum.filter(results, fn result -> result != nil end)
+    Logger.info("📊 Finished process_venues with #{length(filtered_results)} venues passing through filter")
+    Logger.debug("📊 Filtered results: #{inspect(filtered_results)}")
+
+    filtered_results
   end
 
   # Helper to find venue by name and address directly in the database
