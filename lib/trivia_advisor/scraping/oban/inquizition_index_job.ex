@@ -282,11 +282,13 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         venue_name = venue_data["name"]
         venue_address = venue_data["address"]
 
-        existing_venue = case find_venue_by_name_and_address(venue_name, venue_address) do
-          %{id: id} = venue when not is_nil(id) ->
+        case find_venue_by_name_and_address(venue_name, venue_address) do
+          %{id: id} = _venue when not is_nil(id) ->
             # Found exact venue - use it directly without calling process_venue
             Logger.info("✅ Using existing venue directly: #{venue_name}")
-            venue
+            # Return nil instead of [ok: venue] so this won't be scheduled for detail processing
+            Logger.info("⏩ Skipping detail job for existing venue: #{venue_name}")
+            nil
 
           nil ->
             # No exact match found - have to use full processing
@@ -296,18 +298,14 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
             # Extract the venue from the result format
             case result do
-              [ok: venue] -> venue
-              _ -> nil
+              [ok: venue] ->
+                # Return the processed venue in the expected format for detail job scheduling
+                Logger.info("✅ Successfully processed venue: #{venue_data["name"]}")
+                [ok: venue]
+              _ ->
+                Logger.error("❌ Failed to process venue: #{venue_data["name"]}")
+                nil
             end
-        end
-
-        # Return in the expected format - [ok: venue]
-        if existing_venue do
-          Logger.info("✅ Successfully processed venue: #{venue_data["name"]}")
-          [ok: existing_venue]
-        else
-          Logger.error("❌ Failed to process venue: #{venue_data["name"]}")
-          nil
         end
       rescue
         e ->
@@ -319,6 +317,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           {:error, "Caught #{kind}: #{inspect(reason)}"}
       end
     end)
+    |> Enum.filter(fn result -> result != nil end)  # Filter out nil results
   end
 
   # Helper to find venue by name and address directly in the database
