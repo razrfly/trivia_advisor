@@ -250,9 +250,6 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     venue_name = venue["name"]
     venue_address = venue["address"]
 
-    # Add extra debugging for all venues, not just problematic ones
-    Logger.debug("🧪 Checking venue: #{venue_name} at #{venue_address}")
-
     # Extract postcode for direct DB lookup
     postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, venue_address) do
       [matched_postcode] -> String.trim(matched_postcode)
@@ -275,26 +272,12 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         # If not found in database, proceed with regular check based on last_seen_at
         venue_key = generate_venue_key(venue_name, venue_address)
 
-        # Add extra logging for problematic venues we're tracking
-        problematic_venues = ["The White Horse", "The Mitre", "The Railway", "The Bull"]
-        is_problematic = venue_name in problematic_venues or Enum.any?(problematic_venues, fn prefix ->
-          String.starts_with?(venue_name, prefix)
-        end)
-
-        if is_problematic do
-          Logger.debug("🔍 Checking problematic venue: #{venue_name} at #{venue_address}")
-          Logger.debug("🔑 Venue key: #{venue_key}")
-          Logger.debug("🗂️ Keys in existing_sources_by_venue: #{inspect(Map.keys(existing_sources_by_venue) |> Enum.filter(fn k -> String.contains?(k, String.downcase(venue_name)) end))}")
-        end
-
         # Get the last_seen_at timestamp for this venue (if it exists)
         last_seen_at = Map.get(existing_sources_by_venue, venue_key)
 
         cond do
-          # One final desperate check for problematic venues - search by name
-          is_nil(last_seen_at) && is_problematic &&
-          (Repo.exists?(from v in Venue, where: v.name == ^venue_name) ||
-           Repo.exists?(from v in Venue, where: fragment("LOWER(?) LIKE LOWER(?)", v.name, ^"%#{venue_name}%"))) ->
+          # Emergency check - search by name if we have a venue with same name but different address
+          is_nil(last_seen_at) && Repo.exists?(from v in Venue, where: v.name == ^venue_name) ->
             Logger.info("⏩ Emergency skip - name match found in database: #{venue_name}")
             false
 
@@ -451,38 +434,26 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
                             nil
                           end
 
-    Logger.debug("🔍 Extracted postcode from address: #{inspect(postcode)}")
-    Logger.debug("🔍 Normalized name: #{normalized_name}, Normalized postcode: #{normalized_postcode}")
-
     # Try a series of increasingly flexible lookups:
     cond do
       # 1. Try exact name + postcode match (most specific)
       postcode && find_by_exact_name_and_postcode(name, postcode) ->
-        venue = find_by_exact_name_and_postcode(name, postcode)
-        Logger.debug("✅ Found venue by exact name + postcode: #{venue.name}, #{venue.postcode}")
-        venue
+        find_by_exact_name_and_postcode(name, postcode)
 
       # 2. Try just the postcode (very reliable for UK venues)
       postcode && find_by_exact_postcode(postcode) ->
-        venue = find_by_exact_postcode(postcode)
-        Logger.debug("✅ Found venue by exact postcode: #{venue.name}, #{venue.postcode}")
-        venue
+        find_by_exact_postcode(postcode)
 
       # 3. Try normalized postcode for flexible matching
       normalized_postcode && find_by_normalized_postcode(normalized_postcode) ->
-        venue = find_by_normalized_postcode(normalized_postcode)
-        Logger.debug("✅ Found venue by normalized postcode: #{venue.name}, #{venue.postcode}")
-        venue
+        find_by_normalized_postcode(normalized_postcode)
 
       # 4. Try normalized name + similar postcode
       normalized_postcode && find_by_normalized_name_and_similar_postcode(normalized_name, normalized_postcode) ->
-        venue = find_by_normalized_name_and_similar_postcode(normalized_name, normalized_postcode)
-        Logger.debug("✅ Found venue by normalized name + similar postcode: #{venue.name}, #{venue.postcode}")
-        venue
+        find_by_normalized_name_and_similar_postcode(normalized_name, normalized_postcode)
 
       # 5. If all postcode-based lookups fail, try the address fallback
       true ->
-        Logger.debug("⚠️ All postcode lookup strategies failed, trying address fallback")
         fallback_address_lookup(name, address)
     end
   end
@@ -526,34 +497,21 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
   # Fallback for when postcode lookup doesn't work
   defp fallback_address_lookup(name, address) do
-    Logger.debug("🔍 Trying exact address match: #{name}, #{address}")
     # First try exact match
     case Repo.one(from v in TriviaAdvisor.Locations.Venue,
           where: v.name == ^name and v.address == ^address,
           limit: 1) do
       nil ->
         # If no exact match, normalize and try more flexible matching
-        Logger.debug("⚠️ Exact address match failed, trying flexible match")
         normalized_name = name |> String.downcase() |> String.trim()
         normalized_address = address |> String.downcase() |> String.trim() |> String.replace(~r/\s+/, " ")
 
         # Try a fuzzy match with both name and address patterns
-        Logger.debug("🔍 Trying flexible match with normalized values")
-        venue = Repo.one(from v in TriviaAdvisor.Locations.Venue,
+        Repo.one(from v in TriviaAdvisor.Locations.Venue,
           where: fragment("LOWER(?) LIKE ?", v.name, ^"#{normalized_name}%") and
                  fragment("LOWER(?) LIKE ?", v.address, ^"%#{normalized_address}%"),
           limit: 1)
-
-        if venue do
-          Logger.debug("✅ Found venue with flexible match: #{venue.name}, #{venue.address}")
-        else
-          Logger.debug("❌ No venue found with any matching strategy")
-        end
-
-        venue
-      venue ->
-        Logger.debug("✅ Found venue with exact address match: #{venue.name}, #{venue.address}")
-        venue
+      venue -> venue
     end
   end
 

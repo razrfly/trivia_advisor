@@ -2,6 +2,7 @@ require Logger
 alias TriviaAdvisor.Scraping.Oban.InquizitionIndexJob
 alias TriviaAdvisor.Scraping.Source
 alias TriviaAdvisor.Repo
+alias TriviaAdvisor.Debug.Helpers
 
 Logger.info("🚀 Running full job verification test...")
 
@@ -12,7 +13,7 @@ Logger.info("📊 Found source: #{inspect(source)}")
 # Run the job
 Logger.info("🔄 Running job...")
 {time, {:ok, result}} = :timer.tc(fn ->
-  InquizitionIndexJob.perform(%Oban.Job{args: %{}, id: 999999})
+  Helpers.run_inquizition_job()
 end)
 
 # Log results

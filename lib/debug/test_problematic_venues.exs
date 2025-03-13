@@ -4,6 +4,7 @@ alias TriviaAdvisor.Scraping.Source
 alias TriviaAdvisor.Repo
 alias TriviaAdvisor.Locations.Venue
 alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
+alias TriviaAdvisor.Debug.Helpers
 
 IO.puts("\n=== DETAILED VENUE PROCESSING TEST ===\n")
 
@@ -19,7 +20,7 @@ problematic_venues = [
 
 # Get source for testing
 source = Repo.get_by!(Source, name: "inquizition")
-existing_sources_by_venue = InquizitionIndexJob.test_load_existing_sources(source.id)
+existing_sources_by_venue = Helpers.load_inquizition_sources(source.id)
 
 IO.puts("Number of existing sources: #{map_size(existing_sources_by_venue)}")
 
@@ -30,7 +31,7 @@ venues_that_would_be_processed = []
 for venue_data <- problematic_venues do
   name = venue_data["name"]
   address = venue_data["address"]
-  should_process = InquizitionIndexJob.test_should_process_venue?(venue_data, existing_sources_by_venue)
+  should_process = Helpers.should_process_inquizition_venue?(venue_data, existing_sources_by_venue)
 
   # Extract postcode for direct validation
   postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, address) do
@@ -55,7 +56,7 @@ for venue_data <- problematic_venues do
   IO.puts("  Venue with this name exists? #{name_exists}")
 
   # Check if venue is in existing_sources_by_venue
-  venue_key = InquizitionIndexJob.test_venue_key(name, address)
+  venue_key = Helpers.generate_inquizition_venue_key(name, address)
   has_source = Map.has_key?(existing_sources_by_venue, venue_key)
   IO.puts("  Has source in map? #{has_source}")
   if has_source do
@@ -64,7 +65,7 @@ for venue_data <- problematic_venues do
   end
 
   # Check database lookup function directly
-  case InquizitionIndexJob.test_find_venue(name, address) do
+  case Helpers.find_inquizition_venue(name, address) do
     {:ok, venue} ->
       IO.puts("  ✅ Found venue in database: #{venue.name} (ID: #{venue.id}) with postcode #{venue.postcode}")
     {:error, _} ->
@@ -104,7 +105,7 @@ end)
 IO.puts("\n=== MANUAL PROCESSING TEST ===\n")
 {to_process, to_skip} = matching_venues
   |> Enum.split_with(fn venue_data ->
-    InquizitionIndexJob.test_should_process_venue?(venue_data, existing_sources_by_venue)
+    Helpers.should_process_inquizition_venue?(venue_data, existing_sources_by_venue)
   end)
 
 IO.puts("Venues that WOULD BE processed (#{length(to_process)}):")
@@ -117,7 +118,7 @@ Enum.each(to_skip, fn v -> IO.puts("- #{v["name"]} at #{v["address"]}") end)
 IO.puts("\n=== RUNNING FULL JOB (limited to problematic venues) ===\n")
 Enum.each(matching_venues, fn venue ->
   IO.puts("Checking venue: #{venue["name"]} at #{venue["address"]}")
-  should_process = InquizitionIndexJob.test_should_process_venue?(venue, existing_sources_by_venue)
+  should_process = Helpers.should_process_inquizition_venue?(venue, existing_sources_by_venue)
   IO.puts("   Should process: #{should_process}")
 end)
 
@@ -125,10 +126,10 @@ end)
 defmodule TestHelpers do
   def extract_actual_venues_being_processed(venues) do
     source = Repo.get_by!(Source, name: "inquizition")
-    existing_sources = InquizitionIndexJob.test_load_existing_sources(source.id)
+    existing_sources = Helpers.load_inquizition_sources(source.id)
 
     Enum.filter(venues, fn venue ->
-      InquizitionIndexJob.test_should_process_venue?(venue, existing_sources)
+      Helpers.should_process_inquizition_venue?(venue, existing_sources)
     end)
   end
 end
