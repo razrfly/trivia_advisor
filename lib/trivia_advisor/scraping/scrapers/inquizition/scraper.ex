@@ -4,6 +4,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.{Events, Repo, Scraping}
   alias TriviaAdvisor.Services.GooglePlaceImageStore
+  import Ecto.Query
 
   @base_url "https://inquizition.com"
   @find_quiz_url "#{@base_url}/find-a-quiz/"
@@ -225,55 +226,86 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
         website: website
       }
 
-      # Try to find or create venue
-      case VenueStore.process_venue(store_data) do
-        {:ok, venue} ->
-          Logger.info("✅ Successfully processed venue: #{venue.name}")
+      # HANDLE PROBLEMATIC VENUES: Skip "The Railway" to avoid the duplicate error
+      if store_data.name == "The Railway" do
+        # Check if this exact venue exists (name AND address)
+        venue = find_venue_by_name_and_address(store_data.name, store_data.address)
 
-          # Check if we should fetch Google Place images using the centralized function
-          venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
-
-          # Get source from seeds
-          source = Repo.get_by!(Scraping.Source, name: "inquizition")
-
-          # Create or update event
-          case Events.find_or_create_event(%{
-            name: "Inquizition Quiz at #{venue.name}",
-            venue_id: venue.id,
-            day_of_week: parsed_time.day_of_week,
-            start_time: parsed_time.start_time,
-            frequency: parsed_time.frequency,
-            entry_fee_cents: 250, # Standard £2.50 fee
-            description: time_text
-          }) do
-            {:ok, event} ->
-              source_url = "#{@find_quiz_url}##{venue.id}"
-              event_source_attrs = %{
-                event_id: event.id,
-                source_id: source.id,
-                source_url: source_url,
-                metadata: %{
-                  "description" => time_text,
-                  "time_text" => time_text
-                }
-              }
-
-              case Events.create_event_source(event_source_attrs) do
-                {:ok, _event_source} -> [ok: venue]
-                error ->
-                  Logger.error("Failed to create event source: #{inspect(error)}")
-                  nil
-              end
-
-            error ->
-              Logger.error("Failed to create event: #{inspect(error)}")
-              nil
-          end
-
-        error ->
-          Logger.error("❌ Failed to process venue: #{inspect(error)}")
+        if venue do
+          # Found exact match - use it directly
+          Logger.info("✅ Using existing venue '#{venue.name}' with address '#{venue.address}'")
+          process_venue_and_create_event(venue, parsed_time, time_text)
+        else
+          # Handle case where multiple venues with same name exist
+          # This is the problematic case that causes the error
+          Logger.info("⚠️ Skipping duplicate name venue '#{store_data.name}' to avoid errors")
           nil
+        end
+      else
+        # For all other venues, use the normal process
+        # Try to find or create venue
+        case VenueStore.process_venue(store_data) do
+          {:ok, venue} ->
+            process_venue_and_create_event(venue, parsed_time, time_text)
+
+          error ->
+            Logger.error("❌ Failed to process venue: #{inspect(error)}")
+            nil
+        end
       end
+    end
+  end
+
+  # Helper to find venue by name and address
+  defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: v.name == ^name and v.address == ^address,
+      limit: 1)
+  end
+  defp find_venue_by_name_and_address(_, _), do: nil
+
+  # Extract the venue and event creation logic into a separate function
+  defp process_venue_and_create_event(venue, parsed_time, time_text) do
+    Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+    # Check if we should fetch Google Place images using the centralized function
+    venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
+
+    # Get source from seeds
+    source = Repo.get_by!(Scraping.Source, name: "inquizition")
+
+    # Create or update event
+    case Events.find_or_create_event(%{
+      name: "Inquizition Quiz at #{venue.name}",
+      venue_id: venue.id,
+      day_of_week: parsed_time.day_of_week,
+      start_time: parsed_time.start_time,
+      frequency: parsed_time.frequency,
+      entry_fee_cents: 250, # Standard £2.50 fee
+      description: time_text
+    }) do
+      {:ok, event} ->
+        source_url = "#{@find_quiz_url}##{venue.id}"
+        event_source_attrs = %{
+          event_id: event.id,
+          source_id: source.id,
+          source_url: source_url,
+          metadata: %{
+            "description" => time_text,
+            "time_text" => time_text
+          }
+        }
+
+        case Events.create_event_source(event_source_attrs) do
+          {:ok, _event_source} -> [ok: venue]
+          error ->
+            Logger.error("Failed to create event source: #{inspect(error)}")
+            nil
+        end
+
+      error ->
+        Logger.error("Failed to create event: #{inspect(error)}")
+        nil
     end
   end
 
