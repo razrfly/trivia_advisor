@@ -33,12 +33,12 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     # Call the scraper to get all raw venue data (without processing)
     case try_fetch_venues() do
       {:ok, raw_venues} ->
-        # Count total venues found
+    # Count total venues found
         total_venues = length(raw_venues)
         Logger.info("📊 Found #{total_venues} total raw venues")
         Logger.debug("📊 Raw venues: #{inspect(raw_venues)}")
 
-        # Limit venues if needed (for testing)
+    # Limit venues if needed (for testing)
         venues_to_process = if limit, do: Enum.take(raw_venues, limit), else: raw_venues
         limited_count = length(venues_to_process)
 
@@ -115,31 +115,31 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
               Map.get(venue, :start_time) || extract_start_time(%{time_text: time_text})
             }
 
-            # Build venue data for the detail job
-            venue_data = %{
-              "name" => venue.name,
-              "address" => venue.address,
-              "phone" => venue.phone,
-              "website" => venue.website,
-              "source_id" => source.id,
-              "time_text" => time_text,
-              "day_of_week" => day_of_week,
-              "start_time" => start_time,
-              "frequency" => Map.get(venue, :frequency) || "weekly",
-              "entry_fee" => Map.get(venue, :entry_fee) || "2.50",
-              "description" => Map.get(venue, :description),
-              "hero_image" => Map.get(venue, :hero_image),
-              "hero_image_url" => Map.get(venue, :hero_image_url),
-              "facebook" => Map.get(venue, :facebook),
-              "instagram" => Map.get(venue, :instagram),
+        # Build venue data for the detail job
+        venue_data = %{
+          "name" => venue.name,
+          "address" => venue.address,
+          "phone" => venue.phone,
+          "website" => venue.website,
+          "source_id" => source.id,
+          "time_text" => time_text,
+          "day_of_week" => day_of_week,
+          "start_time" => start_time,
+          "frequency" => Map.get(venue, :frequency) || "weekly",
+          "entry_fee" => Map.get(venue, :entry_fee) || "2.50",
+          "description" => Map.get(venue, :description),
+          "hero_image" => Map.get(venue, :hero_image),
+          "hero_image_url" => Map.get(venue, :hero_image_url),
+          "facebook" => Map.get(venue, :facebook),
+          "instagram" => Map.get(venue, :instagram),
               "source_url" => generate_source_url(venue)
-            }
+        }
 
             Logger.debug("🔄 Created venue_data for job: #{inspect(venue_data)}")
 
-            # Create the job with the scheduled_in parameter
+        # Create the job with the scheduled_in parameter
             job = %{venue_data: venue_data}
-              |> InquizitionDetailJob.new(schedule_in: scheduled_in)
+        |> InquizitionDetailJob.new(schedule_in: scheduled_in)
 
             Logger.debug("🔄 Created job for venue #{venue.name} to run in #{scheduled_in} seconds")
 
@@ -147,10 +147,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
             Logger.debug("🔄 Job structure: #{inspect(job)}")
 
             job
-          end
-        )
+      end
+    )
 
-        Logger.info("📥 Enqueued #{enqueued_count} Inquizition detail jobs with rate limiting")
+    Logger.info("📥 Enqueued #{enqueued_count} Inquizition detail jobs with rate limiting")
 
         # Create metadata for reporting
         metadata = %{
@@ -169,8 +169,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           set: [meta: metadata]
         )
 
-        {:ok, %{
-          venue_count: total_venues,
+    {:ok, %{
+      venue_count: total_venues,
           enqueued_jobs: enqueued_count,
           skipped_venues: skipped_count
         }}
@@ -209,8 +209,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
   # Load existing event sources for comparison, keyed by normalized venue name + address
   defp load_existing_sources(source_id) do
-    # Find all EventSources for this source
-    query = from es in EventSource,
+    # Find all EventSources for this source - this captures venues that have been fully processed
+    event_sources = from(es in EventSource,
       join: e in Event, on: es.event_id == e.id,
       join: v in Venue, on: e.venue_id == v.id,
       where: es.source_id == ^source_id,
@@ -218,42 +218,108 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         v.name,
         v.address,
         es.last_seen_at
-      }
+      })
+      |> Repo.all()
+      |> Enum.reduce(%{}, fn {name, address, last_seen_at}, acc ->
+        key = generate_venue_key(name, address)
+        Map.put(acc, key, last_seen_at)
+      end)
 
-    # Group by name + address
-    Repo.all(query)
-    |> Enum.reduce(%{}, fn {name, address, last_seen_at}, acc ->
-      key = generate_venue_key(name, address)
-      Map.put(acc, key, last_seen_at)
-    end)
+    # Also find all existing venues in the database, even if they don't have events yet
+    # This prevents re-processing venues that exist but don't yet have events
+    existing_venues = from(v in Venue,
+      where: not is_nil(v.postcode), # Focus on venues with postcodes
+      select: {v.name, v.address})
+      |> Repo.all()
+      |> Enum.reduce(event_sources, fn {name, address}, acc ->
+        key = generate_venue_key(name, address)
+        # If this venue doesn't have an event source record yet, add it with a recent timestamp
+        # to prevent it from being processed again
+        if not Map.has_key?(acc, key) do
+          Map.put(acc, key, DateTime.utc_now())
+        else
+          acc
+        end
+      end)
+
+    existing_venues
   end
 
   # Check if a venue should be processed based on its last seen date
   defp should_process_venue?(venue, existing_sources_by_venue) do
-    # Get the venue key (name + address) for lookup
-    venue_key = generate_venue_key(venue["name"], venue["address"])
+    venue_name = venue["name"]
+    venue_address = venue["address"]
 
-    # Get the last_seen_at timestamp for this venue (if it exists)
-    last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+    # Add extra debugging for all venues, not just problematic ones
+    Logger.debug("🧪 Checking venue: #{venue_name} at #{venue_address}")
 
-    if is_nil(last_seen_at) do
-      # Venue not seen before, should process
-      Logger.info("🆕 New venue not seen before: #{venue["name"]}")
-      true
+    # Extract postcode for direct DB lookup
+    postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, venue_address) do
+      [matched_postcode] -> String.trim(matched_postcode)
+      nil -> nil
+    end
+
+    # If we find a venue with this postcode, immediately skip it
+    if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
+      Logger.info("⏩ Skipping venue - postcode #{postcode} already exists in database: #{venue_name}")
+      false
     else
-      # Calculate cutoff date (5 days ago)
-      cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+      # No postcode match, so try comprehensive DB lookup
+      existing_venue = find_venue_by_name_and_address(venue_name, venue_address)
 
-      # Compare last_seen_at with cutoff date
-      case DateTime.compare(last_seen_at, cutoff_date) do
-        :lt ->
-          # Last seen before cutoff date, should process
-          Logger.info("🔄 Venue seen before cutoff date, will process: #{venue["name"]}")
-          true
-        _ ->
-          # Last seen after cutoff date, should skip
-          Logger.info("⏩ Skipping venue - recently seen: #{venue["name"]} on #{DateTime.to_iso8601(last_seen_at)}")
-          false
+      # If it exists, we should skip it
+      if existing_venue do
+        Logger.info("⏩ Skipping venue - already exists in database: #{venue_name} (ID: #{existing_venue.id})")
+        false
+      else
+        # If not found in database, proceed with regular check based on last_seen_at
+        venue_key = generate_venue_key(venue_name, venue_address)
+
+        # Add extra logging for problematic venues we're tracking
+        problematic_venues = ["The White Horse", "The Mitre", "The Railway", "The Bull"]
+        is_problematic = venue_name in problematic_venues or Enum.any?(problematic_venues, fn prefix ->
+          String.starts_with?(venue_name, prefix)
+        end)
+
+        if is_problematic do
+          Logger.debug("🔍 Checking problematic venue: #{venue_name} at #{venue_address}")
+          Logger.debug("🔑 Venue key: #{venue_key}")
+          Logger.debug("🗂️ Keys in existing_sources_by_venue: #{inspect(Map.keys(existing_sources_by_venue) |> Enum.filter(fn k -> String.contains?(k, String.downcase(venue_name)) end))}")
+        end
+
+        # Get the last_seen_at timestamp for this venue (if it exists)
+        last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+
+        cond do
+          # One final desperate check for problematic venues - search by name
+          is_nil(last_seen_at) && is_problematic &&
+          (Repo.exists?(from v in Venue, where: v.name == ^venue_name) ||
+           Repo.exists?(from v in Venue, where: fragment("LOWER(?) LIKE LOWER(?)", v.name, ^"%#{venue_name}%"))) ->
+            Logger.info("⏩ Emergency skip - name match found in database: #{venue_name}")
+            false
+
+          # Venue not seen before, should process
+          is_nil(last_seen_at) ->
+            Logger.info("🆕 New venue not seen before: #{venue_name}")
+            true
+
+          # Check if we've seen it recently
+          true ->
+            # Calculate cutoff date (5 days ago)
+            cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+
+            # Compare last_seen_at with cutoff date
+            case DateTime.compare(last_seen_at, cutoff_date) do
+              :lt ->
+                # Last seen before cutoff date, should process
+                Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
+                true
+              _ ->
+                # Last seen after cutoff date, should skip
+                Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
+                false
+            end
+        end
       end
     end
   end
@@ -363,11 +429,133 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
   # Helper to find venue by name and address directly in the database
   defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
-    Repo.one(from v in TriviaAdvisor.Locations.Venue,
-      where: v.name == ^name and v.address == ^address,
-      limit: 1)
+    # Extract postcode from address if present (UK postcode format)
+    # UK postcodes are typically at the end of the address and follow patterns like "SW6 4UL"
+    postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, address) do
+      [matched_postcode] -> String.trim(matched_postcode)
+      nil -> nil
+    end
+
+    # Normalize the name for more flexible matching
+    normalized_name = name
+                      |> String.downcase()
+                      |> String.trim()
+                      |> String.replace(~r/\s*\([^)]+\)\s*$/, "") # Remove any parenthetical suffixes
+
+    # Normalize the postcode for more robust matching
+    normalized_postcode = if postcode do
+                            postcode
+                            |> String.upcase()
+                            |> String.replace(" ", "")
+                          else
+                            nil
+                          end
+
+    Logger.debug("🔍 Extracted postcode from address: #{inspect(postcode)}")
+    Logger.debug("🔍 Normalized name: #{normalized_name}, Normalized postcode: #{normalized_postcode}")
+
+    # Try a series of increasingly flexible lookups:
+    cond do
+      # 1. Try exact name + postcode match (most specific)
+      postcode && find_by_exact_name_and_postcode(name, postcode) ->
+        venue = find_by_exact_name_and_postcode(name, postcode)
+        Logger.debug("✅ Found venue by exact name + postcode: #{venue.name}, #{venue.postcode}")
+        venue
+
+      # 2. Try just the postcode (very reliable for UK venues)
+      postcode && find_by_exact_postcode(postcode) ->
+        venue = find_by_exact_postcode(postcode)
+        Logger.debug("✅ Found venue by exact postcode: #{venue.name}, #{venue.postcode}")
+        venue
+
+      # 3. Try normalized postcode for flexible matching
+      normalized_postcode && find_by_normalized_postcode(normalized_postcode) ->
+        venue = find_by_normalized_postcode(normalized_postcode)
+        Logger.debug("✅ Found venue by normalized postcode: #{venue.name}, #{venue.postcode}")
+        venue
+
+      # 4. Try normalized name + similar postcode
+      normalized_postcode && find_by_normalized_name_and_similar_postcode(normalized_name, normalized_postcode) ->
+        venue = find_by_normalized_name_and_similar_postcode(normalized_name, normalized_postcode)
+        Logger.debug("✅ Found venue by normalized name + similar postcode: #{venue.name}, #{venue.postcode}")
+        venue
+
+      # 5. If all postcode-based lookups fail, try the address fallback
+      true ->
+        Logger.debug("⚠️ All postcode lookup strategies failed, trying address fallback")
+        fallback_address_lookup(name, address)
+    end
   end
   defp find_venue_by_name_and_address(_, _), do: nil
+
+  # Find a venue by exact name and postcode match
+  defp find_by_exact_name_and_postcode(name, postcode) do
+    Logger.debug("🔍 Attempting lookup by exact name + postcode: #{name}, #{postcode}")
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: v.name == ^name and v.postcode == ^postcode,
+      limit: 1)
+  end
+
+  # Find a venue by exact postcode
+  defp find_by_exact_postcode(postcode) do
+    Logger.debug("🔍 Attempting lookup by exact postcode: #{postcode}")
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: v.postcode == ^postcode,
+      limit: 1)
+  end
+
+  # Find a venue by normalized postcode (no spaces, uppercase)
+  defp find_by_normalized_postcode(normalized_postcode) do
+    Logger.debug("🔍 Attempting lookup by normalized postcode: #{normalized_postcode}")
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: fragment("REPLACE(UPPER(?), ' ', '')", v.postcode) == ^normalized_postcode,
+      limit: 1)
+  end
+
+  # Find a venue by normalized name and similar postcode
+  defp find_by_normalized_name_and_similar_postcode(normalized_name, normalized_postcode) do
+    Logger.debug("🔍 Attempting lookup by normalized name + similar postcode: #{normalized_name}, #{normalized_postcode}")
+    # We look for venues where:
+    # 1. The normalized name is similar (using LIKE for fuzzy matching)
+    # 2. The normalized postcode is similar (also using LIKE)
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: fragment("LOWER(?) LIKE ?", v.name, ^"%#{normalized_name}%") and
+             fragment("REPLACE(UPPER(?), ' ', '') LIKE ?", v.postcode, ^"%#{normalized_postcode}%"),
+      limit: 1)
+  end
+
+  # Fallback for when postcode lookup doesn't work
+  defp fallback_address_lookup(name, address) do
+    Logger.debug("🔍 Trying exact address match: #{name}, #{address}")
+    # First try exact match
+    case Repo.one(from v in TriviaAdvisor.Locations.Venue,
+          where: v.name == ^name and v.address == ^address,
+          limit: 1) do
+      nil ->
+        # If no exact match, normalize and try more flexible matching
+        Logger.debug("⚠️ Exact address match failed, trying flexible match")
+        normalized_name = name |> String.downcase() |> String.trim()
+        normalized_address = address |> String.downcase() |> String.trim() |> String.replace(~r/\s+/, " ")
+
+        # Try a fuzzy match with both name and address patterns
+        Logger.debug("🔍 Trying flexible match with normalized values")
+        venue = Repo.one(from v in TriviaAdvisor.Locations.Venue,
+          where: fragment("LOWER(?) LIKE ?", v.name, ^"#{normalized_name}%") and
+                 fragment("LOWER(?) LIKE ?", v.address, ^"%#{normalized_address}%"),
+          limit: 1)
+
+        if venue do
+          Logger.debug("✅ Found venue with flexible match: #{venue.name}, #{venue.address}")
+        else
+          Logger.debug("❌ No venue found with any matching strategy")
+        end
+
+        venue
+      venue ->
+        Logger.debug("✅ Found venue with exact address match: #{venue.name}, #{venue.address}")
+        venue
+    end
+  end
 
   # Extract day of week from venue data, with fallback to parsing time_text
   defp extract_day_of_week(venue) do
@@ -431,5 +619,36 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         Logger.error("❌ Unexpected result: #{inspect(other)}")
         {:error, :unexpected_result}
     end
+  end
+
+  @doc """
+  Test function to expose find_venue_by_name_and_address for tests
+  """
+  def test_find_venue(name, address) do
+    case find_venue_by_name_and_address(name, address) do
+      nil -> {:error, :not_found}
+      venue -> {:ok, venue}
+    end
+  end
+
+  @doc """
+  Test function to expose load_existing_sources for tests
+  """
+  def test_load_existing_sources(source_id) do
+    load_existing_sources(source_id)
+  end
+
+  @doc """
+  Test function to expose should_process_venue? for tests
+  """
+  def test_should_process_venue?(venue, existing_sources_by_venue) do
+    should_process_venue?(venue, existing_sources_by_venue)
+  end
+
+  @doc """
+  Test function to expose venue key generation for tests
+  """
+  def test_venue_key(name, address) do
+    generate_venue_key(name, address)
   end
 end
