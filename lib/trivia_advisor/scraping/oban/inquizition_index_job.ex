@@ -142,6 +142,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
               |> InquizitionDetailJob.new(schedule_in: scheduled_in)
 
             Logger.debug("🔄 Created job for venue #{venue.name} to run in #{scheduled_in} seconds")
+
+            # Add extra debugging to see the job structure
+            Logger.debug("🔄 Job structure: #{inspect(job)}")
+
             job
           end
         )
@@ -224,45 +228,35 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     end)
   end
 
-  # Check if we should process this venue (now works with raw venue data)
-  defp should_process_venue?(venue_data, existing_sources_by_venue) do
-    # Get name and address from the venue data
-    name = venue_data["name"]
-    address = venue_data["address"]
+  # Check if a venue should be processed based on its last seen date
+  defp should_process_venue?(venue, existing_sources_by_venue) do
+    # Get the venue key (name + address) for lookup
+    venue_key = {venue["name"], venue["address"]}
 
-    # Generate venue key for lookup
-    venue_key = generate_venue_key(name, address)
+    # Get the last_seen_at timestamp for this venue (if it exists)
+    _last_seen_at = Map.get(existing_sources_by_venue, venue_key)
 
-    # Get the last time this venue was seen (if ever)
-    last_seen_at = Map.get(existing_sources_by_venue, venue_key)
-
-    # TEMPORARY: Force processing for testing
-    Logger.info("🧪 TESTING MODE: Forcing venue processing for #{name}")
+    # TESTING MODE: Force processing for all venues
+    Logger.info("🧪 TESTING MODE: Forcing venue processing for #{venue["name"]}")
     true
 
-    # Comment out the normal logic for testing
-    # if last_seen_at do
-    #   # Venue exists - check if it was processed recently
-    #   days_ago = RateLimiter.skip_if_updated_within_days()
-    #   Logger.debug("🔍 Skip threshold is #{days_ago} days - venue '#{name}'")
-
-    #   cutoff_date = DateTime.add(DateTime.utc_now(), -days_ago * 24 * 60 * 60, :second)
-
-    #   # Only process if last_seen_at is older than the cutoff date
+    # Original logic (commented out for testing)
+    # if is_nil(last_seen_at) do
+    #   # Venue not seen before, should process
+    #   true
+    # else
+    #   # Calculate cutoff date (5 days ago)
+    #   cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+    #
+    #   # Compare last_seen_at with cutoff date
     #   case DateTime.compare(last_seen_at, cutoff_date) do
     #     :lt ->
-    #       # Venue was last seen before cutoff date - should process
-    #       Logger.info("🔄 Will process venue '#{name}' - last seen #{DateTime.to_iso8601(last_seen_at)}")
+    #       # Last seen before cutoff date, should process
     #       true
     #     _ ->
-    #       # Venue was seen recently - skip
-    #       Logger.info("⏩ Will skip venue '#{name}' - recently seen on #{DateTime.to_iso8601(last_seen_at)}")
+    #       # Last seen after cutoff date, should skip
     #       false
     #   end
-    # else
-    #   # Venue has never been seen - should process
-    #   Logger.info("🆕 Will process new venue '#{name}'")
-    #   true
     # end
   end
 
