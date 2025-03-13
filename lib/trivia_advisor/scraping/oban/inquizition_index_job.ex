@@ -260,9 +260,14 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
   # Generate a consistent key for venue lookup based on name + address
   defp generate_venue_key(name, address) do
-    normalized_name = name
-                      |> String.downcase()
+    # Remove any parenthetical suffixes from venue names (e.g. "The Railway (address)" -> "The Railway")
+    name_without_suffix = name
+                      |> String.replace(~r/\s*\([^)]+\)\s*$/, "")
                       |> String.trim()
+
+    normalized_name = name_without_suffix
+                  |> String.downcase()
+                  |> String.trim()
 
     normalized_address = address
                          |> String.downcase()
