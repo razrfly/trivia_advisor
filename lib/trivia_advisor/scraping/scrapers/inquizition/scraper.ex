@@ -3,7 +3,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.{Events, Repo, Scraping}
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
   import Ecto.Query
 
   @base_url "https://inquizition.com"
