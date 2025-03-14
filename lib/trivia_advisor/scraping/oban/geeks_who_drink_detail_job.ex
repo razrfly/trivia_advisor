@@ -5,6 +5,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
+  import Ecto.Query
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
@@ -16,17 +17,45 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   alias HtmlEntities
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}}) do
+  def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}, id: job_id}) do
     Logger.info("🔄 Processing venue: #{venue_data["title"]}")
     source = Repo.get!(Source, source_id)
 
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
       {venue, _venue_data} ->
+        # Update job metadata with success information
+        metadata = %{
+          "venue_id" => venue.id,
+          "venue_name" => venue.name,
+          "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "status" => "success"
+        }
+
+        # Direct SQL update of the job's meta column
+        Repo.update_all(
+          from(j in "oban_jobs", where: j.id == ^job_id),
+          set: [meta: metadata]
+        )
+
         Logger.info("✅ Successfully processed venue: #{venue.name}")
         {:ok, %{venue_id: venue.id}}
 
       nil ->
+        # Update job metadata with error information
+        error_metadata = %{
+          "venue_title" => venue_data["title"],
+          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+          "status" => "error",
+          "error" => "Failed to process venue"
+        }
+
+        # Direct SQL update of the job's meta column
+        Repo.update_all(
+          from(j in "oban_jobs", where: j.id == ^job_id),
+          set: [meta: error_metadata]
+        )
+
         Logger.error("❌ Failed to process venue")
         {:error, "Failed to process venue"}
     end
