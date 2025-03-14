@@ -47,11 +47,25 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
             total_venues = length(venues_to_process)
             Logger.info("📊 Found #{total_venues} venues to process from GeeksWhoDrink")
 
-            # Filter venues that were recently updated
-            {to_process, to_skip} = filter_recently_updated_venues(venues_to_process, source.id)
+            # Count venues to process and skip
+            # Use the improved filtering logic
+            {to_process, skipped_venues} = Enum.split_with(venues_to_process, fn venue ->
+              # Ensure venue is a map with string keys
+              venue_map = if is_map(venue) do
+                # Convert all keys to strings if they're not already
+                Enum.reduce(venue, %{}, fn {k, v}, acc ->
+                  key = if is_atom(k), do: Atom.to_string(k), else: k
+                  Map.put(acc, key, v)
+                end)
+              else
+                venue
+              end
+
+              should_process_venue?(venue_map, source.id)
+            end)
 
             processed_count = length(to_process)
-            skipped_count = length(to_skip)
+            skipped_count = length(skipped_venues)
 
             # Log skipped and processing counts
             Logger.info("⏩ Skipping #{skipped_count} venues updated within the last #{@skip_if_updated_within_days} days")
@@ -62,7 +76,18 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
               to_process,
               TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob,
               fn venue_data ->
-                %{venue: venue_data, source_id: source.id}
+                # Ensure venue data has string keys
+                venue_map = if is_map(venue_data) do
+                  # Convert all keys to strings if they're not already
+                  Enum.reduce(venue_data, %{}, fn {k, v}, acc ->
+                    key = if is_atom(k), do: Atom.to_string(k), else: k
+                    Map.put(acc, key, v)
+                  end)
+                else
+                  venue_data
+                end
+
+                %{venue: venue_map, source_id: source.id}
               end
             )
 
@@ -108,62 +133,73 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
     end
   end
 
-  # Filter venues that were recently updated
-  defp filter_recently_updated_venues(venues, source_id) do
-    # Group venues with their source URLs for lookup
-    venues_with_urls = Enum.map(venues, fn venue ->
-      {venue, venue["source_url"]}
-    end)
+  # Check if a venue should be processed based on its URL and last update time
+  defp should_process_venue?(venue, source_id) do
+    # Access venue data with string keys
+    url = venue["source_url"]
+    title = venue["title"] || "Unknown venue"
 
-    # Get all URLs for lookup
-    urls = Enum.map(venues_with_urls, fn {_, url} -> url end)
-
-    # Find existing event sources for these venues
-    existing_sources = from(es in EventSource,
-      where: es.source_url in ^urls and es.source_id == ^source_id,
-      select: {es.source_url, es.last_seen_at})
-      |> Repo.all()
-      |> Map.new()
-
-    # Calculate threshold date (5 days ago)
-    threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
-
-    # Split venues into process and skip lists
-    Enum.split_with(venues_with_urls, fn {venue, url} ->
-      # Get last_seen_at for this URL
-      last_seen_at = Map.get(existing_sources, url)
-
-      case last_seen_at do
-        nil ->
-          # Venue not seen before, should process
-          Logger.info("🆕 New venue not seen before: #{venue["title"]}")
+    # Handle nil or empty URLs
+    if is_nil(url) or url == "" do
+      Logger.info("🆕 New venue with no source URL, will process: #{title}")
+      true
+    else
+      # Find existing event sources with this source_url
+      case find_venues_by_source_url(url, source_id) do
+        [] ->
+          # No existing venues with this URL, should process
+          Logger.info("🆕 New venue not seen before: #{title} (#{url})")
           true
+        event_sources ->
+          # Check if any of these event sources were updated within the threshold
+          recently_processed = Enum.any?(event_sources, fn event_source ->
+            recently_updated?(event_source)
+          end)
 
-        last_seen_date ->
-          # Check if venue was seen before the threshold
-          case DateTime.compare(last_seen_date, threshold_date) do
-            :lt ->
-              # Last seen before cutoff date, should process
-              Logger.info("🔄 Venue seen before cutoff date, will process: #{venue["title"]}")
-              true
-            _ ->
-              # Last seen after cutoff date, should skip
-              Logger.info("⏩ Skipping venue - recently seen: #{venue["title"]} on #{DateTime.to_iso8601(last_seen_date)}")
-              false
+          if recently_processed do
+            # Venue was recently processed, should skip
+            source = List.first(event_sources)
+            Logger.info("⏩ Skipping venue - processed within last #{@skip_if_updated_within_days} days: #{title} (last seen: #{DateTime.to_iso8601(source.last_seen_at)})")
+            false
+          else
+            # Venue hasn't been recently processed, should process
+            source = List.first(event_sources)
+            Logger.info("🔄 Venue seen before cutoff date, will process: #{title} (last seen: #{DateTime.to_iso8601(source.last_seen_at)})")
+            true
           end
       end
-    end)
-    |> then(fn {to_process, to_skip} ->
-      # Extract just the venue data from the tuples
-      {
-        Enum.map(to_process, fn {venue, _} -> venue end),
-        Enum.map(to_skip, fn {venue, _} -> venue end)
-      }
-    end)
+    end
+  end
+
+  # Find event sources matching a URL
+  defp find_venues_by_source_url(url, source_id) do
+    # Ensure URL is not nil before querying
+    if is_nil(url) do
+      []
+    else
+      query = from es in EventSource,
+        where: es.source_url == ^url and es.source_id == ^source_id,
+        select: es
+
+      Repo.all(query)
+    end
+  end
+
+  # Check if an event source was recently updated
+  defp recently_updated?(event_source) do
+    # Calculate the threshold date
+    threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
+
+    # Compare the last_seen_at with the threshold
+    if is_nil(event_source.last_seen_at) do
+      false
+    else
+      DateTime.compare(event_source.last_seen_at, threshold_date) == :gt
+    end
   end
 
   # Reuse the venue fetching logic from the existing scraper
-  defp fetch_venues(nonce) do
+  def fetch_venues(nonce) do
     base_url = "https://www.geekswhodrink.com/wp-admin/admin-ajax.php"
     base_params = %{
       "action" => "mb_display_mapped_events",
@@ -201,13 +237,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
   end
 
   defp parse_response(body) do
-    String.split(body, "<a id=\"quizBlock-")
+    venues = String.split(body, "<a id=\"quizBlock-")
     |> Enum.drop(1) # Drop the first empty element
     |> Enum.map(fn block ->
       "<a id=\"quizBlock-" <> block
     end)
     |> Enum.map(&extract_venue_info/1)
     |> Enum.reject(&is_nil/1)
+
+    venues
   end
 
   defp extract_venue_info(block) do

@@ -3,59 +3,74 @@
 
 require Logger
 alias TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob
+alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.NonceExtractor
 
 # Configure logger to show info level and above
 Logger.configure(level: :info)
-IO.puts("\n\n====== TEST GEEKS WHO DRINK INDEX JOB ======")
-IO.puts("🧪 Starting test with limit of 15 venues ONLY")
-IO.puts("============================================\n")
+Logger.info("""
 
-# Clear all existing jobs to ensure we don't have any leftovers
-Oban.drain_queue(queue: :default, with_scheduled: true)
-IO.puts("✅ Cleared existing jobs")
+====== TEST GEEKS WHO DRINK INDEX JOB ======
+🧪 Starting test with limit of 3 venues ONLY
+============================================
+""")
 
-# Allow a moment for everything to initialize
-:timer.sleep(1000)
+# Clear any existing jobs
+{:ok, _} = TriviaAdvisor.Repo.query("DELETE FROM oban_jobs")
+Logger.info("✅ Cleared existing jobs")
 
+# Test direct fetching of venues to examine the data
+Logger.info("\n📝 Testing venue fetching...")
+
+# Get nonce first and then fetch venues
+{:ok, nonce} = NonceExtractor.fetch_nonce()
+{:ok, venues} = GeeksWhoDrinkIndexJob.fetch_venues(nonce)
+
+# Examine first 3 venues' data
+venues_to_examine = Enum.take(venues, 3)
+
+# Print venue data to debug source_url issue
+Enum.each(venues_to_examine, fn venue ->
+  Logger.info("Venue data: #{inspect(venue, pretty: true)}")
+  Logger.info("---")
+end)
+
+# Record start time
 start_time = :os.system_time(:millisecond)
 
-# Create job params with explicit limit
-job_params = %{limit: 15}
+# Create a mock job with limit 3 (smaller for easier debugging)
+Logger.info("\n📝 DIRECT METHOD: Running GeeksWhoDrinkIndexJob.perform with limit=3...\n")
 
-# METHOD 1: Direct perform call (this won't insert the job in the DB but will run it in-process)
-IO.puts("\n📝 DIRECT METHOD: Running GeeksWhoDrinkIndexJob.perform with limit=15...\n")
+# Create a properly structured Oban.Job struct that matches the pattern in perform
+job = %Oban.Job{
+  id: 999999,
+  args: %{"limit" => 3}
+}
 
-job = %Oban.Job{id: 999999, args: %{"limit" => 15}}
+# Run the job
 result = GeeksWhoDrinkIndexJob.perform(job)
 
+# Record end time and calculate duration
 end_time = :os.system_time(:millisecond)
 duration = (end_time - start_time) / 1000
 
-# Process the result
+# Report the results
 case result do
   {:ok, stats} ->
-    IO.puts("\n✅ GeeksWhoDrinkIndexJob completed in #{duration} seconds")
-    IO.puts("📊 Stats: Total venues: #{stats.venue_count}, Enqueued: #{stats.enqueued_jobs}, Skipped: #{stats.skipped_venues}")
+    Logger.info("✅ Job completed successfully in #{duration} seconds!")
+    Logger.info("📊 Stats: #{inspect(stats)}")
 
-    # Verify the limit was applied correctly
-    if stats.enqueued_jobs <= 15 do
-      IO.puts("\n========== PASS ==========")
-      IO.puts("Successfully processed #{stats.enqueued_jobs} venues with limit of 15")
+    if stats.enqueued_jobs <= 3 do
+      Logger.info("\n========== PASS ==========")
+      Logger.info("Successfully processed venues with limit of 3")
+      Logger.info("Venues processed: #{stats.enqueued_jobs}")
+      Logger.info("Venues skipped: #{stats.skipped_venues}")
     else
-      IO.puts("\n========== FAIL ==========")
-      IO.puts("ERROR: Processed #{stats.enqueued_jobs} venues when limit was 15!")
+      Logger.info("\n========== FAIL ==========")
+      Logger.info("ERROR: Processed #{stats.enqueued_jobs} venues when limit was 3!")
     end
 
-  {:error, reason} ->
-    IO.puts("❌ GeeksWhoDrinkIndexJob failed: #{inspect(reason)}")
-    IO.puts("\n========== FAIL ==========")
-    IO.puts("Job failed: #{inspect(reason)}")
+  {:error, error} ->
+    Logger.error("❌ Job failed with error: #{inspect(error)}")
 end
 
-# Don't wait for any scheduled jobs to execute
-IO.puts("\n🛑 Test complete. Not waiting for scheduled jobs to execute.")
-
-# Don't exit - we want to see details of the jobs that were scheduled
-# but we also don't want to wait for them to complete
-IO.puts("\nJobs are now scheduled but we're not going to wait for them.")
-IO.puts("Press Ctrl+C or wait for script to finish if you want to see some job results.")
+Logger.info("\n�� Test complete.")
