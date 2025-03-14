@@ -28,75 +28,50 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
       ImageDownloader.download_image("https://example.com/image.jpg", "performer")
       # => %{filename: "performer_123456.jpg", path: "/tmp/performer_123456.jpg"}
   """
-  def download_image(url, prefix \\ "image") do
-    try do
-      # Extract file extension from URL
-      file_extension = url |> Path.extname() |> String.downcase()
+  def download_image(url, prefix \\ "image") when is_binary(url) do
+    Logger.debug("📥 Downloading image from URL: #{url}")
 
-      # If no extension or unknown extension, try to detect from content-type
-      file_extension = if file_extension in [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"] do
-        file_extension
-      else
-        Logger.debug("No file extension in URL, attempting to detect from content")
-        detect_extension_from_url(url)
-      end
+    # Get temporary directory for file
+    tmp_dir = System.tmp_dir!()
 
-      # Create a temporary file path
-      temp_dir = System.tmp_dir!()
-      random_id = :crypto.strong_rand_bytes(16) |> Base.encode16()
-      temp_file = Path.join(temp_dir, "#{prefix}_#{random_id}#{file_extension}")
+    # Determine the file extension from the URL or content type
+    extension = case URI.parse(url) |> Map.get(:path) do
+      nil ->
+        Logger.debug("No path in URL, using default extension .jpg")
+        ".jpg"
+      path ->
+        ext = Path.extname(path)
+        if ext == "" do
+          Logger.debug("No extension in URL path, will try to detect from content type")
+          detect_extension_from_url(url)
+        else
+          Logger.debug("Using extension from URL path: #{ext}")
+          ext
+        end
+    end
 
-      Logger.debug("Downloading image from #{url} to #{temp_file}")
+    # Use the prefix directly if it includes a hash pattern (our consistent filenames)
+    # Otherwise generate a random filename as before
+    filename = if String.contains?(prefix, "_") do
+      "#{prefix}#{extension}"
+    else
+      hash = :crypto.strong_rand_bytes(16) |> Base.encode16()
+      "#{prefix}_#{hash}#{extension}"
+    end
 
-      # Download the image
-      case HTTPoison.get(url, [], follow_redirect: true, max_redirects: 5) do
-        {:ok, %{status_code: 200, body: body, headers: headers}} ->
-          # Check content type if we couldn't determine extension from URL
-          final_extension = if file_extension == ".jpg" do
-            case get_content_type(headers) do
-              nil -> file_extension
-              content_type ->
-                ext = extension_from_content_type(content_type)
-                if ext != file_extension do
-                  Logger.debug("Detected content type: #{content_type}, using extension: #{ext}")
-                  ext
-                else
-                  file_extension
-                end
-            end
-          else
-            file_extension
-          end
+    # Create full path for downloaded file
+    path = Path.join(tmp_dir, filename)
 
-          # Update the file path if extension changed
-          final_temp_file = if final_extension != file_extension do
-            Path.rootname(temp_file) <> final_extension
-          else
-            temp_file
-          end
+    Logger.debug("📄 Will save image to: #{path}")
 
-          # Write the file
-          File.write!(final_temp_file, body)
+    # Do the actual download
+    case download_file(url, path) do
+      {:ok, _} ->
+        Logger.debug("✅ Successfully downloaded image to #{path}")
+        %{filename: filename, path: path}
 
-          Logger.debug("Successfully wrote image to: #{final_temp_file}")
-
-          # Create a proper file struct for Waffle
-          %{
-            filename: Path.basename(final_temp_file),
-            path: final_temp_file
-          }
-
-        {:ok, %{status_code: status}} ->
-          Logger.error("Failed to download image from #{url} with status #{status}")
-          nil
-
-        {:error, error} ->
-          Logger.error("Error downloading image from #{url}: #{inspect(error)}")
-          nil
-      end
-    rescue
-      e ->
-        Logger.error("Error downloading image from #{url}: #{inspect(e)}")
+      {:error, reason} ->
+        Logger.error("❌ Failed to download image: #{inspect(reason)}")
         nil
     end
   end
@@ -139,6 +114,29 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     end
   end
 
+  # Download file from URL to specified path
+  defp download_file(url, path) do
+    try do
+      case HTTPoison.get(url, [], follow_redirect: true, max_redirects: 5) do
+        {:ok, %{status_code: 200, body: body}} ->
+          File.write!(path, body)
+          {:ok, path}
+
+        {:ok, %{status_code: status}} ->
+          Logger.error("Failed to download file from #{url}, status code: #{status}")
+          {:error, "HTTP status #{status}"}
+
+        {:error, %HTTPoison.Error{reason: reason}} ->
+          Logger.error("HTTPoison error downloading file from #{url}: #{inspect(reason)}")
+          {:error, reason}
+      end
+    rescue
+      e ->
+        Logger.error("Exception downloading file from #{url}: #{Exception.message(e)}")
+        {:error, Exception.message(e)}
+    end
+  end
+
   @doc """
   Downloads a performer profile image from a URL.
   Convenience wrapper around download_image/2 with performer-specific prefix.
@@ -150,9 +148,13 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     - A Plug.Upload struct if successful, compatible with Waffle's cast_attachments
     - `nil` if the download fails
   """
-  def download_performer_image(url) do
-    case download_image(url, "performer_image") do
-      %{filename: filename, path: path} = _downloaded ->
+  def download_performer_image(url) when is_binary(url) do
+    # Generate a deterministic filename based on the URL
+    url_hash = :crypto.hash(:md5, url) |> Base.encode16()
+    consistent_filename = "performer_image_#{url_hash}"
+
+    case download_image(url, consistent_filename) do
+      %{filename: filename, path: path} when not is_nil(path) ->
         # Create a Plug.Upload struct compatible with Waffle's cast_attachments
         content_type = case Path.extname(filename) |> String.downcase() do
           ".jpg" -> "image/jpeg"
