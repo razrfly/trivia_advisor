@@ -19,22 +19,32 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueExtractor do
         {:logo_url, extract_logo_url(document)}
       ]
 
-      missing_fields = Enum.filter(fields, fn {_name, value} -> is_nil(value) end)
+      missing_fields = Enum.filter(fields, fn {name, value} ->
+        is_nil(value) and name not in [:url, :brand]  # Allow url to be missing, we'll handle it
+      end)
 
       if Enum.empty?(missing_fields) do
         fields_map = Map.new(fields)
+        venue_id = fields_map.venue_id
+
+        # Ensure we have a valid URL - if not, construct one from the venue ID
+        url = if is_nil(fields_map.url) or fields_map.url == "" do
+          "https://www.geekswhodrink.com/venues/#{venue_id}/"
+        else
+          fields_map.url
+        end
 
         {:ok, %{
-          venue_id: fields_map.venue_id,
-          url: fields_map.url,
+          venue_id: venue_id,
+          url: url,
           title: fields_map.title,
           address: fields_map.address,
           latitude: fields_map.lat,
           longitude: fields_map.lon,
-          brand: fields_map.brand,
+          brand: fields_map.brand || "Geeks Who Drink",  # Default brand if missing
           time_text: fields_map.time_text,
           logo_url: fields_map.logo_url,
-          source_url: fields_map.url
+          source_url: url  # Set source_url to the same as url
         }}
       else
         missing = missing_fields |> Enum.map(&elem(&1, 0)) |> Enum.join(", ")
