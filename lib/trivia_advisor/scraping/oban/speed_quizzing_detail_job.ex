@@ -5,11 +5,11 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
-  import Ecto.Query
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
@@ -59,7 +59,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         processed_result = handle_processing_result(result)
 
         # Update job metadata with important details about what was processed
-        update_job_metadata(job_id, venue_data, result)
+        JobMetadata.update_detail_job(job_id, venue_data, result)
 
         processed_result
 
@@ -67,19 +67,10 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
 
         # Update job metadata with error information
-        if job_id do
-          error_metadata = %{
-            "error" => inspect(reason),
-            "event_id" => event_id,
-            "source_id" => source_id,
-            "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-          }
-
-          Repo.update_all(
-            from(j in "oban_jobs", where: j.id == ^job_id),
-            set: [meta: error_metadata]
-          )
-        end
+        JobMetadata.update_error(job_id, reason, context: %{
+          "event_id" => event_id,
+          "source_id" => source_id
+        })
 
         {:error, reason}
     end
@@ -339,50 +330,6 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
             time
         end
     end
-  end
-
-  # Update job metadata with important information about what was processed
-  defp update_job_metadata(nil, _venue_data, _result), do: :ok
-  defp update_job_metadata(job_id, venue_data, result) do
-    # Extract event from the result if available
-    event_info = case result do
-      {:ok, %{venue: _venue, event: event}} when is_map(event) ->
-        Map.take(event, [:id, :name, :day_of_week, :start_time, :frequency, :entry_fee_cents])
-      {:ok, %{event: event}} when is_map(event) ->
-        Map.take(event, [:id, :name, :day_of_week, :start_time, :frequency, :entry_fee_cents])
-      _ -> %{}
-    end
-
-    # Determine result status
-    result_status = if match?({:ok, _}, result), do: "success", else: "error"
-
-    # Create a metadata map with important info about what was processed
-    metadata = %{
-      # Basic job info
-      "event_id" => venue_data.event_id,
-      "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-
-      # Venue info
-      "venue_name" => venue_data.venue_name,
-      "venue_address" => venue_data.address,
-      "coordinates" => %{"lat" => venue_data.lat, "lng" => venue_data.lng},
-
-      # Event info
-      "day_of_week" => venue_data.day_of_week,
-      "time" => venue_data.start_time,
-      "fee" => venue_data.fee,
-      "event_url" => venue_data.event_url,
-      "result_status" => result_status,
-
-      # Additional info from the result if available
-      "event_data" => event_info
-    }
-
-    # Update the job's metadata
-    Repo.update_all(
-      from(j in "oban_jobs", where: j.id == ^job_id),
-      set: [meta: metadata]
-    )
   end
 
   # Helper to replace "Unknown" values with args values

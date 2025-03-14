@@ -5,12 +5,11 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
-  import Ecto.Query
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor
-  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
+  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers, JobMetadata}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
@@ -25,38 +24,19 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
     case process_venue(venue_data, source) do
       {venue, _venue_data} ->
         # Update job metadata with success information
-        metadata = %{
-          "venue_id" => venue.id,
-          "venue_name" => venue.name,
-          "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "status" => "success"
-        }
-
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: metadata]
-        )
+        result = {:ok, venue}
+        JobMetadata.update_detail_job(job_id, venue_data, result)
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
         {:ok, %{venue_id: venue.id}}
 
       nil ->
         # Update job metadata with error information
-        error_metadata = %{
-          "venue_title" => venue_data["title"],
-          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "status" => "error",
-          "error" => "Failed to process venue"
-        }
+        JobMetadata.update_error(job_id, "Failed to process venue", context: %{
+          "venue_title" => venue_data["title"]
+        })
 
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: error_metadata]
-        )
-
-        Logger.error("❌ Failed to process venue")
+        Logger.error("❌ Failed to process venue: #{venue_data["title"]}")
         {:error, "Failed to process venue"}
     end
   end
