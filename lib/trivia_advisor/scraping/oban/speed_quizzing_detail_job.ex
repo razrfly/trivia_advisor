@@ -5,6 +5,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
+  import Ecto.Query
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
@@ -14,11 +15,15 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
   alias TriviaAdvisor.Events.{EventStore, Performer}
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: args, id: job_id} = _job) do
     event_id = Map.get(args, "event_id")
     source_id = Map.get(args, "source_id")
     lat = Map.get(args, "lat")
     lng = Map.get(args, "lng")
+    # Get additional args that might be provided from the index job
+    args_day = Map.get(args, "day_of_week")
+    args_time = Map.get(args, "start_time")
+    args_fee = Map.get(args, "fee")
 
     Logger.info("🔄 Processing SpeedQuizzing event ID: #{event_id}")
 
@@ -35,6 +40,12 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
           venue_data
         end
 
+        # Use values from args when the extractor provides "Unknown"
+        venue_data = venue_data
+        |> maybe_replace_unknown(:day_of_week, args_day)
+        |> maybe_replace_unknown(:start_time, args_time)
+        |> maybe_replace_unknown(:fee, args_fee)
+
         # Log the venue details (reusing existing code pattern)
         log_venue_details(venue_data)
 
@@ -45,10 +56,31 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         Logger.debug("📊 Result structure: #{inspect(result)}")
 
         # Handle the result with better pattern matching
-        handle_processing_result(result)
+        processed_result = handle_processing_result(result)
+
+        # Update job metadata with important details about what was processed
+        update_job_metadata(job_id, venue_data, result)
+
+        processed_result
 
       {:error, reason} ->
         Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
+
+        # Update job metadata with error information
+        if job_id do
+          error_metadata = %{
+            "error" => inspect(reason),
+            "event_id" => event_id,
+            "source_id" => source_id,
+            "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+
+          Repo.update_all(
+            from(j in "oban_jobs", where: j.id == ^job_id),
+            set: [meta: error_metadata]
+          )
+        end
+
         {:error, reason}
     end
   end
@@ -306,6 +338,59 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
             # Can't parse, return as is
             time
         end
+    end
+  end
+
+  # Update job metadata with important information about what was processed
+  defp update_job_metadata(nil, _venue_data, _result), do: :ok
+  defp update_job_metadata(job_id, venue_data, result) do
+    # Extract event from the result if available
+    event_info = case result do
+      {:ok, %{venue: _venue, event: event}} when is_map(event) ->
+        Map.take(event, [:id, :name, :day_of_week, :start_time, :frequency, :entry_fee_cents])
+      {:ok, %{event: event}} when is_map(event) ->
+        Map.take(event, [:id, :name, :day_of_week, :start_time, :frequency, :entry_fee_cents])
+      _ -> %{}
+    end
+
+    # Determine result status
+    result_status = if match?({:ok, _}, result), do: "success", else: "error"
+
+    # Create a metadata map with important info about what was processed
+    metadata = %{
+      # Basic job info
+      "event_id" => venue_data.event_id,
+      "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+
+      # Venue info
+      "venue_name" => venue_data.venue_name,
+      "venue_address" => venue_data.address,
+      "coordinates" => %{"lat" => venue_data.lat, "lng" => venue_data.lng},
+
+      # Event info
+      "day_of_week" => venue_data.day_of_week,
+      "time" => venue_data.start_time,
+      "fee" => venue_data.fee,
+      "result_status" => result_status,
+
+      # Additional info from the result if available
+      "event_data" => event_info
+    }
+
+    # Update the job's metadata
+    Repo.update_all(
+      from(j in "oban_jobs", where: j.id == ^job_id),
+      set: [meta: metadata]
+    )
+  end
+
+  # Helper to replace "Unknown" values with args values
+  defp maybe_replace_unknown(venue_data, _key, nil), do: venue_data
+  defp maybe_replace_unknown(venue_data, key, value) do
+    if Map.get(venue_data, key) == "Unknown" do
+      Map.put(venue_data, key, value)
+    else
+      venue_data
     end
   end
 end

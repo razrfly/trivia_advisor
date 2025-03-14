@@ -49,8 +49,23 @@ defmodule TriviaAdvisor.Scraping.Oban.GoogleLookupJob do
       _ ->
         lookup_opts = [venue_name: venue_name]
 
-        # Call Google API to get location data
-        case GoogleLookup.lookup_address(address, lookup_opts) do
+        # Check if we have coordinates in the args
+        lat = args["lat"] || args["latitude"]
+        lng = args["lng"] || args["longitude"]
+
+        # Use direct coordinate lookup if coordinates are provided
+        lookup_result = if lat && lng do
+          Logger.info("🌎 Using coordinates directly: #{lat}, #{lng}")
+          # Use the new function that directly searches by coordinates
+          GoogleLookup.lookup_by_coordinates(lat, lng, [venue_name: venue_name, address: address])
+        else
+          # Fall back to address lookup
+          Logger.info("🏠 Using address lookup: #{address}")
+          GoogleLookup.lookup_address(address, lookup_opts)
+        end
+
+        # Process the lookup result
+        case lookup_result do
           {:ok, location_data} ->
             Logger.info("✅ Google API lookup successful for venue: #{venue_name}")
             Logger.info("📊 API source: #{location_data["source"] || "geocoding"}")
@@ -126,8 +141,11 @@ defmodule TriviaAdvisor.Scraping.Oban.GoogleLookupJob do
 
   # Extract coordinates from location data
   defp extract_coordinates(location_data) do
-    lat = get_in(location_data, ["location", "lat"])
-    lng = get_in(location_data, ["location", "lng"])
+    # Try both formats - old API format (lat/lng) and new API format (latitude/longitude)
+    lat = get_in(location_data, ["location", "lat"]) ||
+          get_in(location_data, ["location", "latitude"])
+    lng = get_in(location_data, ["location", "lng"]) ||
+          get_in(location_data, ["location", "longitude"])
 
     if is_nil(lat) or is_nil(lng) do
       Logger.error("Missing geocoordinates in location data: #{inspect(location_data)}")
