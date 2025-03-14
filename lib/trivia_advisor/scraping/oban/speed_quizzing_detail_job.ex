@@ -371,6 +371,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
       "day_of_week" => venue_data.day_of_week,
       "time" => venue_data.start_time,
       "fee" => venue_data.fee,
+      "event_url" => venue_data.event_url,
       "result_status" => result_status,
 
       # Additional info from the result if available
