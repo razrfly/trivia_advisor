@@ -61,10 +61,12 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         }
 
         # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: metadata]
-        )
+        if job_id do
+          Repo.update_all(
+            from(j in "oban_jobs", where: j.id == ^job_id),
+            set: [meta: metadata]
+          )
+        end
 
         Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing, skipped #{skipped_count} recent events")
 
@@ -82,10 +84,12 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         }
 
         # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: error_metadata]
-        )
+        if job_id do
+          Repo.update_all(
+            from(j in "oban_jobs", where: j.id == ^job_id),
+            set: [meta: error_metadata]
+          )
+        end
 
         # Return the error
         {:error, reason}
@@ -114,10 +118,8 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
       TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
       fn event ->
         %{
-          event_id: Map.get(event, "event_id"),
-          source_id: source_id,
-          lat: Map.get(event, "lat"),
-          lng: Map.get(event, "lon")
+          event_id: event["id"],
+          source_id: source_id
         }
       end
     )

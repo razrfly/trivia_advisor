@@ -103,11 +103,13 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
               "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
             }
 
-            # Update job metadata
-            Repo.update_all(
-              from(j in "oban_jobs", where: j.id == ^job_id),
-              set: [meta: metadata]
-            )
+            # Update job metadata only if job_id is not nil
+            if job_id do
+              Repo.update_all(
+                from(j in "oban_jobs", where: j.id == ^job_id),
+                set: [meta: metadata]
+              )
+            end
 
             {:ok, %{venue_count: total_venues, enqueued_jobs: enqueued_count, skipped_venues: skipped_count}}
 
@@ -118,10 +120,13 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
               "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
             }
 
-            Repo.update_all(
-              from(j in "oban_jobs", where: j.id == ^job_id),
-              set: [meta: error_metadata]
-            )
+            # Update job metadata only if job_id is not nil
+            if job_id do
+              Repo.update_all(
+                from(j in "oban_jobs", where: j.id == ^job_id),
+                set: [meta: error_metadata]
+              )
+            end
 
             Logger.error("❌ Failed to fetch venues: #{inspect(reason)}")
             {:error, reason}
