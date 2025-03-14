@@ -22,10 +22,16 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
 
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
-      {venue, _venue_data} ->
+      {venue, venue_data_map} ->
         # Update job metadata with success information
         result = {:ok, venue}
-        JobMetadata.update_detail_job(job_id, venue_data, result)
+
+        # Extract day_of_week and start_time from the processed data
+        metadata = venue_data
+        |> Map.put("day_of_week", Map.get(venue_data_map, :day_of_week))
+        |> Map.put("start_time", Map.get(venue_data_map, :start_time))
+
+        JobMetadata.update_detail_job(job_id, metadata, result)
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
         {:ok, %{venue_id: venue.id}}
@@ -73,7 +79,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         url: venue_data["source_url"],
         hero_image_url: venue_data["logo_url"],
         day_of_week: day_of_week,  # Add day_of_week to the map
-        frequency: :weekly  # Add default frequency key
+        frequency: :weekly,  # Add default frequency key
+        start_time: Map.get(additional_details, :start_time)
       }
 
       # Merge with additional details

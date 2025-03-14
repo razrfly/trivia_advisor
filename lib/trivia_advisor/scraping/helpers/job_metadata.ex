@@ -67,21 +67,20 @@ defmodule TriviaAdvisor.Scraping.Helpers.JobMetadata do
   def update_detail_job(job_id, venue_data, result, opts \\ [])
   def update_detail_job(nil, _venue_data, _result, _opts), do: :ok
   def update_detail_job(job_id, venue_data, result, opts) do
-    # Extract venue data as is - do minimal transformations to preserve original behavior
-    normalized_venue_data = ensure_string_keys(venue_data)
+    # Simply normalize the raw venue data
+    normalized_venue_data = normalize_keys(venue_data)
 
-    # Extract relevant data from the processing result
-    {status, _} = extract_result_data(result)
+    # Just add the status and processed_at timestamp
+    result_status = case result do
+      {:ok, _} -> "success"
+      {:error, _} -> "error"
+      _ -> "unknown"
+    end
 
-    # Base metadata that's common to all detail jobs
-    base_metadata = %{
+    metadata = Map.merge(normalized_venue_data, %{
       "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-      "result_status" => status
-    }
-
-    # Combine with venue data - but don't force any fields that weren't in the original
-    # This preserves the original behavior where some fields might be nil
-    metadata = Map.merge(base_metadata, normalized_venue_data)
+      "result_status" => result_status
+    })
 
     # Merge with any existing metadata if requested
     final_metadata = if Keyword.get(opts, :merge, false) do
@@ -143,36 +142,6 @@ defmodule TriviaAdvisor.Scraping.Helpers.JobMetadata do
   end
 
   # Private helper functions
-
-  # Ensure all keys in a map can be accessed as strings
-  # This preserves the original structure while allowing string access
-  defp ensure_string_keys(map) when is_map(map) do
-    Enum.reduce(map, map, fn {k, _v}, acc ->
-      if is_atom(k) do
-        Map.put(acc, Atom.to_string(k), Map.get(map, k))
-      else
-        acc
-      end
-    end)
-  end
-  defp ensure_string_keys(value), do: value
-
-  # Extract relevant data from the processing result
-  defp extract_result_data(result) do
-    case result do
-      # Success cases - the original behavior for successful results
-      {:ok, _any} ->
-        {"success", %{}}
-
-      # Error cases - preserve original behavior
-      {:error, reason} ->
-        {"error", %{error: reason}}
-
-      # Unexpected format - just return a basic structure
-      _ ->
-        {"unknown", %{}}
-    end
-  end
 
   # Normalize map keys to strings
   defp normalize_keys(map) when is_map(map) do

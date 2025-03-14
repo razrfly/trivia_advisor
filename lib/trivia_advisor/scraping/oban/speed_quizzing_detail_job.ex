@@ -58,8 +58,13 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         # Handle the result with better pattern matching
         processed_result = handle_processing_result(result)
 
+        # Ensure we have the day_of_week and start_time in the metadata
+        metadata = Map.new(venue_data)
+        |> Map.put("day_of_week", Map.get(venue_data, :day_of_week))
+        |> Map.put("start_time", Map.get(venue_data, :start_time))
+
         # Update job metadata with important details about what was processed
-        JobMetadata.update_detail_job(job_id, venue_data, result)
+        JobMetadata.update_detail_job(job_id, metadata, result)
 
         processed_result
 
