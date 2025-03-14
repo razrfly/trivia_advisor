@@ -71,8 +71,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
             Logger.info("⏩ Skipping #{skipped_count} venues updated within the last #{@skip_if_updated_within_days} days")
             Logger.info("🔄 Processing #{processed_count} venues that need updating")
 
-            # Enqueue detail jobs with rate limiting
-            enqueued_count = RateLimiter.schedule_detail_jobs(
+            # Enqueue detail jobs with hourly rate limiting instead of basic rate limiting
+            enqueued_count = RateLimiter.schedule_hourly_capped_jobs(
               to_process,
               TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob,
               fn venue_data ->
@@ -187,14 +187,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
 
   # Check if an event source was recently updated
   defp recently_updated?(event_source) do
-    # Calculate the threshold date
-    threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
-
-    # Compare the last_seen_at with the threshold
-    if is_nil(event_source.last_seen_at) do
-      false
-    else
-      DateTime.compare(event_source.last_seen_at, threshold_date) == :gt
+    case event_source.last_seen_at do
+      nil ->
+        # If last_seen_at is nil, consider it not recently updated
+        false
+      last_seen_at ->
+        # Calculate the threshold date
+        threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
+        # Compare the last_seen_at with the threshold
+        DateTime.compare(last_seen_at, threshold_date) == :gt
     end
   end
 

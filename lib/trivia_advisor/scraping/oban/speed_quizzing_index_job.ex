@@ -109,7 +109,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
     end
 
     # Use the RateLimiter to schedule jobs with a delay
-    enqueued_count = RateLimiter.schedule_detail_jobs(
+    enqueued_count = RateLimiter.schedule_hourly_capped_jobs(
       events_to_process,
       TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
       fn event ->

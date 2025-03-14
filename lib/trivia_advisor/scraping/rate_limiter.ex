@@ -19,7 +19,9 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
     # Job priority (lower numbers = higher priority)
     priority: 3,
     # Days threshold for skipping recently updated content
-    skip_if_updated_within_days: 5
+    skip_if_updated_within_days: 5,
+    # Maximum jobs to schedule per hour
+    max_jobs_per_hour: 50
   }
 
   @doc """
@@ -41,6 +43,11 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
   Returns the default days threshold for skipping recently updated content.
   """
   def skip_if_updated_within_days, do: @defaults.skip_if_updated_within_days
+
+  @doc """
+  Returns the maximum number of jobs to schedule per hour.
+  """
+  def max_jobs_per_hour, do: @defaults.max_jobs_per_hour
 
   @doc """
   Schedules a batch of jobs with incremental delays.
@@ -121,10 +128,78 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
       )
   """
   def schedule_detail_jobs(items, job_module, args_fn) when is_list(items) and is_function(args_fn, 1) do
-    schedule_jobs_with_delay(items, fn item, _index, _delay ->
-      # Just create the job without schedule_in
+    schedule_jobs_with_delay(items, fn item, _index, delay ->
+      # Just create the job with the calculated delay
       args = args_fn.(item)
-      job_module.new(args)
+      job_module.new(args, schedule_in: delay)
+    end)
+  end
+
+  @doc """
+  Schedules a batch of jobs distributed across hours to prevent overwhelming systems.
+
+  This function limits the number of jobs scheduled per hour according to max_jobs_per_hour.
+
+  ## Parameters
+
+  * `items` - The list of items to process (venues, events, etc.)
+  * `job_module` - The Oban job module to use (e.g., QuestionOneDetailJob)
+  * `args_fn` - Function that takes an item and returns the job args map
+
+  ## Returns
+
+  * The number of successfully scheduled jobs
+
+  ## Example
+
+      RateLimiter.schedule_hourly_capped_jobs(
+        venues,
+        QuestionOneDetailJob,
+        fn venue ->
+          %{url: venue.url, title: venue.title, source_id: source_id}
+        end
+      )
+  """
+  def schedule_hourly_capped_jobs(items, job_module, args_fn) when is_list(items) and is_function(args_fn, 1) do
+    total_items = length(items)
+    jobs_per_hour = max_jobs_per_hour()
+
+    # Calculate how many hours we need to distribute these jobs
+    hours_needed = ceil(total_items / jobs_per_hour)
+
+    Logger.info("📊 Distributing #{total_items} jobs across #{hours_needed} hours (max #{jobs_per_hour}/hour)")
+
+    Enum.with_index(items)
+    |> Enum.reduce(0, fn {item, index}, count ->
+      # Calculate which hour this job belongs in
+      hour = div(index, jobs_per_hour)
+      position_in_hour = rem(index, jobs_per_hour)
+
+      # Calculate seconds between jobs within an hour
+      seconds_per_job = floor(3600 / jobs_per_hour)
+
+      # Calculate total delay: hours + position within the hour
+      delay_seconds = (hour * 3600) + (position_in_hour * seconds_per_job)
+
+      # Generate scheduled time for logging
+      scheduled_at = DateTime.utc_now() |> DateTime.add(delay_seconds, :second)
+      scheduled_hour = DateTime.to_time(scheduled_at) |> Time.to_string() |> String.slice(0, 5)
+
+      # Create and schedule the job
+      args = args_fn.(item)
+      job = job_module.new(args, schedule_in: delay_seconds)
+
+      case Oban.insert(job) do
+        {:ok, _job} ->
+          if rem(index, 50) == 0 or index == total_items - 1 do
+            Logger.info("📋 Scheduled job #{index + 1}/#{total_items} for hour +#{hour} at #{scheduled_hour}")
+          end
+          count + 1
+
+        {:error, error} ->
+          Logger.error("❌ Failed to schedule job: #{inspect(error)}")
+          count
+      end
     end)
   end
 end
