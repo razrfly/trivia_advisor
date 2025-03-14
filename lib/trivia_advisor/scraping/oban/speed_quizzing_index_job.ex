@@ -118,8 +118,10 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
       TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
       fn event ->
         %{
-          event_id: event["id"],
-          source_id: source_id
+          event_id: Map.get(event, "event_id") || Map.get(event, "id"),
+          source_id: source_id,
+          lat: Map.get(event, "lat"),
+          lng: Map.get(event, "lon")
         }
       end
     )
@@ -129,24 +131,31 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
 
   # Check if an event should be processed based on last update time
   defp should_process_event?(event, source_id) do
-    # Get latitude and longitude
-    lat = Map.get(event, "lat")
-    lng = Map.get(event, "lon")
-
-    # If no coordinates, we should process it
-    if is_nil(lat) || is_nil(lng) || lat == "" || lng == "" do
-      true
+    # Skip events with unusable day_of_week information if we can determine it
+    day_info = Map.get(event, "day_of_week")
+    if not is_nil(day_info) and day_info == "Unknown" do
+      Logger.info("⏩ Skipping event ID #{Map.get(event, "id")} because day_of_week is Unknown")
+      false
     else
-      # Find existing venues/events near these coordinates
-      case find_events_near_coordinates(lat, lng, source_id) do
-        [] ->
-          # No existing events nearby, should process
-          true
-        events_sources ->
-          # Check if any of these events were updated within the threshold
-          not Enum.any?(events_sources, fn event_source ->
-            recently_updated?(event_source)
-          end)
+      # Get latitude and longitude
+      lat = Map.get(event, "lat")
+      lng = Map.get(event, "lon")
+
+      # If no coordinates, we should process it
+      if is_nil(lat) || is_nil(lng) || lat == "" || lng == "" do
+        true
+      else
+        # Find existing venues/events near these coordinates
+        case find_events_near_coordinates(lat, lng, source_id) do
+          [] ->
+            # No existing events nearby, should process
+            true
+          events_sources ->
+            # Check if any of these events were updated within the threshold
+            not Enum.any?(events_sources, fn event_source ->
+              recently_updated?(event_source)
+            end)
+        end
       end
     end
   end

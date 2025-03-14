@@ -152,46 +152,55 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
 
   # Extract creating event to separate function
   defp create_event_for_venue(venue, venue_data, source) do
-    # Parse day of week
-    day_of_week = case venue_data.day_of_week do
-      "Monday" -> 1
-      "Tuesday" -> 2
-      "Wednesday" -> 3
-      "Thursday" -> 4
-      "Friday" -> 5
-      "Saturday" -> 6
-      "Sunday" -> 7
-      _ -> nil
-    end
+    # If day_of_week is "Unknown", skip this event entirely
+    if venue_data.day_of_week == "Unknown" do
+      Logger.info("⏩ Skipping event for venue #{venue.name} because day_of_week is Unknown")
+      {:error, :invalid_day_of_week}
+    else
+      # Parse day of week
+      day_of_week = case venue_data.day_of_week do
+        "Monday" -> 1
+        "Tuesday" -> 2
+        "Wednesday" -> 3
+        "Thursday" -> 4
+        "Friday" -> 5
+        "Saturday" -> 6
+        "Sunday" -> 7
+        # If we reach here, it's not a valid day
+        _ ->
+          Logger.info("⏩ Skipping event for venue #{venue.name} because day_of_week '#{venue_data.day_of_week}' is invalid")
+          raise "Invalid day_of_week: #{venue_data.day_of_week}"
+      end
 
-    # Fix time format if needed - assume PM for times without AM/PM
-    start_time = format_start_time(venue_data.start_time)
+      # Fix time format if needed - assume PM for times without AM/PM
+      start_time = format_start_time(venue_data.start_time)
 
-    # Create event data
-    event_data = %{
-      raw_title: "SpeedQuizzing at #{venue.name}",
-      name: venue.name,
-      time_text: "#{venue_data.day_of_week} #{start_time}",
-      description: venue_data.description,
-      fee_text: venue_data.fee,
-      source_url: venue_data.event_url,
-      performer_id: get_performer_id(venue_data.performer, source.id),
-      hero_image_url: nil, # Speed quizzing doesn't consistently provide images
-      day_of_week: day_of_week,
-      start_time: start_time
-    }
+      # Create event data
+      event_data = %{
+        raw_title: "SpeedQuizzing at #{venue.name}",
+        name: venue.name,
+        time_text: "#{venue_data.day_of_week} #{start_time}",
+        description: venue_data.description,
+        fee_text: venue_data.fee,
+        source_url: venue_data.event_url,
+        performer_id: get_performer_id(venue_data.performer, source.id),
+        hero_image_url: nil, # Speed quizzing doesn't consistently provide images
+        day_of_week: day_of_week,
+        start_time: start_time
+      }
 
-    # Process event through EventStore
-    result = EventStore.process_event(venue, event_data, source.id)
+      # Process event through EventStore
+      result = EventStore.process_event(venue, event_data, source.id)
 
-    case result do
-      {:ok, event} ->
-        Logger.info("✅ Successfully created event for venue: #{venue.name}")
-        # Return a consistent format with both venue and event
-        {:ok, %{venue: venue, event: event}}
-      {:error, reason} ->
-        Logger.error("❌ Failed to create event: #{inspect(reason)}")
-        {:error, reason}
+      case result do
+        {:ok, event} ->
+          Logger.info("✅ Successfully created event for venue: #{venue.name}")
+          # Return a consistent format with both venue and event
+          {:ok, %{venue: venue, event: event}}
+        {:error, reason} ->
+          Logger.error("❌ Failed to create event: #{inspect(reason)}")
+          {:error, reason}
+      end
     end
   end
 
@@ -211,7 +220,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
 
   # Log venue details
   defp log_venue_details(venue_data) do
-    # Parse day of week
+    # Parse day of week for logging purposes only
     day_of_week = case venue_data.day_of_week do
       "Monday" -> 1
       "Tuesday" -> 2
@@ -220,7 +229,8 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
       "Friday" -> 5
       "Saturday" -> 6
       "Sunday" -> 7
-      _ -> nil
+      "Unknown" -> "Unknown"  # Keep as is for logging
+      _ -> "Invalid"  # Will be caught during actual processing
     end
 
     # Parse start time
