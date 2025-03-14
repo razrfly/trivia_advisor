@@ -52,6 +52,78 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
     end
   end
 
+  @doc """
+  Looks up venue details using coordinates directly.
+  This is useful when you already have coordinates and want to find the Google Place details.
+  Returns {:ok, venue_details} or {:error, reason}.
+
+  This avoids geocoding and city lookup issues when coordinates are already known.
+  """
+  def lookup_by_coordinates(lat, lng, opts \\ [])
+
+  def lookup_by_coordinates(lat, lng, opts) when is_binary(lat) and is_binary(lng) do
+    {lat_float, _} = Float.parse(lat)
+    {lng_float, _} = Float.parse(lng)
+    lookup_by_coordinates(lat_float, lng_float, opts)
+  end
+
+  def lookup_by_coordinates(lat, lng, opts) when is_number(lat) and is_number(lng) do
+    Logger.info("🔍 Looking up place by coordinates: #{lat}, #{lng}")
+
+    with {:ok, api_key} <- get_api_key(),
+         venue_name = Keyword.get(opts, :venue_name, "Venue at #{lat}, #{lng}"),
+         _ = Logger.info("📡 Querying Google Places API with coordinates for venue: #{inspect(venue_name)}"),
+         {:ok, search_results} <- find_places_by_coordinates(lat, lng, api_key, opts) do
+
+      case search_results do
+        %{"places" => [place | _]} ->
+          place_id = place["id"]
+          display_name = place["displayName"]["text"] || place["displayName"] || "Unknown Place"
+          Logger.info("✅ Found place #{inspect(display_name)}, getting details...")
+
+          case get_place_details(place_id, api_key) do
+            {:ok, place_details} ->
+              # Add latitude and longitude to details if not present
+              details_with_coords = ensure_coordinates(place_details, lat, lng)
+
+              # Extract address components if present
+              details_with_components = if place_details["addressComponents"] do
+                # Process address components into the expected format
+                address_components = extract_address_components_v2(place_details["addressComponents"])
+                Map.merge(details_with_coords, address_components)
+              else
+                details_with_coords
+              end
+
+              # Add source marker
+              final_details = Map.put(details_with_components, "source", "places")
+
+              {:ok, final_details}
+
+            error ->
+              Logger.error("❌ Failed to get place details: #{inspect(error)}")
+              error
+          end
+
+        %{"places" => []} ->
+          Logger.info("⚠️ No places found at these coordinates, returning basic data")
+
+          # Return a basic response with the coordinates we know
+          venue_name = Keyword.get(opts, :venue_name, "Unknown Venue")
+          address = Keyword.get(opts, :address, "Unknown Address")
+          {:ok, build_cached_response(venue_name, address, lat, lng)}
+
+        _ ->
+          Logger.error("❌ Invalid response format from Places API")
+          {:error, :invalid_response_format}
+      end
+    else
+      {:error, reason} ->
+        Logger.error("❌ Failed to look up place by coordinates: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
   defp lookup_from_api(address, opts) do
     with {:ok, api_key} <- get_api_key(),
          venue_name = Keyword.get(opts, :venue_name, ""),
@@ -422,5 +494,108 @@ defmodule TriviaAdvisor.Scraping.GoogleLookup do
       "postal_code" => nil,
       "cached" => true
     }
+  end
+
+  @doc """
+  Find places near specific coordinates using Google Places API's searchNearby endpoint.
+  Returns {:ok, search_results} or {:error, reason}.
+  """
+  def find_places_by_coordinates(lat, lng, api_key, opts \\ []) do
+    # Default radius in meters
+    radius = Keyword.get(opts, :radius, 50)
+
+    # Using the Places API v2 nearbySearch endpoint
+    url = "https://places.googleapis.com/v1/places:searchNearby"
+
+    headers = [
+      {"Content-Type", "application/json"},
+      {"X-Goog-Api-Key", api_key},
+      {"X-Goog-FieldMask", "places.id,places.displayName,places.formattedAddress,places.types,places.location"}
+    ]
+
+    body = Jason.encode!(%{
+      "locationRestriction" => %{
+        "circle" => %{
+          "center" => %{
+            "latitude" => lat,
+            "longitude" => lng
+          },
+          "radius" => radius
+        }
+      },
+      "rankPreference" => "DISTANCE",
+      "maxResultCount" => 3  # Get a few results to increase chances of finding a match
+    })
+
+    case @http_client.post(url, body, headers) do
+      {:ok, %{status_code: 200, body: response_body}} ->
+        case Jason.decode(response_body) do
+          {:ok, response} -> handle_places_search_response(response)
+          {:error, error} ->
+            Logger.error("Failed to decode API response: #{inspect(error)}")
+            {:error, "Invalid JSON response"}
+        end
+
+      {:ok, %{status_code: status, body: body}} ->
+        error_message = extract_error_message(body)
+        Logger.error("❌ Google Places API error: HTTP #{status} - #{error_message}")
+        {:error, error_message}
+
+      {:error, error} ->
+        Logger.error("API request failed: #{inspect(error)}")
+        {:error, "Request failed"}
+    end
+  end
+
+  # Make sure coordinates are in the response
+  defp ensure_coordinates(place_details, lat, lng) do
+    if get_in(place_details, ["location", "latitude"]) do
+      place_details
+    else
+      Map.put(place_details, "location", %{
+        "latitude" => lat,
+        "longitude" => lng
+      })
+    end
+  end
+
+  # Extract address components from Places API v2 response
+  defp extract_address_components_v2(components) when is_list(components) do
+    # Find components by type
+    country = find_component_by_type(components, ["country"])
+    city = find_component_by_type(components, ["locality", "administrative_area_level_2", "postal_town"])
+    state = find_component_by_type(components, ["administrative_area_level_1"])
+    postal_code = find_component_by_type(components, ["postal_code"])
+
+    # Build component data with proper format for VenueStore
+    %{
+      "country" => extract_component_data(country),
+      "city" => extract_component_data(city),
+      "state" => extract_component_data(state),
+      "postal_code" => extract_component_data(postal_code)
+    }
+  end
+
+  defp extract_address_components_v2(_), do: %{
+    "country" => nil,
+    "city" => nil,
+    "state" => nil,
+    "postal_code" => nil
+  }
+
+  # Extract data from a component
+  defp extract_component_data(nil), do: nil
+  defp extract_component_data(component) do
+    %{
+      "name" => component["longText"],
+      "code" => component["shortText"]
+    }
+  end
+
+  # Find component by type
+  defp find_component_by_type(components, types) do
+    Enum.find(components, fn component ->
+      Enum.any?(component["types"], fn type -> type in types end)
+    end)
   end
 end

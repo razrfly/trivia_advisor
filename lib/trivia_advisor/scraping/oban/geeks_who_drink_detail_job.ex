@@ -5,12 +5,11 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
-  import Ecto.Query
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor
-  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
+  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers, JobMetadata}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
@@ -23,40 +22,27 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
 
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
-      {venue, _venue_data} ->
+      {venue, venue_data_map} ->
         # Update job metadata with success information
-        metadata = %{
-          "venue_id" => venue.id,
-          "venue_name" => venue.name,
-          "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "status" => "success"
-        }
+        result = {:ok, venue}
 
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: metadata]
-        )
+        # Extract day_of_week and start_time from the processed data
+        metadata = venue_data
+        |> Map.put("day_of_week", Map.get(venue_data_map, :day_of_week))
+        |> Map.put("start_time", Map.get(venue_data_map, :start_time))
+
+        JobMetadata.update_detail_job(job_id, metadata, result)
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
         {:ok, %{venue_id: venue.id}}
 
       nil ->
         # Update job metadata with error information
-        error_metadata = %{
-          "venue_title" => venue_data["title"],
-          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-          "status" => "error",
-          "error" => "Failed to process venue"
-        }
+        JobMetadata.update_error(job_id, "Failed to process venue", context: %{
+          "venue_title" => venue_data["title"]
+        })
 
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: error_metadata]
-        )
-
-        Logger.error("❌ Failed to process venue")
+        Logger.error("❌ Failed to process venue: #{venue_data["title"]}")
         {:error, "Failed to process venue"}
     end
   end
@@ -93,7 +79,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         url: venue_data["source_url"],
         hero_image_url: venue_data["logo_url"],
         day_of_week: day_of_week,  # Add day_of_week to the map
-        frequency: :weekly  # Add default frequency key
+        frequency: :weekly,  # Add default frequency key
+        start_time: Map.get(additional_details, :start_time)
       }
 
       # Merge with additional details

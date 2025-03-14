@@ -9,16 +9,21 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: args, id: job_id} = _job) do
     event_id = Map.get(args, "event_id")
     source_id = Map.get(args, "source_id")
     lat = Map.get(args, "lat")
     lng = Map.get(args, "lng")
+    # Get additional args that might be provided from the index job
+    args_day = Map.get(args, "day_of_week")
+    args_time = Map.get(args, "start_time")
+    args_fee = Map.get(args, "fee")
 
     Logger.info("🔄 Processing SpeedQuizzing event ID: #{event_id}")
 
@@ -35,6 +40,12 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
           venue_data
         end
 
+        # Use values from args when the extractor provides "Unknown"
+        venue_data = venue_data
+        |> maybe_replace_unknown(:day_of_week, args_day)
+        |> maybe_replace_unknown(:start_time, args_time)
+        |> maybe_replace_unknown(:fee, args_fee)
+
         # Log the venue details (reusing existing code pattern)
         log_venue_details(venue_data)
 
@@ -45,10 +56,27 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         Logger.debug("📊 Result structure: #{inspect(result)}")
 
         # Handle the result with better pattern matching
-        handle_processing_result(result)
+        processed_result = handle_processing_result(result)
+
+        # Ensure we have the day_of_week and start_time in the metadata
+        metadata = Map.new(venue_data)
+        |> Map.put("day_of_week", Map.get(venue_data, :day_of_week))
+        |> Map.put("start_time", Map.get(venue_data, :start_time))
+
+        # Update job metadata with important details about what was processed
+        JobMetadata.update_detail_job(job_id, metadata, result)
+
+        processed_result
 
       {:error, reason} ->
         Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
+
+        # Update job metadata with error information
+        JobMetadata.update_error(job_id, reason, context: %{
+          "event_id" => event_id,
+          "source_id" => source_id
+        })
+
         {:error, reason}
     end
   end
@@ -306,6 +334,16 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
             # Can't parse, return as is
             time
         end
+    end
+  end
+
+  # Helper to replace "Unknown" values with args values
+  defp maybe_replace_unknown(venue_data, _key, nil), do: venue_data
+  defp maybe_replace_unknown(venue_data, key, value) do
+    if Map.get(venue_data, key) == "Unknown" do
+      Map.put(venue_data, key, value)
+    else
+      venue_data
     end
   end
 end

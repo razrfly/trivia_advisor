@@ -14,6 +14,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   alias TriviaAdvisor.Events.EventSource
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Events.Event
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
   # Days threshold for skipping recently updated events
   @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
@@ -60,13 +61,8 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
           "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
-        # Direct SQL update of the job's meta column
-        if job_id do
-          Repo.update_all(
-            from(j in "oban_jobs", where: j.id == ^job_id),
-            set: [meta: metadata]
-          )
-        end
+        # Update job metadata
+        JobMetadata.update_index_job(job_id, metadata)
 
         Logger.info("✅ Enqueued #{enqueued_count} detail jobs for processing, skipped #{skipped_count} recent events")
 
@@ -78,18 +74,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
         Logger.error("❌ Failed to fetch SpeedQuizzing events: #{inspect(reason)}")
 
         # Update job metadata with error
-        error_metadata = %{
-          "error" => inspect(reason),
-          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        }
-
-        # Direct SQL update of the job's meta column
-        if job_id do
-          Repo.update_all(
-            from(j in "oban_jobs", where: j.id == ^job_id),
-            set: [meta: error_metadata]
-          )
-        end
+        JobMetadata.update_error(job_id, reason)
 
         # Return the error
         {:error, reason}
