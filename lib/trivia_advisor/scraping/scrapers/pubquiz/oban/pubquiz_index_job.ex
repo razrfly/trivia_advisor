@@ -8,11 +8,9 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
   import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
-  alias TriviaAdvisor.Scraping.Scrapers.Pubquiz.Extractor
+  alias TriviaAdvisor.Scraping.Scrapers.Pubquiz.Common
   alias TriviaAdvisor.Scraping.Oban.PubquizDetailJob
   alias TriviaAdvisor.Scraping.RateLimiter
-
-  @base_url "https://pubquiz.pl/bilety/"
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: _args, id: job_id}) do
@@ -23,8 +21,8 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
 
     try do
       # Fetch city list and venues
-      with {:ok, cities} <- fetch_cities(),
-           venues <- fetch_venues_from_cities(cities),
+      with {:ok, cities} <- Common.fetch_cities(),
+           venues <- Common.fetch_venues_from_cities(cities),
            venues <- List.flatten(venues) do
 
         venues_count = length(venues)
@@ -65,39 +63,5 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
         Logger.error("❌ Scraper failed: #{Exception.message(e)}")
         {:error, e}
     end
-  end
-
-  defp fetch_cities do
-    case HTTPoison.get(@base_url, [], follow_redirect: true) do
-      {:ok, %{status_code: 200, body: body}} ->
-        cities = Extractor.extract_cities(body)
-        {:ok, cities}
-
-      {:ok, %{status_code: status}} ->
-        Logger.error("Failed to fetch cities. Status: #{status}")
-        {:error, :http_error}
-
-      {:error, error} ->
-        Logger.error("Failed to fetch cities: #{inspect(error)}")
-        {:error, error}
-    end
-  end
-
-  defp fetch_venues_from_cities(cities) do
-    cities
-    |> Enum.map(fn city_url ->
-      case HTTPoison.get(city_url, [], follow_redirect: true) do
-        {:ok, %{status_code: 200, body: body}} ->
-          Extractor.extract_venues(body)
-
-        {:ok, %{status_code: status}} ->
-          Logger.error("Failed to fetch venues for #{city_url}. Status: #{status}")
-          []
-
-        {:error, error} ->
-          Logger.error("Failed to fetch venues for #{city_url}: #{inspect(error)}")
-          []
-      end
-    end)
   end
 end
