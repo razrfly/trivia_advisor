@@ -10,6 +10,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.Pubquiz.Extractor
   alias TriviaAdvisor.Scraping.Oban.PubquizDetailJob
+  alias TriviaAdvisor.Scraping.RateLimiter
 
   @base_url "https://pubquiz.pl/bilety/"
   @max_jobs_per_batch 10  # Process venues in batches
@@ -30,17 +31,17 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
         venues_count = length(venues)
         Logger.info("📊 Found #{venues_count} venues from pubquiz.pl")
 
-        # Schedule detail jobs immediately
-        venues
-        |> Enum.each(fn venue ->
-          # Create job with no scheduled_at to run immediately
-          %{
-            venue_data: venue,
-            source_id: source.id
-          }
-          |> PubquizDetailJob.new()
-          |> Oban.insert()
-        end)
+        # Schedule detail jobs using RateLimiter
+        RateLimiter.schedule_hourly_capped_jobs(
+          venues,
+          PubquizDetailJob,
+          fn venue ->
+            %{
+              venue_data: venue,
+              source_id: source.id
+            }
+          end
+        )
 
         # Create metadata for reporting
         metadata = %{
