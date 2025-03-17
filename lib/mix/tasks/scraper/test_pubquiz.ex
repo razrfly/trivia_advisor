@@ -13,7 +13,15 @@ defmodule Mix.Tasks.Scraper.TestPubquiz do
       {:ok, venues} ->
         Logger.info("Found #{length(venues)} venues:")
         Enum.each(venues, fn venue ->
-          Logger.info("#{venue.name} - #{venue.url}")
+          Logger.info("""
+
+          Name: #{venue.name}
+          URL: #{venue.url}
+          Address: #{venue.address || "N/A"}
+          Phone: #{venue.phone || "N/A"}
+          Host: #{venue.host || "N/A"}
+          Description: #{venue.description || "N/A"}
+          """)
         end)
 
       {:error, error} ->

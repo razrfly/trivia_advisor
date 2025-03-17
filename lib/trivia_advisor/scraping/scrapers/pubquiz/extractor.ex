@@ -31,6 +31,63 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Pubquiz.Extractor do
     |> Enum.uniq_by(& &1.name)
   end
 
+  def extract_venue_details(html) do
+    doc = Floki.parse_document!(html)
+
+    %{
+      description: extract_description(doc),
+      address: extract_address(doc),
+      phone: extract_phone(doc),
+      host: extract_host(doc)
+    }
+  end
+
+  defp extract_description(doc) do
+    doc
+    |> Floki.find(".sec-text")
+    |> Floki.text()
+    |> String.trim()
+  end
+
+  defp extract_address(doc) do
+    doc
+    |> Floki.find(".checklist li")
+    |> Enum.find_value(fn element ->
+      text = Floki.text(element)
+      if String.contains?(text, "Adres:") do
+        text
+        |> String.replace(~r/^Adres:\s*/, "")
+        |> String.trim()
+      end
+    end)
+  end
+
+  defp extract_phone(doc) do
+    doc
+    |> Floki.find(".checklist li")
+    |> Enum.find_value(fn element ->
+      text = Floki.text(element)
+      if String.contains?(text, "Telefon:") do
+        text
+        |> String.replace(~r/^Telefon:\s*/, "")
+        |> String.trim()
+      end
+    end)
+  end
+
+  defp extract_host(doc) do
+    doc
+    |> Floki.find(".checklist li")
+    |> Enum.find_value(fn element ->
+      text = Floki.text(element)
+      if String.contains?(text, "Prowadząca:") || String.contains?(text, "Prowadzący:") do
+        text
+        |> String.replace(~r/^Prowadząc[ay]:\s*/, "")
+        |> String.trim()
+      end
+    end)
+  end
+
   defp extract_venue_name(venue) do
     venue
     |> Floki.find(".woocommerce-loop-category__title")
