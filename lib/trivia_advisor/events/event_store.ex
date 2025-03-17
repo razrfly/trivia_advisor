@@ -16,12 +16,19 @@ defmodule TriviaAdvisor.Events.EventStore do
   If day_of_week changes, creates a new event instead of updating.
   """
   def process_event(venue, event_data, source_id) do
+    # Debug logging to see what event_data looks like before normalization
+    Logger.debug("🔍 RAW Event data before normalization: #{inspect(event_data)}")
+
     # Ensure upload directory exists
     ensure_upload_dir()
 
     # Convert string keys to atoms for consistent access
     # This allows the function to work with both string and atom keys
     event_data = normalize_keys(event_data)
+
+    # Debug logging to see what event_data looks like after normalization
+    Logger.debug("🔍 Event data after normalization: #{inspect(event_data)}")
+    Logger.debug("🔍 Looking for raw_title in keys: #{inspect(Map.keys(event_data))}")
 
     # Log the performer_id from event_data
     Logger.info("🎭 Processing event for venue #{venue.name} with performer_id: #{inspect(Map.get(event_data, :performer_id))}")
@@ -33,48 +40,19 @@ defmodule TriviaAdvisor.Events.EventStore do
     frequency = parse_event_frequency(event_data.raw_title)
 
     # Download and attach hero image if URL is present
-    hero_image_attrs = case event_data.hero_image_url do
-      url when is_binary(url) and url != "" ->
-        case download_hero_image(url) do
-          {:ok, upload} ->
-            try do
-              # Test if Waffle can process the image by checking file validity
-              extension = Path.extname(upload.filename) |> String.downcase()
-
-              # Check if image has valid extension, if not use the one we detected
-              if extension == "" or not Regex.match?(~r/\.(jpg|jpeg|png|gif|webp)$/i, extension) do
-                Logger.debug("Using detected extension for image without extension")
-                # Get the detected extension from the content_type
-                detected_ext = case upload.content_type do
-                  "image/jpeg" -> ".jpg"
-                  "image/png" -> ".png"
-                  "image/gif" -> ".gif"
-                  "image/webp" -> ".webp"
-                  _ -> ".jpg" # Default to jpg
-                end
-
-                # Create a new upload struct with the filename + detected extension
-                new_filename = upload.filename <> detected_ext
-                new_upload = %Plug.Upload{
-                  path: upload.path,
-                  filename: new_filename,
-                  content_type: upload.content_type
-                }
-                %{hero_image: new_upload}
-              else
-                # Original filename has valid extension
-                %{hero_image: upload}
-              end
-            rescue
-              err ->
-                Logger.error("Error processing hero image: #{inspect(err)}")
-                %{}
-            end
-          {:error, reason} ->
-            Logger.warning("Failed to download hero image: #{inspect(reason)}")
-            %{}
-        end
-      _ -> %{}
+    hero_image_attrs = if event_data.hero_image_url && event_data.hero_image_url != "" do
+      Logger.info("🖼️ Processing hero image URL: #{event_data.hero_image_url}")
+      case download_hero_image(event_data.hero_image_url) do
+        {:ok, hero_image} ->
+          Logger.info("✅ Successfully downloaded hero image")
+          %{hero_image: hero_image}
+        {:error, reason} ->
+          Logger.error("❌ Failed to download hero image: #{inspect(reason)}")
+          %{}
+      end
+    else
+      Logger.debug("⏭️ No hero image URL or empty URL provided")
+      %{}
     end
 
     # Get performer_id from event_data, ensuring it's properly passed through
@@ -95,7 +73,8 @@ defmodule TriviaAdvisor.Events.EventStore do
 
     Logger.debug("🎭 Event attributes: #{inspect(attrs)}")
 
-    Repo.transaction(fn ->
+    # Execute the transaction with improved error handling
+    result = Repo.transaction(fn ->
       # First try to find by venue and day
       existing_event = find_existing_event(attrs.venue_id, attrs.day_of_week)
 
@@ -108,7 +87,7 @@ defmodule TriviaAdvisor.Events.EventStore do
       end
 
       # Process the event
-      result = case existing_event do
+      event_result = case existing_event do
         nil -> create_event(attrs)
         event ->
           if event_changed?(event, attrs) do
@@ -130,19 +109,23 @@ defmodule TriviaAdvisor.Events.EventStore do
           end
       end
 
-      case result do
+      case event_result do
         {:ok, event} ->
           # Log the result
           Logger.info("✅ Event processed successfully with ID: #{event.id}, performer_id: #{inspect(event.performer_id)}")
 
           # Pass all needed data to upsert_event_source
-          case upsert_event_source(
+          source_result = upsert_event_source(
             event.id,
             source_id,
             event_data.source_url,
             %{event_data: event_data, attrs: attrs, venue: venue, frequency: frequency}
-          ) do
-            {:ok, _source} -> {:ok, event}
+          )
+
+          case source_result do
+            {:ok, _source} ->
+              # Return just the event, not the {:ok, event} tuple
+              event
             {:error, reason} ->
               Logger.error("Failed to upsert event source: #{inspect(reason)}")
               Repo.rollback(reason)
@@ -168,13 +151,15 @@ defmodule TriviaAdvisor.Events.EventStore do
             |> case do
               {:ok, event} ->
                 # Pass all needed data to upsert_event_source
-                case upsert_event_source(
+                source_result = upsert_event_source(
                   event.id,
                   source_id,
                   event_data.source_url,
                   %{event_data: event_data, attrs: filtered_attrs, venue: venue, frequency: frequency}
-                ) do
-                  {:ok, _source} -> {:ok, event}
+                )
+
+                case source_result do
+                  {:ok, _source} -> event  # Return just the event, not the tuple
                   {:error, reason} -> Repo.rollback(reason)
                 end
               {:error, reason} -> Repo.rollback(reason)
@@ -184,6 +169,19 @@ defmodule TriviaAdvisor.Events.EventStore do
           end
       end
     end)
+
+    # Log the raw transaction result for debugging
+    Logger.debug("🔍 Repo.transaction raw result: #{inspect(result)}")
+
+    # Return a consistent result format, ensuring we return {:ok, event} pattern
+    case result do
+      {:ok, event} ->
+        Logger.debug("🔍 Returning event: #{inspect(event)}")
+        {:ok, event}
+      {:error, reason} ->
+        Logger.error("❌ Transaction error: #{inspect(reason)}")
+        {:error, reason}
+    end
   end
 
   # Normalize keys to atoms for consistent access
