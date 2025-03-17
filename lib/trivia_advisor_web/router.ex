@@ -11,6 +11,7 @@ defmodule TriviaAdvisorWeb.Router do
     plug :put_root_layout, html: {TriviaAdvisorWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug TriviaAdvisorWeb.Plugs.CloudflareRealIp
   end
 
   pipeline :api do

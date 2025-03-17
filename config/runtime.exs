@@ -79,15 +79,17 @@ if config_env() == :prod do
   config :trivia_advisor, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :trivia_advisor, TriviaAdvisorWeb.Endpoint,
-    url: [host: host, port: 443, scheme: "https"],
+    url: [host: "quizadvisor.com", port: 443, scheme: "https"],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
+      # See the documentation on https://hexdocs.pm/plug_cowboy/Plug.Cowboy.html
       # for details about using IPv6 vs IPv4 and loopback vs public addresses.
       ip: {0, 0, 0, 0, 0, 0, 0, 0},
       port: port
     ],
+    force_ssl: [rewrite_on: [:x_forwarded_proto]],
+    check_origin: ["https://quizadvisor.com", "https://www.quizadvisor.com"],
     secret_key_base: secret_key_base
 
   # Configure Waffle to use Tigris S3-compatible storage in production
