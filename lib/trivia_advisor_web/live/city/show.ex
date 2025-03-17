@@ -335,6 +335,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           # Extract event source data if available
           event_source_data = get_event_source_data(venue)
 
+          # Ensure we have country data for currency detection
+          venue_with_country = ensure_country_data(venue, city)
+
           %{
             venue: %{
               id: venue.id,
@@ -347,7 +350,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
               events: Map.get(venue, :events, []),
               last_seen_at: event_source_data[:last_seen_at],
               source_name: event_source_data[:source_name],
-              source_url: event_source_data[:source_url]
+              source_url: event_source_data[:source_url],
+              # Add country_code to venue for currency detection
+              country_code: get_country(venue_with_country).code
             },
             distance_km: distance
           }
@@ -367,7 +372,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                 events: [],
                 last_seen_at: nil,
                 source_name: nil,
-                source_url: nil
+                source_url: nil,
+                # Add country_code from the parent city for proper currency formatting
+                country_code: city.country.code
               },
               distance_km: distance
             }
@@ -502,29 +509,45 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
   # Helper to get country's currency code
   defp get_country_currency(venue) do
-    # Try to get country code from venue -> city -> country
-    country_code = cond do
-      # If venue has loaded city with country association
-      is_map(venue) && Map.has_key?(venue, :city) && is_map(venue.city) &&
-      Map.has_key?(venue.city, :country) && is_map(venue.city.country) &&
-      Map.has_key?(venue.city.country, :code) && venue.city.country.code ->
-        venue.city.country.code
+    country = get_country(venue)
 
-      # Try to get country from metadata
-      is_map(venue) && Map.has_key?(venue, :metadata) && venue.metadata &&
-      is_map(venue.metadata) && Map.has_key?(venue.metadata, "country_code") ->
-        venue.metadata["country_code"]
-
-      true -> "GB" # Default to UK if not found
+    cond do
+      # Check if currency code is stored in country data
+      country && Map.has_key?(country, :currency_code) && country.currency_code ->
+        country.currency_code
+      # Use Countries library to get currency code if we have a country code
+      country && country.code ->
+        country_data = Countries.get(country.code)
+        if country_data && Map.has_key?(country_data, :currency_code), do: country_data.currency_code, else: "USD"
+      # Default to USD if we don't know
+      true ->
+        "USD"
     end
+  end
 
-    # Try to use the Countries library to get currency code
-    country_data = Countries.get(country_code)
-    if country_data && Map.has_key?(country_data, :currency_code) do
-      country_data.currency_code
+  # Helper to get country information
+  defp get_country(venue) do
+    # First check if venue has a direct country_code
+    if Map.has_key?(venue, :country_code) do
+      %{code: venue.country_code, name: "Unknown", slug: "unknown"}
     else
-      # Default to USD as fallback if Countries library doesn't have data
-      "USD"
+      # Try to safely extract country from city if it exists
+      try do
+        if Map.has_key?(venue, :city) &&
+           !is_nil(venue.city) &&
+           !is_struct(venue.city, Ecto.Association.NotLoaded) &&
+           Map.has_key?(venue.city, :country) &&
+           !is_nil(venue.city.country) &&
+           !is_struct(venue.city.country, Ecto.Association.NotLoaded) do
+          venue.city.country
+        else
+          # Default fallback
+          %{code: "US", name: "Unknown", slug: "unknown"}
+        end
+      rescue
+        # If any error occurs, return a default
+        _ -> %{code: "US", name: "Unknown", slug: "unknown"}
+      end
     end
   end
 
@@ -780,6 +803,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
             # Extract event source data if available
             event_source_data = get_event_source_data(venue)
 
+            # Ensure we have country data for currency detection
+            venue_with_country = ensure_country_data(venue, city)
+
             %{
               venue: %{
                 id: venue.id,
@@ -792,7 +818,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                 events: Map.get(venue, :events, []),
                 last_seen_at: event_source_data[:last_seen_at],
                 source_name: event_source_data[:source_name],
-                source_url: event_source_data[:source_url]
+                source_url: event_source_data[:source_url],
+                # Add country_code to venue for currency detection
+                country_code: get_country(venue_with_country).code
               },
               distance_km: distance
             }
@@ -812,7 +840,9 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                   events: [],
                   last_seen_at: nil,
                   source_name: nil,
-                  source_url: nil
+                  source_url: nil,
+                  # Add country_code from the parent city for proper currency formatting
+                  country_code: city.country.code
                 },
                 distance_km: distance
               }
@@ -823,6 +853,24 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           Logger.error("Error filtering venues by suburbs: #{inspect(e)}")
           # Fall back to default venues
           get_venues_near_city(city, radius)
+      end
+    end
+  end
+
+  # Ensure venue has country data by using city's country if necessary
+  defp ensure_country_data(venue, city) do
+    # If venue already has complete country data, return as is
+    if venue.city && !is_struct(venue.city.country, Ecto.Association.NotLoaded) do
+      venue
+    else
+      # Try to use city's country data
+      try do
+        # Use the put_in function to update the venue.city with the provided city
+        # This will make city.country available for country code detection
+        put_in(venue.city, city)
+      rescue
+        # If any error occurs (like path doesn't exist), return original venue
+        _ -> venue
       end
     end
   end
