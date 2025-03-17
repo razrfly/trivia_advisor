@@ -79,13 +79,15 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 "name" => "#{source.name} at #{venue.name}", # Make sure name is properly set
                 "time_text" => "#{day_name} #{start_time}",
                 "description" => details.description || "",
-                "fee_text" => "#{entry_fee_cents / 100} zł",
+                "fee_text" => "#{trunc(entry_fee_cents / 100)}",  # Format as integer like "15" without decimal or currency symbol
                 "source_url" => venue_data["url"],
                 "hero_image_url" => venue_data["image_url"] || "",
                 "day_of_week" => day_of_week,
                 "start_time" => start_time,
                 "frequency" => :weekly,
-                "entry_fee_cents" => entry_fee_cents
+                "entry_fee_cents" => entry_fee_cents,
+                # Add explicit override that will be used directly in EventStore
+                "override_entry_fee_cents" => entry_fee_cents
               }
 
               Logger.info("🔥 EVENT DATA BEING SENT TO EVENT STORE: #{inspect(event_data)}")
