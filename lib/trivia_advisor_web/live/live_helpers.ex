@@ -3,6 +3,8 @@ defmodule TriviaAdvisorWeb.LiveHelpers do
   Helper functions for LiveView modules, including Cloudflare header handling.
   """
 
+  import Phoenix.Component, only: [assign: 3]
+
   # Add headers to LiveView socket for Cloudflare
   def cloudflare_socket_connect_info(socket, connect_info) do
     headers = Enum.into(connect_info.x_headers, %{})
@@ -15,7 +17,7 @@ defmodule TriviaAdvisorWeb.LiveHelpers do
   defp maybe_assign_real_ip(socket, headers) do
     case Map.get(headers, "cf-connecting-ip") do
       nil -> socket
-      real_ip -> Phoenix.LiveView.assign(socket, :real_ip, real_ip)
+      real_ip -> assign(socket, :real_ip, real_ip)
     end
   end
 
@@ -24,6 +26,6 @@ defmodule TriviaAdvisorWeb.LiveHelpers do
     |> Enum.filter(fn {key, _} -> String.starts_with?(key, "cf-") end)
     |> Enum.into(%{})
 
-    Phoenix.LiveView.assign(socket, :cf_headers, cf_headers)
+    assign(socket, :cf_headers, cf_headers)
   end
 end
