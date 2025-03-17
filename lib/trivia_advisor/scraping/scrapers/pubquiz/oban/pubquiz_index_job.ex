@@ -13,7 +13,6 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
   alias TriviaAdvisor.Scraping.RateLimiter
 
   @base_url "https://pubquiz.pl/bilety/"
-  @max_jobs_per_batch 10  # Process venues in batches
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: _args, id: job_id}) do

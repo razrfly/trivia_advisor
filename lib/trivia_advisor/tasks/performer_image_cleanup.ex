@@ -85,7 +85,7 @@ defmodule TriviaAdvisor.Tasks.PerformerImageCleanup do
   defp process_s3_objects(s3_bucket, objects, dry_run) do
     # Group objects by performer directories
     grouped_objects = objects
-      |> Enum.map(fn %{key: key, last_modified: last_modified} = obj ->
+      |> Enum.map(fn %{key: key, last_modified: _last_modified} = obj ->
         # Extract performer directory from key
         # Format: "uploads/performers/performer_id/original_filename.jpg"
         case String.split(key, "/", trim: true) do
