@@ -11,7 +11,6 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
   alias TriviaAdvisor.Scraping.Scrapers.Pubquiz.Common
   alias TriviaAdvisor.Scraping.Oban.PubquizDetailJob
   alias TriviaAdvisor.Scraping.RateLimiter
-  alias HTTPoison
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do

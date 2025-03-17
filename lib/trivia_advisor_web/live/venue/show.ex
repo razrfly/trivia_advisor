@@ -902,36 +902,23 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       # Check if currency code is stored in country data
       country && Map.has_key?(country, :currency_code) && country.currency_code ->
         country.currency_code
-      # UK
-      country && country.name == "United Kingdom" ->
-        "GBP"
-      # For US
-      country && country.name == "United States" ->
-        "USD"
-      # For Euro countries
-      country && country.name in ["France", "Germany", "Italy", "Spain", "Ireland"] ->
-        "EUR"
+      # Use Countries library to get currency code if we have a country code
+      country && country.code ->
+        country_data = Countries.get(country.code)
+        if country_data && Map.has_key?(country_data, :currency_code), do: country_data.currency_code, else: "USD"
       # Default to USD if we don't know
       true ->
         "USD"
     end
   end
 
-  # Helper to format currency with proper symbol
+  # Helper to format currency with proper symbol and localization
   defp format_currency(amount_cents, currency_code) when is_number(amount_cents) do
-    amount = amount_cents / 100
+    # Create Money struct with proper currency
+    money = Money.new(amount_cents, currency_code)
 
-    symbol = case currency_code do
-      "USD" -> "$"
-      "GBP" -> "£"
-      "EUR" -> "€"
-      "AUD" -> "A$"
-      "CAD" -> "C$"
-      "JPY" -> "¥"
-      _ -> "$" # Default to USD
-    end
-
-    "#{symbol}#{:erlang.float_to_binary(amount, [decimals: 2])}"
+    # Let the Money library handle the formatting
+    Money.to_string(money)
   end
   defp format_currency(_, _), do: "Free"
 

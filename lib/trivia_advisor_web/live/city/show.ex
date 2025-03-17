@@ -518,54 +518,23 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       true -> "GB" # Default to UK if not found
     end
 
-    # Convert country code to currency code
-    case country_code do
-      "US" -> "USD"
-      "CA" -> "CAD"
-      "AU" -> "AUD"
-      "NZ" -> "NZD"
-      "JP" -> "JPY"
-      "IE" -> "EUR"
-      "DE" -> "EUR"
-      "FR" -> "EUR"
-      "ES" -> "EUR"
-      "IT" -> "EUR"
-      "AT" -> "EUR"
-      "BE" -> "EUR"
-      "FI" -> "EUR"
-      "GR" -> "EUR"
-      "PT" -> "EUR"
-      "BR" -> "BRL"
-      "MX" -> "MXN"
-      "IN" -> "INR"
-      "ZA" -> "ZAR"
-      "SG" -> "SGD"
-      # Default to GBP for UK and unknown countries
-      _ -> "GBP"
+    # Try to use the Countries library to get currency code
+    country_data = Countries.get(country_code)
+    if country_data && Map.has_key?(country_data, :currency_code) do
+      country_data.currency_code
+    else
+      # Default to USD as fallback if Countries library doesn't have data
+      "USD"
     end
   end
 
-  # Helper to format currency with proper symbol
+  # Helper to format currency with proper symbol and localization
   defp format_currency(amount_cents, currency_code) when is_number(amount_cents) do
-    amount = amount_cents / 100
+    # Create Money struct with proper currency
+    money = Money.new(amount_cents, currency_code)
 
-    symbol = case currency_code do
-      "USD" -> "$"
-      "GBP" -> "£"
-      "EUR" -> "€"
-      "AUD" -> "A$"
-      "CAD" -> "C$"
-      "NZD" -> "NZ$"
-      "JPY" -> "¥"
-      "BRL" -> "R$"
-      "MXN" -> "Mex$"
-      "INR" -> "₹"
-      "ZAR" -> "R"
-      "SGD" -> "S$"
-      _ -> "£" # Default to GBP
-    end
-
-    "#{symbol}#{:erlang.float_to_binary(amount, [decimals: 2])}"
+    # Let the Money library handle the formatting
+    Money.to_string(money)
   end
   defp format_currency(_, _), do: "Free"
 
