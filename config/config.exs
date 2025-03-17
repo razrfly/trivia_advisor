@@ -12,7 +12,8 @@ config :trivia_advisor, Oban,
   notifier: Oban.Notifiers.Postgres,
   queues: [
     default: 20,
-    google_api: [limit: 5]
+    google_api: [limit: 5],
+    scraper: [limit: 10]
   ],
   repo: TriviaAdvisor.Repo,
   plugins: [
