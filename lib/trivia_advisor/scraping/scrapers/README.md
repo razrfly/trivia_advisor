@@ -390,7 +390,26 @@ Implement these testing strategies:
    iex> Oban.insert(TriviaAdvisor.Scraping.Oban.ExampleDetailJob.new(%{venue_id: 123}))
    ```
 
-3. **Monitoring** through Oban dashboard or database queries:
+3. **Limited testing with mix tasks**:
+   ```bash
+   # Test an index job with a limit of 3 venues
+   mix scraper.test_[source_name]_index --limit=3
+   ```
+
+4. **Venue limiting in index jobs**:
+   All index jobs must support a `limit` parameter in their args to restrict the number of venues processed during testing:
+   ```elixir
+   # In the perform function of any index job
+   limit = Map.get(args, "limit")
+   venues_to_process = if limit, do: Enum.take(venues, limit), else: venues
+   
+   # Log the limitation
+   if limit do
+     Logger.info("🧪 Testing mode: Limited to #{length(venues_to_process)} venues (out of #{length(venues)} total)")
+   end
+   ```
+
+5. **Monitoring** through Oban dashboard or database queries:
    ```elixir
    # Query jobs by state
    Repo.all(from j in Oban.Job, where: j.queue == "venue_processor" and j.state == "executing")
