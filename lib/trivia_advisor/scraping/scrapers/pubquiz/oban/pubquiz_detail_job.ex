@@ -26,13 +26,17 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"venue_data" => venue_data, "source_id" => source_id}, id: job_id}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
+    Logger.info("🔍 DETAIL JOB VENUE DATA: #{inspect(venue_data)}")
 
     try do
       # Get source
       source = Repo.get!(Source, source_id)
 
       # Fetch venue details
-      case HTTPoison.get(venue_data["url"], [], follow_redirect: true) do
+      venue_url = venue_data["url"]
+      Logger.info("🔍 Using venue URL: #{venue_url}")
+
+      case HTTPoison.get(venue_url, [], follow_redirect: true) do
         {:ok, %{status_code: 200, body: body}} ->
           # Extract details
           details = Extractor.extract_venue_details(body)
@@ -80,7 +84,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 "time_text" => "#{day_name} #{start_time}",
                 "description" => details.description || "",
                 "fee_text" => "#{trunc(entry_fee_cents / 100)}",  # Format as integer like "15" without decimal or currency symbol
-                "source_url" => venue_data["url"],
+                "source_url" => venue_url,  # This is key for venue skipping to work
                 "hero_image_url" => venue_data["image_url"] || "",
                 "day_of_week" => day_of_week,
                 "start_time" => start_time,
@@ -91,6 +95,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
               }
 
               Logger.info("🔥 EVENT DATA BEING SENT TO EVENT STORE: #{inspect(event_data)}")
+              Logger.info("🔍 SOURCE URL BEING SAVED: #{venue_url}")
 
               # Process event through EventStore
               Logger.info("🔄 Creating event for venue: #{venue.name}")
@@ -108,7 +113,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                   metadata = %{
                     "venue_name" => venue.name,
                     "venue_id" => venue.id,
-                    "venue_url" => venue_data["url"],
+                    "venue_url" => venue_url,
                     "event_id" => event.id,
                     "address" => venue.address,
                     "phone" => venue.phone,
