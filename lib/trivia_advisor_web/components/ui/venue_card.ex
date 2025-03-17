@@ -33,7 +33,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
         <!-- Entry fee badge -->
         <%= if @venue.entry_fee_cents do %>
           <div class="absolute right-2 top-2 rounded-full bg-indigo-600 px-2 py-1 text-xs font-medium text-white">
-            <%= format_price(@venue.entry_fee_cents) %>
+            <%= format_price(@venue.entry_fee_cents, @venue) %>
           </div>
         <% else %>
           <div class="absolute right-2 top-2 rounded-full bg-green-600 px-2 py-1 text-xs font-medium text-white">
@@ -92,11 +92,48 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
   end
 
   # Helper functions for formatting
-  defp format_price(cents) when is_integer(cents) do
-    "$#{:erlang.float_to_binary(cents / 100, [decimals: 2])}"
+  defp format_price(cents, venue)
+
+  defp format_price(cents, venue) when is_integer(cents) do
+    # Get the appropriate currency for this venue
+    country_code = get_venue_country_code(venue)
+    currency_code = get_country_currency(country_code)
+
+    # Create Money struct with proper currency and format it
+    money = Money.new(cents, currency_code)
+    Money.to_string(money)
+  end
+  defp format_price(_, _), do: "Free"
+
+  # Helper to get venue's country code
+  defp get_venue_country_code(venue) do
+    cond do
+      # If venue has loaded city with country association
+      is_map(venue) && Map.has_key?(venue, :city) && is_map(venue.city) &&
+      Map.has_key?(venue.city, :country) && is_map(venue.city.country) &&
+      Map.has_key?(venue.city.country, :code) && venue.city.country.code ->
+        venue.city.country.code
+
+      # Try to get country from metadata
+      is_map(venue) && Map.has_key?(venue, :metadata) && venue.metadata &&
+      is_map(venue.metadata) && Map.has_key?(venue.metadata, "country_code") ->
+        venue.metadata["country_code"]
+
+      true -> "US" # Default to US if not found
+    end
   end
 
-  defp format_price(_), do: "Free"
+  # Helper to get country's currency code
+  defp get_country_currency(country_code) do
+    # Try to use the Countries library to get currency code
+    country_data = Countries.get(country_code)
+    if country_data && Map.has_key?(country_data, :currency_code) do
+      country_data.currency_code
+    else
+      # Just return USD as fallback
+      "USD"
+    end
+  end
 
   defp format_day(day) when is_integer(day) do
     case day do
