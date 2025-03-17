@@ -15,6 +15,18 @@ This document provides a comprehensive specification for implementing scrapers i
 9. [Common Helpers](#common-helpers)
 10. [Testing](#testing)
 
+## Dependencies
+
+The following dependencies are already set up and available for all scrapers:
+
+- HTTPoison - HTTP client for making requests
+- Floki - HTML parsing
+- Oban - Background job processing
+- Jason - JSON encoding/decoding
+- Tesla - HTTP client with middleware support (for API integrations)
+
+No additional dependencies need to be added for new scrapers unless they have very specific requirements.
+
 ## Scraper Architecture
 
 All TriviaAdvisor scrapers follow a two-tier Oban job architecture:
