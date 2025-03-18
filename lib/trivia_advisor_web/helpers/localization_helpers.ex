@@ -9,7 +9,7 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
   # but not hardcoding specific countries
   defmodule TriviaAdvisor.Cldr do
     use Cldr,
-      locales: ["en", "fr", "de", "es", "it", "ja", "zh", "ru", "pt", "nl", "en-GB"],
+      locales: ["en", "fr", "de", "es", "it", "ja", "zh", "ru", "pt", "nl", "en-GB", "pl"],
       default_locale: "en",
       providers: [Cldr.Number, Cldr.DateTime, Cldr.Calendar]
   end
@@ -37,8 +37,22 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     # Convert to Time struct
     case normalize_time(time) do
       %Time{} = time_struct ->
-        # Format with today's date to create a DateTime for formatting
-        datetime = DateTime.new!(Date.utc_today(), time_struct, "Etc/UTC")
+        # Get appropriate time zone for the country if available
+        timezone = get_country_timezone(country)
+
+        # Create a DateTime with the country's timezone if available, or UTC as fallback
+        datetime = case timezone do
+          nil ->
+            # Use UTC if no timezone available
+            DateTime.new!(Date.utc_today(), time_struct, "Etc/UTC")
+          tz ->
+            # Use country's timezone - this ensures proper localization
+            # We still use today's date as we're only concerned with time formatting
+            DateTime.new!(Date.utc_today(), time_struct, tz)
+        end
+
+        # Log which timezone we're using
+        Logger.debug("Using timezone: #{datetime.time_zone} for country: #{inspect(country)}")
 
         # Determine format based on country's time format preference
         format_options = if uses_24h_format?(country) do
@@ -123,21 +137,38 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
           # Try to get country info from Countries library
           country_data = Countries.get(country_code)
 
-          # Use official language as locale base
-          languages = country_data.languages || []
-          official_language =
-            languages
-            |> Enum.find(fn lang -> lang.official end)
-            |> case do
-              nil -> List.first(languages) # If no official language, use first
-              lang -> lang
-            end
+          # Dynamic language code extraction from the Countries library data
+          language_code =
+            if country_data do
+              # The official language is typically stored as a comma-separated string in languages_official
+              official_languages =
+                if Map.has_key?(country_data, :languages_official) && country_data.languages_official do
+                  country_data.languages_official |> String.split(",") |> Enum.map(&String.trim/1)
+                else
+                  []
+                end
 
-          language_code = if official_language do
-            official_language.iso_639_1 || "en"
-          else
-            "en"
-          end
+              # Spoken languages as fallback
+              spoken_languages =
+                if Map.has_key?(country_data, :languages_spoken) && country_data.languages_spoken do
+                  country_data.languages_spoken |> String.split(",") |> Enum.map(&String.trim/1)
+                else
+                  []
+                end
+
+              # Take the first available language (official preferred, then spoken)
+              cond do
+                length(official_languages) > 0 -> List.first(official_languages)
+                length(spoken_languages) > 0 -> List.first(spoken_languages)
+                # Some special cases where code doesn't match language code
+                country_code == "GB" -> "en"
+                country_code == "US" -> "en"
+                true -> String.downcase(country_code) # Fallback to country code lowercase
+              end
+            else
+              # If no country data, fallback to country code
+              String.downcase(country_code)
+            end
 
           Logger.debug("Found language code #{language_code} for country #{country_code}")
 
@@ -164,23 +195,8 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
         rescue
           e ->
             Logger.debug("Error determining locale for #{inspect(country)}: #{inspect(e)}")
-            # Simple fallback based on common language-country pairs
-            # This is only used if the Countries library fails
-            case country.code do
-              "GB" -> "en-GB"
-              "US" -> "en"
-              "FR" -> "fr"
-              "DE" -> "de"
-              "ES" -> "es"
-              "IT" -> "it"
-              "JP" -> "ja"
-              "CN" -> "zh"
-              "RU" -> "ru"
-              "PT" -> "pt"
-              "NL" -> "nl"
-              "PL" -> "pl"
-              _ -> "en"
-            end
+            # Simple fallback to "en" for all errors
+            "en"
         end
     end
   end
@@ -222,5 +238,74 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     end
 
     "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm}"
+  end
+
+  # Get the most representative timezone for a country
+  defp get_country_timezone(country) do
+    if is_nil(country) || !Map.has_key?(country, :code) || is_nil(country.code) do
+      nil
+    else
+      try do
+        country_code = country.code
+        # Get country data from Countries library
+        country_data = Countries.get(country_code)
+
+        if is_nil(country_data) do
+          nil
+        else
+          # Try to infer timezone from country data
+          cond do
+            # Check for geo coordinate based approach - most common
+            Map.has_key?(country_data, :geo) && is_map(country_data.geo) &&
+              (Map.has_key?(country_data.geo, :latitude) || Map.has_key?(country_data.geo, :latitude_dec)) &&
+              (Map.has_key?(country_data.geo, :longitude) || Map.has_key?(country_data.geo, :longitude_dec)) ->
+              # Get longitude (prefer decimal version if available)
+              long = cond do
+                Map.has_key?(country_data.geo, :longitude_dec) && is_binary(country_data.geo.longitude_dec) ->
+                  {val, _} = Float.parse(country_data.geo.longitude_dec)
+                  val
+                Map.has_key?(country_data.geo, :longitude) && is_number(country_data.geo.longitude) ->
+                  country_data.geo.longitude
+                true -> 0.0
+              end
+
+              # Map to standard timezone name based on rough longitude
+              cond do
+                long >= -10 && long <= 25 -> "Europe/London"
+                long > 25 && long <= 45 -> "Europe/Athens"
+                long > 45 && long <= 90 -> "Asia/Kolkata"
+                long > 90 && long <= 135 -> "Asia/Shanghai"
+                long > 135 && long <= 180 -> "Asia/Tokyo"
+                long >= -45 && long < -10 -> "Atlantic/Azores"
+                long >= -80 && long < -45 -> "America/New_York"
+                long >= -120 && long < -80 -> "America/Chicago"
+                long >= -165 && long < -120 -> "America/Los_Angeles"
+                true -> "Etc/UTC"
+              end
+
+            # Check for region/continent based approach
+            Map.has_key?(country_data, :region) && is_binary(country_data.region) ->
+              # Map regions to timezones
+              case country_data.region do
+                "Europe" -> "Europe/London"
+                "Asia" -> "Asia/Shanghai"
+                "Africa" -> "Africa/Cairo"
+                "South America" -> "America/Sao_Paulo"
+                "North America" -> "America/New_York"
+                "Oceania" -> "Australia/Sydney"
+                _ -> "Etc/UTC"
+              end
+
+            true ->
+              # Ultimate fallback - UTC
+              "Etc/UTC"
+          end
+        end
+      rescue
+        e ->
+          Logger.debug("Error determining timezone for #{inspect(country)}: #{inspect(e)}")
+          "Etc/UTC"  # Default to UTC on errors
+      end
+    end
   end
 end

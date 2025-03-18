@@ -946,46 +946,6 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     end
   end
 
-  # Helper to format time in a more friendly way (e.g., 7:30 PM)
-  defp format_time(%Time{} = time) do
-    # Convert Time struct to 12-hour format with AM/PM
-    hour = time.hour
-    am_pm = if hour >= 12, do: "PM", else: "AM"
-    hour_12 = cond do
-      hour == 0 -> 12
-      hour > 12 -> hour - 12
-      true -> hour
-    end
-
-    "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm} (local time)"
-  end
-
-  defp format_time(time_str) when is_binary(time_str) do
-    case Regex.run(~r/(\d{1,2}):?(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i, time_str) do
-      [_, hour, minute, _, am_pm] when am_pm in ["AM", "PM", "am", "pm"] ->
-        "#{hour}:#{minute} #{String.upcase(am_pm)} (local time)"
-      [_, hour, minute, _, nil] ->
-        # Try to convert 24-hour time to 12-hour time
-        {hour_int, _} = Integer.parse(hour)
-        am_pm = if hour_int >= 12, do: "PM", else: "AM"
-        hour_12 = cond do
-          hour_int == 0 -> "12"
-          hour_int > 12 -> "#{hour_int - 12}"
-          true -> "#{hour_int}"
-        end
-        "#{hour_12}:#{minute} #{am_pm} (local time)"
-      _ ->
-        # If we can't parse the time, return it as-is
-        time_str
-    end
-  end
-
-  # Catch-all clause for non-string, non-Time inputs
-  defp format_time(time) do
-    # Try to convert to string and format
-    "#{time} (local time)"
-  end
-
   # Helper to get country's currency
   defp get_country_currency(venue) do
     country = get_country(venue)
