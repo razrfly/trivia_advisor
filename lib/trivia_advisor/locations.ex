@@ -153,6 +153,23 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
+  Gets a single country by slug.
+
+  Returns nil if no country exists with the given slug.
+
+  ## Examples
+
+      iex> get_country_by_slug("united-kingdom")
+      %Country{}
+
+      iex> get_country_by_slug("nonexistent-country")
+      nil
+  """
+  def get_country_by_slug(slug) when is_binary(slug) do
+    Repo.get_by(Country, slug: slug)
+  end
+
+  @doc """
   Counts the number of venues for a specific city.
 
   ## Examples
@@ -819,5 +836,30 @@ defmodule TriviaAdvisor.Locations do
       }
     )
     |> Oban.insert()
+  end
+
+  @doc """
+  Lists all cities for a specific country with their venue counts.
+
+  ## Examples
+
+      iex> list_cities_by_country_with_venue_counts(123)
+      [%{id: 1, name: "London", venue_count: 120, ...}, ...]
+  """
+  def list_cities_by_country_with_venue_counts(country_id) do
+    query = from c in City,
+            where: c.country_id == ^country_id,
+            left_join: v in assoc(c, :venues),
+            group_by: c.id,
+            select: %{
+              id: c.id,
+              name: c.name,
+              slug: c.slug,
+              latitude: c.latitude,
+              longitude: c.longitude,
+              venue_count: count(v.id)
+            }
+
+    Repo.all(query)
   end
 end

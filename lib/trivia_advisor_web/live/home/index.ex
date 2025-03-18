@@ -140,7 +140,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
         <div class="container mx-auto px-4">
           <div class="mb-8 flex items-center justify-between">
             <h2 class="text-3xl font-bold tracking-tight text-gray-900">Popular Cities</h2>
-            <a href="#" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+            <a href={~p"/cities"} class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
               View all cities
               <span aria-hidden="true">→</span>
             </a>
