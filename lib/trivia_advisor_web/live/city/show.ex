@@ -46,6 +46,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
            image_url: nil
          })
          |> assign(:venues, [])
+         |> assign(:radius, @default_radius)
+         |> assign(:radius_options, @radius_options)
          |> assign(:selected_suburbs, [])
          |> assign(:suburbs, [])}
     end

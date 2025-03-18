@@ -98,8 +98,24 @@ defmodule TriviaAdvisorWeb.Components.UI.CitySearch do
       city.id == id && city.name == name
     end)
 
-    # Fallback to basic data if not found in results
-    city_data = selected_city || %{id: id, name: name, slug: String.downcase(name) |> String.replace(~r/[^a-z0-9]+/, "-")}
+    # Fallback to basic data if not found in results - use database lookup
+    city_data = if selected_city do
+      selected_city
+    else
+      # Try to fetch from database by ID
+      case TriviaAdvisor.Repo.get(TriviaAdvisor.Locations.City, id) do
+        nil ->
+          # Generate a proper slug if we can't find the city in DB
+          slug = name
+                |> String.downcase()
+                |> String.replace(~r/\s+/, "-")
+                |> String.replace(~r/[^a-z0-9\-]/, "")
+          %{id: id, name: name, slug: slug}
+        city ->
+          # Use the actual database slug
+          %{id: city.id, name: city.name, slug: city.slug}
+      end
+    end
 
     # Send the selected city to the parent
     send(self(), {:city_selected, city_data})
