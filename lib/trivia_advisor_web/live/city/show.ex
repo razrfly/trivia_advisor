@@ -588,11 +588,86 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         |> Enum.find_value(fn event ->
           if is_map(event) && event.hero_image && is_map(event.hero_image) && event.hero_image.file_name do
             try do
-              image_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
-              # Remove the /priv/static prefix if it exists
-              String.replace(image_url, ~r{^/priv/static}, "")
+              # First try Waffle's URL generation
+              waffle_result = try do
+                # Manually ensure venue is associated
+                event_with_venue = if (is_nil(Map.get(event, :venue)) || is_struct(Map.get(event, :venue), Ecto.Association.NotLoaded)) && Map.has_key?(venue, :id) do
+                  Map.put(event, :venue, venue)
+                else
+                  event
+                end
+
+                raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event_with_venue})
+                Logger.debug("Raw hero image URL: #{inspect(raw_url)}")
+
+                if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
+                  # Get bucket name from env var, with fallback
+                  bucket = System.get_env("BUCKET_NAME") ||
+                           Application.get_env(:waffle, :bucket) ||
+                           "trivia-advisor"
+
+                  # Get S3 configuration
+                  s3_config = Application.get_env(:ex_aws, :s3, [])
+                  host = case s3_config[:host] do
+                    h when is_binary(h) -> h
+                    _ -> "fly.storage.tigris.dev"
+                  end
+
+                  # Format path correctly for S3 (remove leading slash)
+                  s3_path = if String.starts_with?(raw_url, "/"), do: String.slice(raw_url, 1..-1//1), else: raw_url
+
+                  # Construct the full S3 URL using virtual host style
+                  full_url = "https://#{bucket}.#{host}/#{s3_path}"
+                  Logger.debug("Constructed S3 URL from Waffle: #{full_url}")
+                  {:ok, full_url}
+                else
+                  # In development, use the standard approach
+                  processed_url = String.replace(raw_url, ~r{^/priv/static}, "")
+                  {:ok, processed_url}
+                end
+              rescue
+                e ->
+                  Logger.error("Error using Waffle URL generation: #{Exception.message(e)}")
+                  :error
+              end
+
+              case waffle_result do
+                {:ok, url} ->
+                  url
+                _ ->
+                  # Fallback to manual URL construction (which we know works)
+                  if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
+                    # Get bucket name from env var, with fallback
+                    bucket = System.get_env("BUCKET_NAME") ||
+                             Application.get_env(:waffle, :bucket) ||
+                             "trivia-advisor"
+
+                    # Get S3 configuration
+                    s3_config = Application.get_env(:ex_aws, :s3, [])
+                    host = case s3_config[:host] do
+                      h when is_binary(h) -> h
+                      _ -> "fly.storage.tigris.dev"
+                    end
+
+                    # Get file name parts
+                    file_name = event.hero_image.file_name
+                    extension = Path.extname(file_name)
+                    base_name = Path.basename(file_name, extension)
+
+                    # Construct manual URL like we did in our working solution
+                    original_path = "uploads/venues/#{venue.slug}/original_#{base_name}#{extension}"
+                    Logger.debug("Fallback to manual S3 URL: https://#{bucket}.#{host}/#{original_path}")
+                    "https://#{bucket}.#{host}/#{original_path}"
+                  else
+                    # In development, try again with standard approach
+                    raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+                    String.replace(raw_url, ~r{^/priv/static}, "")
+                  end
+              end
             rescue
-              _ -> nil
+              e ->
+                Logger.error("Error processing hero image URL: #{Exception.message(e)}")
+                nil
             end
           end
         end)
@@ -625,6 +700,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
       # Use the first available image or fall back to placeholder
       image_url = event_image || google_place_image || metadata_image || venue_image
+      Logger.debug("Selected image URL: #{inspect(image_url)}")
 
       if is_binary(image_url) do
         process_image_url(image_url)
@@ -654,7 +730,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
             # Get S3 configuration
             s3_config = Application.get_env(:ex_aws, :s3, [])
-            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+            bucket = Application.get_env(:waffle, :bucket, "trivia-advisor")
 
             # For Tigris S3-compatible storage, we need to use a public URL pattern
             # that doesn't rely on object ACLs
