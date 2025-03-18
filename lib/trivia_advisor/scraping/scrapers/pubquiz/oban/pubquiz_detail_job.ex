@@ -11,6 +11,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
   alias TriviaAdvisor.Scraping.Oban.PubquizPlaceLookupJob
+  alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   # Polish to numeric day mapping (0-6, where 0 is Sunday)
   @polish_days %{
@@ -96,6 +97,21 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 _ -> "Monday"
               end
 
+              # Process hero image if available
+              hero_image_url = venue_data["image_url"] || ""
+              hero_image_attrs = if hero_image_url != "" do
+                case ImageDownloader.download_event_hero_image(hero_image_url) do
+                  {:ok, upload} ->
+                    Logger.info("📸 Successfully processed hero image for venue: #{venue.name}")
+                    %{hero_image: upload}
+                  {:error, reason} ->
+                    Logger.warning("⚠️ Failed to process hero image: #{inspect(reason)}")
+                    %{}
+                end
+              else
+                %{}
+              end
+
               # Create the event data map with string keys
               event_data = %{
                 "raw_title" => "#{source.name} at #{venue.name}",
@@ -104,7 +120,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 "description" => details.description || "",
                 "fee_text" => "#{trunc(entry_fee_cents / 100)}",  # Format as integer like "15" without decimal or currency symbol
                 "source_url" => venue_url,  # This is key for venue skipping to work
-                "hero_image_url" => venue_data["image_url"] || "",
+                "hero_image_url" => hero_image_url, # Keep original URL for metadata
                 "day_of_week" => day_of_week,
                 "start_time" => start_time,
                 "frequency" => :weekly,
@@ -113,6 +129,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 "override_entry_fee_cents" => entry_fee_cents,
                 "performer_id" => performer_id
               }
+              |> Map.merge(hero_image_attrs) # Add pre-processed hero image if available
 
               Logger.info("🔥 EVENT DATA BEING SENT TO EVENT STORE: #{inspect(event_data)}")
               Logger.info("🔍 SOURCE URL BEING SAVED: #{venue_url}")
