@@ -7,7 +7,7 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
   - VenueHelpers.download_image - Used for venue-related images, returns {:ok, map} tuples
   - GooglePlaceImageStore.download_image - Specialized for Google Place images with specific headers
 
-  This module exists to handle performer image downloading specifically, with a unified interface
+  This module exists to handle image downloading with a unified interface
   that returns a format compatible with Waffle attachments.
   """
 
@@ -136,6 +136,62 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
         {:error, Exception.message(e)}
     end
   end
+
+  @doc """
+  Downloads an event hero image from a URL.
+  Returns a result tuple with a Plug.Upload struct or error.
+
+  ## Parameters
+    - url: The URL of the hero image to download
+
+  ## Returns
+    - {:ok, %Plug.Upload{}} if successful
+    - {:error, reason} if download fails
+  """
+  def download_event_hero_image(url) when is_binary(url) and url != "" do
+    Logger.info("📸 Processing event hero image URL: #{url}")
+
+    # Generate a deterministic filename based on the URL
+    url_hash = :crypto.hash(:md5, url) |> Base.encode16()
+    consistent_filename = "event_hero_#{url_hash}"
+
+    try do
+      case download_image(url, consistent_filename) do
+        %{filename: filename, path: path} when not is_nil(path) ->
+          # Create a Plug.Upload struct compatible with Waffle's cast_attachments
+          content_type = case Path.extname(filename) |> String.downcase() do
+            ".jpg" -> "image/jpeg"
+            ".jpeg" -> "image/jpeg"
+            ".png" -> "image/png"
+            ".gif" -> "image/gif"
+            ".webp" -> "image/webp"
+            ".avif" -> "image/avif"
+            _ -> "image/jpeg" # Default
+          end
+
+          plug_upload = %Plug.Upload{
+            path: path,
+            filename: filename,
+            content_type: content_type
+          }
+
+          Logger.info("✅ Successfully processed event hero image from #{url}")
+          {:ok, plug_upload}
+
+        nil ->
+          Logger.warning("⚠️ Failed to download event hero image from #{url}")
+          {:error, :download_failed}
+      end
+    rescue
+      e ->
+        Logger.error("❌ Event hero image processing error for #{url}: #{Exception.message(e)}")
+        {:error, :processing_error}
+    end
+  end
+
+  def download_event_hero_image(""), do: {:error, :empty_url}
+  def download_event_hero_image(nil), do: {:error, :nil_url}
+  def download_event_hero_image(_), do: {:error, :invalid_url}
 
   @doc """
   Downloads a performer profile image from a URL.
