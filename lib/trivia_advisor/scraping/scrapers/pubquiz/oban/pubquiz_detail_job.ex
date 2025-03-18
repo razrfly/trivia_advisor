@@ -97,30 +97,44 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 _ -> "Monday"
               end
 
-              # Process hero image if available
+              # Handle hero image if provided
               hero_image_url = venue_data["image_url"] || ""
               hero_image_attrs = if hero_image_url != "" do
+                Logger.info("🖼️ Processing hero image for venue: #{venue.name}")
                 case ImageDownloader.download_event_hero_image(hero_image_url) do
                   {:ok, upload} ->
-                    Logger.info("📸 Successfully processed hero image for venue: #{venue.name}")
-                    %{hero_image: upload}
+                    Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
+                    # Create a map with both the hero_image and venue_id to help Waffle
+                    # The venue_id is needed for proper S3 storage path construction
+                    %{
+                      hero_image: upload,
+                      # Include venue_id to help with storage path generation in hero_image.ex
+                      venue_id: venue.id
+                    }
                   {:error, reason} ->
-                    Logger.warning("⚠️ Failed to process hero image: #{inspect(reason)}")
+                    Logger.warning("⚠️ Failed to download hero image for #{venue.name}: #{inspect(reason)}")
                     %{}
                 end
               else
+                Logger.debug("ℹ️ No hero image URL provided for venue: #{venue.name}")
                 %{}
               end
 
+              # Enhanced logging for debugging
+              Logger.debug("🏆 Hero image attributes: #{inspect(hero_image_attrs)}")
+
               # Create the event data map with string keys
               event_data = %{
+                "source_url" => venue_url,
                 "raw_title" => "#{source.name} at #{venue.name}",
-                "name" => "#{source.name} at #{venue.name}", # Make sure name is properly set
+                "name" => "#{source.name} at #{venue.name}",
+                "venue_id" => venue.id,
+                "venue_name" => venue.name,
                 "time_text" => "#{day_name} #{start_time}",
-                "description" => details.description || "",
                 "fee_text" => "#{trunc(entry_fee_cents / 100)}",  # Format as integer like "15" without decimal or currency symbol
-                "source_url" => venue_url,  # This is key for venue skipping to work
+                "description" => details.description || "",
                 "hero_image_url" => hero_image_url, # Keep original URL for metadata
+                "source" => "pubquiz",
                 "day_of_week" => day_of_week,
                 "start_time" => start_time,
                 "frequency" => :weekly,
