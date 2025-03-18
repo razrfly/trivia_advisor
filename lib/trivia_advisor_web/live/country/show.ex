@@ -55,6 +55,12 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
           <div class="container mx-auto">
             <h1 class="text-4xl font-bold"><%= @country.name %></h1>
             <p class="mt-2 text-lg"><%= length(@cities) %> Cities with Trivia Venues</p>
+            <%= if @country.attribution do %>
+              <p class="mt-1 text-xs opacity-80">
+                Photo by <a href={@country.attribution.photographer_url} target="_blank" rel="noopener" class="hover:underline"><%= @country.attribution.photographer_name %></a>
+                on <a href={@country.attribution.unsplash_url} target="_blank" rel="noopener" class="hover:underline">Unsplash</a>
+              </p>
+            <% end %>
           </div>
         </div>
       </div>
@@ -93,8 +99,8 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
         {:error, :not_found}
 
       country ->
-        # Get the country's image using UnsplashService
-        image_url = UnsplashService.get_city_image(country.name)
+        # Get the country's image using UnsplashService with better search terms and attribution
+        image_data = UnsplashService.get_country_image(country.name)
 
         # Build the country data structure
         {:ok, %{
@@ -102,7 +108,8 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
           name: country.name,
           code: country.code,
           country: country,  # Include the full country struct for future use
-          image_url: image_url
+          image_url: image_data.url,
+          attribution: image_data.attribution
         }}
     end
   end

@@ -433,11 +433,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
       # Increase timeout for image downloads
       case Task.yield(task, 40_000) || Task.shutdown(task) do
-        {:ok, nil} ->
-          # Explicit handling for nil result
-          {:ok, nil}
         {:ok, result} ->
-          # Handle non-nil result
+          # Handle any result (including nil)
           {:ok, result}
         _ ->
           Logger.error("Timeout or error downloading performer image from #{url}")

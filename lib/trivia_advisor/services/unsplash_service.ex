@@ -28,6 +28,19 @@ defmodule TriviaAdvisor.Services.UnsplashService do
   end
 
   @doc """
+  Get an image URL for a country, either from cache or from Unsplash API.
+  Returns a map with the image URL and attribution data.
+  """
+  def get_country_image(country_name) do
+    case lookup_cache(cache_key("country", country_name)) do
+      {:ok, data} ->
+        data
+      :not_found ->
+        GenServer.call(__MODULE__, {:fetch_image, "country", country_name, true})
+    end
+  end
+
+  @doc """
   Get an image URL for a venue, either from cache or from Unsplash API.
   """
   def get_venue_image(venue_name) do
@@ -71,6 +84,17 @@ defmodule TriviaAdvisor.Services.UnsplashService do
     url = fetch_from_unsplash(type, name)
     cache_result(cache_key(type, name), url)
     {:reply, url, state}
+  end
+
+  @impl true
+  def handle_call({:fetch_image, type, name, true}, _from, state) do
+    {url, attribution} = fetch_from_unsplash_with_attribution(type, name)
+    data = %{
+      url: url,
+      attribution: attribution
+    }
+    cache_result(cache_key(type, name), data)
+    {:reply, data, state}
   end
 
   @impl true
@@ -134,6 +158,7 @@ defmodule TriviaAdvisor.Services.UnsplashService do
         query = case type do
           "city" -> "#{name} city"
           "venue" -> "#{name} pub bar interior"
+          "country" -> "#{name} landscape picturesque"
           _ -> "#{name}"
         end
 
@@ -168,10 +193,138 @@ defmodule TriviaAdvisor.Services.UnsplashService do
                 Logger.error("Failed to parse Unsplash API response")
                 fallback_image(name)
             end
+          {:ok, %{status_code: 403, body: "Rate Limit Exceeded"} = response} ->
+            # When rate limited, check if we already have a cached entry and reuse it
+            Logger.warning("Unsplash API rate limit exceeded for #{type} #{name}")
+
+            # Try to find any expired entry and reuse it instead of using a fallback
+            case find_expired_cache_entry(cache_key(type, name)) do
+              {:ok, cached_value} ->
+                Logger.info("Reusing expired cache entry for #{type} #{name}")
+                # Return the cached value but don't update the cache expiration
+                cached_value
+              :not_found ->
+                Logger.error("Unsplash API rate limited and no cached entry available for #{type} #{name}: #{inspect(response)}")
+                fallback_image(name)
+            end
           error ->
             Logger.error("Unsplash API request failed: #{inspect(error)}")
-            fallback_image(name)
+            # Try to find any expired entry
+            case find_expired_cache_entry(cache_key(type, name)) do
+              {:ok, cached_value} ->
+                Logger.info("Reusing expired cache entry for #{type} #{name}")
+                # Return the cached value but don't update the cache expiration
+                cached_value
+              :not_found ->
+                fallback_image(name)
+            end
         end
+    end
+  end
+
+  defp fetch_from_unsplash_with_attribution(type, name) do
+    # Get API key from environment
+    case System.get_env("UNSPLASH_ACCESS_KEY") do
+      nil ->
+        Logger.warning("UNSPLASH_ACCESS_KEY not set. Using fallback image.")
+        {fallback_image(name), nil}
+      access_key ->
+        # Customize search query based on type
+        query = case type do
+          "city" -> "#{name} city"
+          "venue" -> "#{name} pub bar interior"
+          "country" -> "#{name} landscape picturesque"
+          _ -> "#{name}"
+        end
+
+        # Use search endpoint instead of random for more relevant results
+        url = "https://api.unsplash.com/search/photos?query=#{URI.encode(query)}&orientation=landscape&per_page=30&client_id=#{access_key}"
+
+        Logger.info("Fetching #{type} image from Unsplash for #{name} with attribution")
+
+        case HTTPoison.get(url, [], [follow_redirect: true]) do
+          {:ok, %{status_code: 200, body: body}} ->
+            case Jason.decode(body) do
+              {:ok, data} ->
+                # Get the first result, or a random one from top results
+                results = Map.get(data, "results", [])
+
+                if length(results) > 0 do
+                  # Order by likes and randomly select from top 5
+                  results_by_likes = Enum.sort_by(results, fn r -> Map.get(r, "likes", 0) end, :desc)
+
+                  result = if length(results_by_likes) >= 5 do
+                    Enum.random(Enum.take(results_by_likes, 5))
+                  else
+                    Enum.random(results_by_likes)
+                  end
+
+                  img_url = get_in(result, ["urls", "regular"]) || fallback_image(name)
+
+                  # Extract attribution information
+                  attribution = %{
+                    photographer_name: get_in(result, ["user", "name"]),
+                    photographer_username: get_in(result, ["user", "username"]),
+                    photographer_url: get_in(result, ["user", "links", "html"]),
+                    unsplash_url: "#{get_in(result, ["links", "html"])}?utm_source=trivia_advisor&utm_medium=referral"
+                  }
+
+                  {img_url, attribution}
+                else
+                  Logger.warning("No image results for #{name}")
+                  {fallback_image(name), nil}
+                end
+              _ ->
+                Logger.error("Failed to parse Unsplash API response")
+                {fallback_image(name), nil}
+            end
+          {:ok, %{status_code: 403, body: "Rate Limit Exceeded"} = response} ->
+            # When rate limited, check if we already have a cached entry and reuse it
+            Logger.warning("Unsplash API rate limit exceeded for #{type} #{name}")
+
+            # Try to find any expired entry and reuse it instead of using a fallback
+            case find_expired_cache_entry_with_attribution(cache_key(type, name)) do
+              {:ok, data} ->
+                Logger.info("Reusing expired cache entry for #{type} #{name}")
+                # Return the cached value but don't update the cache expiration
+                data
+              :not_found ->
+                Logger.error("Unsplash API rate limited and no cached entry available for #{type} #{name}: #{inspect(response)}")
+                {fallback_image(name), nil}
+            end
+          error ->
+            Logger.error("Unsplash API request failed: #{inspect(error)}")
+            # Try to find any expired entry
+            case find_expired_cache_entry_with_attribution(cache_key(type, name)) do
+              {:ok, data} ->
+                Logger.info("Reusing expired cache entry for #{type} #{name}")
+                data
+              :not_found ->
+                {fallback_image(name), nil}
+            end
+        end
+    end
+  end
+
+  # Helper to find expired cache entries
+  defp find_expired_cache_entry(key) do
+    # Look for any entry, even if expired
+    case :ets.lookup(@table_name, key) do
+      [{^key, value, _expires_at}] ->
+        {:ok, value}
+      [] ->
+        :not_found
+    end
+  end
+
+  # Helper to find expired cache entries with attribution
+  defp find_expired_cache_entry_with_attribution(key) do
+    # Look for any entry, even if expired
+    case :ets.lookup(@table_name, key) do
+      [{^key, value, _expires_at}] ->
+        {:ok, value}
+      [] ->
+        :not_found
     end
   end
 
