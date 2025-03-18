@@ -90,3 +90,10 @@ config :swoosh, :api_client, false
 # Add the Google Maps API key config
 config :trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI,
   google_maps_api_key: System.get_env("GOOGLE_MAPS_API_KEY")
+
+# Explicitly set Oban plugins for dev (no Cron)
+config :trivia_advisor, Oban,
+  plugins: [
+    # No Cron plugin in development
+    {Oban.Plugins.Pruner, max_age: 604800}  # 7 days in seconds
+  ]
