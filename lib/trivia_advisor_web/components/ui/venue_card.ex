@@ -1,5 +1,6 @@
 defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
   use TriviaAdvisorWeb, :html
+  alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
 
   def venue_card(assigns) do
     ~H"""
@@ -59,7 +60,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd" />
           </svg>
           <span>
-            <%= format_day(@venue.day_of_week) %> at <%= format_time(@venue.start_time) %>
+            <%= format_day(@venue.day_of_week) %> at <%= format_localized_time(@venue.start_time, get_venue_country(@venue)) %>
           </span>
         </div>
 
@@ -123,6 +124,12 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
+  # Helper to get the full country data for localization
+  defp get_venue_country(venue) do
+    country_code = get_venue_country_code(venue)
+    %{code: country_code}
+  end
+
   # Helper to get country's currency code
   defp get_country_currency(country_code) do
     # Try to use the Countries library to get currency code
@@ -150,9 +157,8 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
 
   defp format_day(_), do: "TBA"
 
-  defp format_time(time) when is_binary(time) do
-    time
+  # Use the localization helper for time formatting
+  defp format_localized_time(time, country) do
+    LocalizationHelpers.format_localized_time(time, country)
   end
-
-  defp format_time(_), do: "TBA"
 end

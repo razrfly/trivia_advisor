@@ -3,6 +3,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Services.UnsplashService
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
+  alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
   require Logger
   import FormatHelpers, only: [
     time_ago: 1,
@@ -469,23 +470,41 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
       event = List.first(venue.events)
       time = Map.get(event, :start_time)
 
-      if is_struct(time, Time) do
-        # Format Time struct properly
-        hour = time.hour
-        am_pm = if hour >= 12, do: "PM", else: "AM"
-        hour_12 = cond do
-          hour == 0 -> 12
-          hour > 12 -> hour - 12
-          true -> hour
-        end
-        "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm}"
-      else
-        # Default time if not a Time struct
-        "7:00 PM"
-      end
+      # Get country data for proper localization
+      country = get_venue_country(venue)
+
+      # Use localization helper to format the time
+      LocalizationHelpers.format_localized_time(time, country)
     else
-      # Default value if no events
-      "7:00 PM"
+      # Default value if no events - use localized 7:00 PM
+      default_time = ~T[19:00:00]
+      country = get_venue_country(venue)
+      LocalizationHelpers.format_localized_time(default_time, country)
+    end
+  end
+
+  # Helper to get country data for a venue
+  defp get_venue_country(venue) do
+    cond do
+      # First check for direct country_code field (which is what we use in the city index)
+      is_map(venue) && Map.has_key?(venue, :country_code) && venue.country_code ->
+        %{code: venue.country_code}
+
+      # If venue has loaded city with country association
+      is_map(venue) && Map.has_key?(venue, :city) &&
+      !is_nil(venue.city) && !is_struct(venue.city, Ecto.Association.NotLoaded) &&
+      Map.has_key?(venue.city, :country) &&
+      !is_nil(venue.city.country) && !is_struct(venue.city.country, Ecto.Association.NotLoaded) ->
+        venue.city.country
+
+      # Try to get country code from metadata
+      is_map(venue) && Map.has_key?(venue, :metadata) && is_map(venue.metadata) &&
+      Map.has_key?(venue.metadata, "country_code") ->
+        %{code: venue.metadata["country_code"]}
+
+      # Default to US
+      true ->
+        %{code: "US"}
     end
   end
 
