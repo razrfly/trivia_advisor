@@ -25,11 +25,12 @@ config :trivia_advisor, Oban,
   plugins: [
     {Oban.Plugins.Cron,
      crontab: [
-       {"0 2 * * *", TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob}, # Run at 2 AM daily
-       {"0 3 * * *", TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob}, # Run at 3 AM daily
-       {"0 4 * * *", TriviaAdvisor.Scraping.Oban.InquizitionIndexJob}, # Run at 4 AM daily
-       {"0 5 * * *", TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob}, # Run at 5 AM daily with limit=100
-       {"0 6 * * *", TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob}, # Run at 6 AM daily
+       {"0 1 * * *", TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob}, # Run at 2 AM daily
+       {"0 2 * * *", TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob}, # Run at 3 AM daily
+       {"0 3 * * *", TriviaAdvisor.Scraping.Oban.InquizitionIndexJob}, # Run at 4 AM daily
+       {"0 4 * * *", TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob}, # Run at 5 AM daily with limit=100
+       {"0 5 * * *", TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob},
+       {"0 6 * * *", TriviaAdvisor.Scraping.Oban.PubquizIndexJob}, # Run at 6 AM daily
        {"0 2 * * *", TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker} # Run at 2 AM daily
      ]},
     {Oban.Plugins.Pruner, max_age: 604800}  # 7 days in seconds
