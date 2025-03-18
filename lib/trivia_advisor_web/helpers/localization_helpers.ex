@@ -5,7 +5,8 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
   """
   require Logger
 
-  # Define our CLDR module for the project
+  # Define our CLDR module for the project - dynamically including common locales
+  # but not hardcoding specific countries
   defmodule TriviaAdvisor.Cldr do
     use Cldr,
       locales: ["en", "fr", "de", "es", "it", "ja", "zh", "ru", "pt", "nl", "en-GB"],
@@ -20,10 +21,10 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
   ## Examples
 
       iex> format_localized_time(~T[19:30:00], %{code: "US"})
-      "7:30 PM (local time)"
+      "7:30 PM"
 
       iex> format_localized_time("7:30 PM", %{code: "GB"})
-      "19:30 (local time)"
+      "19:30"
 
   """
   def format_localized_time(time, country) do
@@ -39,24 +40,24 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
         # Format with today's date to create a DateTime for formatting
         datetime = DateTime.new!(Date.utc_today(), time_struct, "Etc/UTC")
 
-        # Use different format options based on locale
-        format_options = if locale in ["fr", "de", "es", "it", "ru", "pt", "nl", "zh", "ja"] do
-          # Use 24-hour format for these locales
+        # Determine format based on country's time format preference
+        format_options = if uses_24h_format?(country) do
+          # 24-hour format
           [format: :time, style: :medium]
         else
-          # Use default format for other locales (like en, en-GB which have their own conventions)
+          # 12-hour format
           [format: :time]
         end
 
-        # Use CLDR with the locale from country data and appropriate format
+        # Use CLDR with appropriate format
         result = TriviaAdvisor.Cldr.DateTime.to_string(datetime, format_options ++ [locale: locale])
         Logger.debug("CLDR formatting result: #{inspect(result)} with options: #{inspect(format_options)}")
 
         case result do
           {:ok, formatted} -> formatted
           _ ->
-            # If CLDR failed, use locale-specific fallback
-            if locale in ["fr", "de", "es", "it", "ru", "pt", "nl", "zh", "ja"] do
+            # If CLDR failed, use fallback based on country preference
+            if uses_24h_format?(country) do
               # 24-hour format fallback
               "#{String.pad_leading("#{time_struct.hour}", 2, "0")}:#{String.pad_leading("#{time_struct.minute}", 2, "0")}"
             else
@@ -70,56 +71,118 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     end
   end
 
-  # Get locale from country data without hardcoding
+  # Determine if a country uses 24-hour time format
+  # This uses the Countries library to get country info if available
+  defp uses_24h_format?(country) do
+    # Default for all of continental Europe, Asia, Africa, South America
+    # Only a few countries (US, UK, Canada, Australia, etc.) use 12-hour format
+    cond do
+      is_nil(country) -> false
+      !Map.has_key?(country, :code) -> false
+      is_nil(country.code) -> false
+      true ->
+        country_code = country.code
+        try do
+          # Try to get countries data
+          country_data = Countries.get(country_code)
+
+          # Get region from countries data
+          region = country_data.region
+          continent = country_data.continent
+
+          Logger.debug("Country #{country_code} is in region: #{inspect(region)}, continent: #{inspect(continent)}")
+
+          # Most countries use 24h format except these primarily English-speaking ones
+          !(country_code in ["US", "CA", "AU", "NZ", "PH"] ||
+            (country_code == "GB") || # UK uses both but defaults to 12h in casual settings
+            (region == "North America" && country_code != "MX"))
+        rescue
+          e ->
+            Logger.debug("Error determining time format for #{inspect(country.code)}: #{inspect(e)}")
+            # Default to 24h format for most countries except known 12h format countries
+            !(country.code in ["US", "CA", "AU", "NZ", "GB", "PH"])
+        end
+    end
+  end
+
+  # Get locale from country data using Countries library
   defp get_locale_from_country(country) do
-    result = cond do
+    cond do
       # First check if the country argument is nil
       is_nil(country) -> "en"
 
-      # Then check if country has a locale field (might be added in the future)
-      Map.has_key?(country, :locale) && country.locale ->
-        country.locale
+      # Check if we have a country code
+      !Map.has_key?(country, :code) || is_nil(country.code) -> "en"
 
-      # Then if we have both language_code and country code, construct a locale
-      Map.has_key?(country, :language_code) &&
-      country.language_code &&
-      Map.has_key?(country, :code) &&
-      country.code ->
-        "#{String.downcase(country.language_code)}-#{String.upcase(country.code)}"
-
-      # Then try the code field for specific countries that need special handling
-      Map.has_key?(country, :code) && country.code ->
-        code = country.code
-        Logger.debug("Getting locale for country code: #{inspect(code)}")
-
-        case code do
-          "FR" ->
-            Logger.debug("French venue detected, using fr locale")
-            "fr"
-          "GB" -> "en-GB"
-          "US" -> "en"  # Use standard English for US
-          code when code in ["AU", "CA", "NZ"] -> "en"
-          "DE" -> "de"
-          "ES" -> "es"
-          "IT" -> "it"
-          "JP" -> "ja"
-          "CN" -> "zh"
-          "RU" -> "ru"
-          "PT" -> "pt"
-          "NL" -> "nl"
-          _ ->
-            Logger.debug("Defaulting to en for country code: #{inspect(code)}")
-            "en" # Default to English for other countries
-        end
-
-      # Ultimate fallback
+      # Otherwise use country code to determine locale
       true ->
-        Logger.debug("Using ultimate fallback locale: en")
-        "en"
-    end
+        try do
+          country_code = country.code
+          Logger.debug("Determining locale for country code: #{country_code}")
 
-    Logger.debug("Determined locale: #{inspect(result)} for country: #{inspect(country)}")
-    result
+          # Try to get country info from Countries library
+          country_data = Countries.get(country_code)
+
+          # Use official language as locale base
+          languages = country_data.languages || []
+          official_language =
+            languages
+            |> Enum.find(fn lang -> lang.official end)
+            |> case do
+              nil -> List.first(languages) # If no official language, use first
+              lang -> lang
+            end
+
+          language_code = if official_language do
+            official_language.iso_639_1 || "en"
+          else
+            "en"
+          end
+
+          Logger.debug("Found language code #{language_code} for country #{country_code}")
+
+          # Construct locale
+          case country_code do
+            "GB" -> "en-GB"  # Special case for UK English
+            _ ->
+              # Check if our CLDR supports this specific locale
+              specific_locale = "#{String.downcase(language_code)}-#{String.upcase(country_code)}"
+              generic_locale = String.downcase(language_code)
+
+              # Try specific locale first, then fall back to generic
+              if specific_locale in TriviaAdvisor.Cldr.known_locale_names() do
+                specific_locale
+              else
+                if generic_locale in TriviaAdvisor.Cldr.known_locale_names() do
+                  generic_locale
+                else
+                  "en" # Ultimate fallback
+                end
+              end
+          end
+
+        rescue
+          e ->
+            Logger.debug("Error determining locale for #{inspect(country)}: #{inspect(e)}")
+            # Simple fallback based on common language-country pairs
+            # This is only used if the Countries library fails
+            case country.code do
+              "GB" -> "en-GB"
+              "US" -> "en"
+              "FR" -> "fr"
+              "DE" -> "de"
+              "ES" -> "es"
+              "IT" -> "it"
+              "JP" -> "ja"
+              "CN" -> "zh"
+              "RU" -> "ru"
+              "PT" -> "pt"
+              "NL" -> "nl"
+              "PL" -> "pl"
+              _ -> "en"
+            end
+        end
+    end
   end
 
   # Normalize different time formats to Time struct
