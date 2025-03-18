@@ -692,7 +692,7 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
             s3_config = Application.get_env(:ex_aws, :s3, [])
             bucket = System.get_env("BUCKET_NAME") ||
                      Application.get_env(:waffle, :bucket) ||
-                     "trivia-advisor"
+                     "trivia-app"
 
             # For Tigris S3-compatible storage, we need to use a public URL pattern
             # that doesn't rely on object ACLs
