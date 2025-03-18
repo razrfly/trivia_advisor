@@ -81,7 +81,10 @@ defmodule TriviaAdvisor.MixProject do
       {:plug, "~> 1.16"},
       {:igniter, "~> 0.5", only: [:dev]},
       {:sentry, "~> 10.8.1"},
-      {:hackney, "~> 1.8"}
+      {:hackney, "~> 1.8"},
+      {:ex_cldr, "~> 2.41"},
+      {:ex_cldr_dates_times, "~> 2.22"},
+      {:ex_cldr_calendars, "~> 2.1"}
     ]
   end
 
