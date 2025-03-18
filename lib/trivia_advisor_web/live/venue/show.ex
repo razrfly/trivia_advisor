@@ -5,6 +5,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   alias TriviaAdvisor.Locations
   alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
+  alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
   require Logger
 
   import ImageGallery
@@ -15,6 +16,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     get_source_name: 1,
     format_day_of_week: 1
   ]
+  import LocalizationHelpers, only: [format_localized_time: 2]
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
@@ -142,7 +144,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                     </svg>
                     Start Time
                   </h3>
-                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= format_time(get_start_time(@venue)) %></p>
+                  <p class="mt-1 text-lg font-semibold text-gray-900"><%= format_localized_time(get_start_time(@venue), @country) %></p>
                 </div>
                 <div class="flex flex-col">
                   <h3 class="mb-2 flex items-center text-sm font-medium text-gray-500">
@@ -354,7 +356,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                       <%= format_day(get_day_of_week(@venue)) %>, <%= format_next_date(get_day_of_week(@venue)) %>
                     </h3>
                     <div class="mt-2 text-sm text-indigo-700">
-                      <p>Starts at <%= get_start_time(@venue) %></p>
+                      <p>Starts at <%= format_localized_time(get_start_time(@venue), @country) %></p>
                     </div>
                     <div class="mt-4">
                       <div class="-mx-2 -my-1.5 flex">
@@ -902,23 +904,36 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   # Helper to get country information
   defp get_country(venue) do
-    cond do
-      # Check if city exists
-      is_nil(venue.city) ->
-        %{name: "Unknown", slug: "unknown"}
-
-      # Check if city.country is loaded (not an Ecto.Association.NotLoaded struct)
-      is_struct(venue.city.country, Ecto.Association.NotLoaded) ->
-        %{name: "Unknown", slug: "unknown"}
-
-      # If city.country is properly loaded
-      venue.city.country ->
-        venue.city.country
-
-      # Fallback
+    country = cond do
+      # Check if venue has a direct country_code
+      Map.has_key?(venue, :country_code) ->
+        %{code: venue.country_code, name: "Unknown", slug: "unknown"}
+      # Try to safely extract country from city if it exists
       true ->
-        %{name: "Unknown", slug: "unknown"}
+        try do
+          if Map.has_key?(venue, :city) &&
+             !is_nil(venue.city) &&
+             !is_struct(venue.city, Ecto.Association.NotLoaded) &&
+             Map.has_key?(venue.city, :country) &&
+             !is_nil(venue.city.country) &&
+             !is_struct(venue.city.country, Ecto.Association.NotLoaded) do
+            venue.city.country
+          else
+            # Default fallback
+            %{code: "US", name: "Unknown", slug: "unknown"}
+          end
+        rescue
+          # If any error occurs, return a default
+          _ -> %{code: "US", name: "Unknown", slug: "unknown"}
+        end
     end
+
+    # Debug log for venues related to France
+    if venue.slug == "bar-le-national" do
+      Logger.debug("Country for bar-le-national: #{inspect(country)}")
+    end
+
+    country
   end
 
   # Helper to get city information
@@ -929,46 +944,6 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       # Fallback if city is not available or not loaded
       %{name: "Unknown", slug: "unknown"}
     end
-  end
-
-  # Helper to format time in a more friendly way (e.g., 7:30 PM)
-  defp format_time(%Time{} = time) do
-    # Convert Time struct to 12-hour format with AM/PM
-    hour = time.hour
-    am_pm = if hour >= 12, do: "PM", else: "AM"
-    hour_12 = cond do
-      hour == 0 -> 12
-      hour > 12 -> hour - 12
-      true -> hour
-    end
-
-    "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm} (local time)"
-  end
-
-  defp format_time(time_str) when is_binary(time_str) do
-    case Regex.run(~r/(\d{1,2}):?(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i, time_str) do
-      [_, hour, minute, _, am_pm] when am_pm in ["AM", "PM", "am", "pm"] ->
-        "#{hour}:#{minute} #{String.upcase(am_pm)} (local time)"
-      [_, hour, minute, _, nil] ->
-        # Try to convert 24-hour time to 12-hour time
-        {hour_int, _} = Integer.parse(hour)
-        am_pm = if hour_int >= 12, do: "PM", else: "AM"
-        hour_12 = cond do
-          hour_int == 0 -> "12"
-          hour_int > 12 -> "#{hour_int - 12}"
-          true -> "#{hour_int}"
-        end
-        "#{hour_12}:#{minute} #{am_pm} (local time)"
-      _ ->
-        # If we can't parse the time, return it as-is
-        time_str
-    end
-  end
-
-  # Catch-all clause for non-string, non-Time inputs
-  defp format_time(time) do
-    # Try to convert to string and format
-    "#{time} (local time)"
   end
 
   # Helper to get country's currency
