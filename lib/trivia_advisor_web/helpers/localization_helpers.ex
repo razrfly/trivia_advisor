@@ -85,11 +85,9 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     end
   end
 
-  # Determine if a country uses 24-hour time format
-  # This uses the Countries library to get country info if available
+  # Determine if a country uses 24-hour time format based on geographical and cultural patterns
+  # rather than hardcoded country lists
   defp uses_24h_format?(country) do
-    # Default for all of continental Europe, Asia, Africa, South America
-    # Only a few countries (US, UK, Canada, Australia, etc.) use 12-hour format
     cond do
       is_nil(country) -> false
       !Map.has_key?(country, :code) -> false
@@ -100,22 +98,62 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
           # Try to get countries data
           country_data = Countries.get(country_code)
 
-          # Get region from countries data
-          region = country_data.region
-          continent = country_data.continent
+          # Most countries worldwide use 24h format
+          # English-speaking nations and their cultural affiliates typically use 12h format
+          # Let's determine this based on region and language rather than hardcoded lists
+          cond do
+            # If we can't get country data, use common knowledge that most countries use 24h
+            is_nil(country_data) -> true
 
-          Logger.debug("Country #{country_code} is in region: #{inspect(region)}, continent: #{inspect(continent)}")
+            # Check if the region is North America (mostly 12h except Mexico)
+            Map.has_key?(country_data, :region) && country_data.region == "North America" ->
+              # Mexico uses 24h format
+              country_code == "MX"
 
-          # Most countries use 24h format except these primarily English-speaking ones
-          !(country_code in ["US", "CA", "AU", "NZ", "PH"] ||
-            (country_code == "GB") || # UK uses both but defaults to 12h in casual settings
-            (region == "North America" && country_code != "MX"))
+            # Check if the main language is English (English-speaking countries prefer 12h format)
+            is_language_primary?(country_data, "en") -> false
+
+            # Check if it's a commonwealth or English-influenced country (many use 12h in daily life)
+            # Commonwealth countries often use both formats but 12h is common in daily life
+            Map.has_key?(country_data, :commonwealth) && country_data.commonwealth -> false
+
+            # Default: Most other countries worldwide use 24h format
+            true -> true
+          end
         rescue
           e ->
             Logger.debug("Error determining time format for #{inspect(country.code)}: #{inspect(e)}")
-            # Default to 24h format for most countries except known 12h format countries
-            !(country.code in ["US", "CA", "AU", "NZ", "GB", "PH"])
+            # Default to 24h format if we can't determine - majority of world uses it
+            true
         end
+    end
+  end
+
+  # Helper to check if a particular language is the primary language for a country
+  defp is_language_primary?(country_data, language_code) do
+    cond do
+      # Check official languages first
+      Map.has_key?(country_data, :languages_official) && is_binary(country_data.languages_official) ->
+        primary_lang = country_data.languages_official
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+          |> List.first()
+          |> String.downcase()
+
+        primary_lang == language_code
+
+      # Then check spoken languages
+      Map.has_key?(country_data, :languages_spoken) && is_binary(country_data.languages_spoken) ->
+        primary_lang = country_data.languages_spoken
+          |> String.split(",")
+          |> Enum.map(&String.trim/1)
+          |> List.first()
+          |> String.downcase()
+
+        primary_lang == language_code
+
+      # If we can't determine, return false
+      true -> false
     end
   end
 
@@ -240,7 +278,7 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     "#{hour_12}:#{String.pad_leading("#{time.minute}", 2, "0")} #{am_pm}"
   end
 
-  # Get the most representative timezone for a country
+  # Get timezone information from the country using the Countries library
   defp get_country_timezone(country) do
     if is_nil(country) || !Map.has_key?(country, :code) || is_nil(country.code) do
       nil
@@ -253,58 +291,33 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
         if is_nil(country_data) do
           nil
         else
-          # Try to infer timezone from country data
+          # Look for timezone in country_data
+          # Most country libraries store timezone info in different ways:
+          # The Countries library stores this info in the timezone field
           cond do
-            # Check for geo coordinate based approach - most common
-            Map.has_key?(country_data, :geo) && is_map(country_data.geo) &&
-              (Map.has_key?(country_data.geo, :latitude) || Map.has_key?(country_data.geo, :latitude_dec)) &&
-              (Map.has_key?(country_data.geo, :longitude) || Map.has_key?(country_data.geo, :longitude_dec)) ->
-              # Get longitude (prefer decimal version if available)
-              long = cond do
-                Map.has_key?(country_data.geo, :longitude_dec) && is_binary(country_data.geo.longitude_dec) ->
-                  {val, _} = Float.parse(country_data.geo.longitude_dec)
-                  val
-                Map.has_key?(country_data.geo, :longitude) && is_number(country_data.geo.longitude) ->
-                  country_data.geo.longitude
-                true -> 0.0
-              end
+            # If there's a direct timezone field, use it
+            Map.has_key?(country_data, :timezone) && !is_nil(country_data.timezone) ->
+              country_data.timezone
 
-              # Map to standard timezone name based on rough longitude
-              cond do
-                long >= -10 && long <= 25 -> "Europe/London"
-                long > 25 && long <= 45 -> "Europe/Athens"
-                long > 45 && long <= 90 -> "Asia/Kolkata"
-                long > 90 && long <= 135 -> "Asia/Shanghai"
-                long > 135 && long <= 180 -> "Asia/Tokyo"
-                long >= -45 && long < -10 -> "Atlantic/Azores"
-                long >= -80 && long < -45 -> "America/New_York"
-                long >= -120 && long < -80 -> "America/Chicago"
-                long >= -165 && long < -120 -> "America/Los_Angeles"
-                true -> "Etc/UTC"
-              end
+            # Some implementations use a timezones field with a list
+            Map.has_key?(country_data, :timezones) && is_list(country_data.timezones) && length(country_data.timezones) > 0 ->
+              # Get the first timezone name
+              timezone = List.first(country_data.timezones)
+              if is_binary(timezone), do: timezone, else: nil
 
-            # Check for region/continent based approach
-            Map.has_key?(country_data, :region) && is_binary(country_data.region) ->
-              # Map regions to timezones
-              case country_data.region do
-                "Europe" -> "Europe/London"
-                "Asia" -> "Asia/Shanghai"
-                "Africa" -> "Africa/Cairo"
-                "South America" -> "America/Sao_Paulo"
-                "North America" -> "America/New_York"
-                "Oceania" -> "Australia/Sydney"
-                _ -> "Etc/UTC"
-              end
+            # Try to construct from country's capital city if available - many timezones follow this pattern
+            Map.has_key?(country_data, :capital) && !is_nil(country_data.capital) &&
+            Map.has_key?(country_data, :continent) && !is_nil(country_data.continent) ->
+              "#{country_data.continent}/#{country_data.capital}" |> String.replace(" ", "_")
 
-            true ->
-              # Ultimate fallback - UTC
-              "Etc/UTC"
+            # If all else fails, return nil and let the caller use a UTC default
+            true -> nil
           end
         end
       rescue
         e ->
           Logger.debug("Error determining timezone for #{inspect(country)}: #{inspect(e)}")
-          "Etc/UTC"  # Default to UTC on errors
+          nil  # Let the caller use the default
       end
     end
   end
