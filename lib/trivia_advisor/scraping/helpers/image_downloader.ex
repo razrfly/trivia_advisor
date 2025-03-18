@@ -158,8 +158,11 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     try do
       case download_image(url, consistent_filename) do
         %{filename: filename, path: path} when not is_nil(path) ->
+          # Get file extension - needed for content type and proper file handling
+          ext = Path.extname(filename) |> String.downcase()
+
           # Create a Plug.Upload struct compatible with Waffle's cast_attachments
-          content_type = case Path.extname(filename) |> String.downcase() do
+          content_type = case ext do
             ".jpg" -> "image/jpeg"
             ".jpeg" -> "image/jpeg"
             ".png" -> "image/png"
@@ -169,9 +172,13 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
             _ -> "image/jpeg" # Default
           end
 
+          # Ensure we're using a proper name that Waffle can process
+          # Strip any path info to ensure we just have the filename
+          clean_filename = Path.basename(filename)
+
           plug_upload = %Plug.Upload{
             path: path,
-            filename: filename,
+            filename: clean_filename,
             content_type: content_type
           }
 
