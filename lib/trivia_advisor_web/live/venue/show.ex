@@ -629,7 +629,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     google_images_count + event_image_count
   end
 
-  # Modified version to never return nil and properly combine all image sources with consistent ordering
+  # Modified version to properly combine all image sources with consistent ordering
   defp get_venue_image_at_position(venue, position) do
     # Return default image if venue is nil
     if is_nil(venue), do: return_default_image()
@@ -650,9 +650,44 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                Map.has_key?(event.hero_image, :file_name) &&
                event.hero_image.file_name do
               try do
-                TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+                # Instead of using Waffle's URL generator which might not work in production,
+                # construct S3 URL directly using the format we know works for Google Place images
+                if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
+                  # Get S3 configuration
+                  s3_config = Application.get_env(:ex_aws, :s3, [])
+                  bucket = Application.get_env(:waffle, :bucket, "trivia-advisor")
+                  host = case s3_config[:host] do
+                    h when is_binary(h) -> h
+                    _ -> "fly.storage.tigris.dev"
+                  end
+
+                  # Get file name parts
+                  file_name = event.hero_image.file_name
+                  extension = Path.extname(file_name)
+                  base_name = Path.basename(file_name, extension)
+
+                  # Manually construct paths for both versions in the format that works
+                  image_paths = []
+
+                  # Add original version path
+                  original_path = "uploads/venues/#{venue.slug}/original_#{base_name}#{extension}"
+                  image_paths = ["https://#{bucket}.#{host}/#{original_path}" | image_paths]
+
+                  # Add thumb version path
+                  thumb_path = "uploads/venues/#{venue.slug}/thumb_#{base_name}#{extension}"
+                  image_paths = ["https://#{bucket}.#{host}/#{thumb_path}" | image_paths]
+
+                  # Return the original version URL if available
+                  Enum.at(image_paths, 0)
+                else
+                  # In development, use the standard approach
+                  raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+                  String.replace(raw_url, ~r{^/priv/static}, "")
+                end
               rescue
-                _ -> nil
+                e ->
+                  Logger.error("Error retrieving hero image: #{Exception.message(e)}")
+                  nil
               end
             else
               nil
@@ -672,7 +707,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         if venue.google_place_images && is_list(venue.google_place_images) do
           venue.google_place_images
           |> Enum.filter(fn img -> is_map(img) end)
-          |> Enum.sort_by(fn img -> Map.get(img, "position", 999) end)  # Sort by position instead of shuffle
+          |> Enum.sort_by(fn img -> Map.get(img, "position", 999) end)  # Sort by position
         else
           []
         end
@@ -791,7 +826,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
           Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
             # Get S3 configuration
             s3_config = Application.get_env(:ex_aws, :s3, [])
-            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+            bucket = Application.get_env(:waffle, :bucket, "trivia-advisor")
 
             # For Tigris S3-compatible storage, we need to use a public URL pattern
             # that doesn't rely on object ACLs
