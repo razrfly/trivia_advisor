@@ -16,8 +16,14 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   @request_delay 2000
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"type" => type, "names" => names}} = _job) do
-    Logger.info("Starting Unsplash image refresh for #{length(names)} #{type}s")
+  def perform(%Oban.Job{args: %{"type" => type, "names" => names} = args} = _job) do
+    country = Map.get(args, "country")
+
+    if type == "city" && country do
+      Logger.info("Starting Unsplash image refresh for #{length(names)} cities in #{country}")
+    else
+      Logger.info("Starting Unsplash image refresh for #{length(names)} #{type}s")
+    end
 
     # Get configured delay, defaulting to @request_delay if not set
     delay =
@@ -43,12 +49,23 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
             Logger.info("Refreshing country image for #{name}")
             UnsplashService.get_country_image(name)
           "city" ->
-            Logger.info("Refreshing city image for #{name}")
+            location_info = if country, do: "#{name} (#{country})", else: name
+            Logger.info("Refreshing city image for #{location_info}")
             UnsplashService.get_city_image(name)
         end
-        Logger.info("Successfully refreshed #{type} image for #{name}")
+
+        if type == "city" && country do
+          Logger.info("Successfully refreshed #{type} image for #{name} in #{country}")
+        else
+          Logger.info("Successfully refreshed #{type} image for #{name}")
+        end
       rescue
-        e -> Logger.error("Error refreshing #{type} image for #{name}: #{inspect(e)}")
+        e ->
+          if type == "city" && country do
+            Logger.error("Error refreshing #{type} image for #{name} in #{country}: #{inspect(e)}")
+          else
+            Logger.error("Error refreshing #{type} image for #{name}: #{inspect(e)}")
+          end
       end
     end)
 
@@ -91,21 +108,29 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   This should be called periodically (e.g., daily or weekly) to refresh the cache.
   """
   def schedule_city_refresh() do
-    cities = fetch_all_city_names()
+    cities_by_country = fetch_all_cities_with_country()
 
-    Logger.info("Scheduling refresh for #{length(cities)} cities with venues")
+    total_cities = Enum.reduce(cities_by_country, 0, fn {_, cities}, acc -> acc + length(cities) end)
+    Logger.info("Scheduling refresh for #{total_cities} cities with venues across #{map_size(cities_by_country)} countries")
 
-    # Schedule a job to refresh city images with small batches
-    cities
-    |> Enum.chunk_every(10) # Process in batches of 10
-    |> Enum.with_index()
-    |> Enum.each(fn {batch, index} ->
-      # Stagger jobs by 30 minutes to avoid overlapping
-      schedule_in = index * 30 * 60
+    # Schedule jobs for each country's cities
+    cities_by_country
+    |> Enum.each(fn {country_name, cities} ->
+      # Split large countries into batches of 10 if needed
+      city_batches = Enum.chunk_every(cities, 10)
 
-      %{type: "city", names: batch}
-      |> __MODULE__.new(schedule_in: schedule_in)
-      |> Oban.insert()
+      Logger.info("Scheduling #{length(city_batches)} batch(es) for #{length(cities)} cities in #{country_name}")
+
+      city_batches
+      |> Enum.with_index()
+      |> Enum.each(fn {batch, index} ->
+        # Stagger jobs by 30 minutes within each country to avoid overlapping
+        schedule_in = index * 30 * 60
+
+        %{type: "city", names: batch, country: country_name}
+        |> __MODULE__.new(schedule_in: schedule_in)
+        |> Oban.insert()
+      end)
     end)
   end
 
@@ -134,13 +159,25 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     Repo.all(query)
   end
 
-  defp fetch_all_city_names do
-    # Only return cities that have venues
+  defp fetch_all_cities_with_country do
+    # Query cities with their country that have venues
     query = from c in TriviaAdvisor.Locations.City,
+      join: country in assoc(c, :country),
       join: v in assoc(c, :venues),
       distinct: true,
-      select: c.name
+      select: {country.name, c.name}
 
+    # Group cities by country
     Repo.all(query)
+    |> Enum.group_by(
+      fn {country_name, _} -> country_name end,
+      fn {_, city_name} -> city_name end
+    )
+  end
+
+  # Keep this function for backward compatibility
+  defp fetch_all_city_names do
+    fetch_all_cities_with_country()
+    |> Enum.flat_map(fn {_, cities} -> cities end)
   end
 end
