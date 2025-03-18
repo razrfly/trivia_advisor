@@ -80,9 +80,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Pubquiz.Extractor do
     |> Floki.find(".checklist li")
     |> Enum.find_value(fn element ->
       text = Floki.text(element)
-      if String.contains?(text, "Prowadząca:") || String.contains?(text, "Prowadzący:") do
+      if String.contains?(text, "Prowadząca:") || String.contains?(text, "Prowadzący:") || String.contains?(text, "Prowadzi:") do
         text
-        |> String.replace(~r/^Prowadząc[ay]:\s*/, "")
+        |> String.replace(~r/^Prowadz[aąiy][cć]?[ay]?:\s*/, "")
         |> String.trim()
       end
     end)

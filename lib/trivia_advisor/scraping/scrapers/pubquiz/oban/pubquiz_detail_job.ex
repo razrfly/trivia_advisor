@@ -64,6 +64,25 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
               {day_of_week, start_time, entry_fee_cents} = extract_event_details(body)
               Logger.info("🔥 EXTRACTED EVENT DETAILS - Day: #{day_of_week}, Time: #{inspect(start_time)}, Fee: #{entry_fee_cents} cents")
 
+              # Process performer if available from host information
+              performer_id = if details.host && String.trim(details.host) != "" do
+                Logger.info("🎭 Found performer (host) information: #{details.host}")
+                case TriviaAdvisor.Events.Performer.find_or_create(%{
+                  name: details.host,
+                  source_id: source.id
+                }) do
+                  {:ok, performer} ->
+                    Logger.info("🎭 Successfully created/found performer: #{performer.name} (ID: #{performer.id})")
+                    performer.id
+                  {:error, reason} ->
+                    Logger.error("❌ Failed to create performer: #{inspect(reason)}")
+                    nil
+                end
+              else
+                Logger.info("ℹ️ No performer (host) information found")
+                nil
+              end
+
               # Format event data for EventStore
               # Must use English day names because EventStore.parse_day_of_week expects them
               day_name = case day_of_week do
@@ -91,7 +110,8 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                 "frequency" => :weekly,
                 "entry_fee_cents" => entry_fee_cents,
                 # Add explicit override that will be used directly in EventStore
-                "override_entry_fee_cents" => entry_fee_cents
+                "override_entry_fee_cents" => entry_fee_cents,
+                "performer_id" => performer_id
               }
 
               Logger.info("🔥 EVENT DATA BEING SENT TO EVENT STORE: #{inspect(event_data)}")
