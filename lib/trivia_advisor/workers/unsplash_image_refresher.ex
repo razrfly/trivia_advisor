@@ -15,72 +15,68 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   alias TriviaAdvisor.Repo
   import Ecto.Query
 
-  # Delay between API requests in milliseconds (2 seconds by default)
-  # Can be overridden at runtime by setting :persistent_term.put(:unsplash_request_delay, milliseconds)
-  @request_delay 10000
+  # Refresh threshold configuration
+  # These could be moved to application config if needed
+  @country_high_venue_threshold 10
+  @city_high_venue_threshold 5
+
+  # Refresh interval configuration (in seconds)
+  @daily_refresh 24 * 60 * 60  # 1 day
+  @weekly_refresh 7 * 24 * 60 * 60  # 7 days
+  @monthly_refresh 30 * 24 * 60 * 60  # 30 days
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"type" => type, "names" => names} = args} = _job) do
-    country = Map.get(args, "country")
+  def perform(%Oban.Job{args: %{"action" => "refresh"}}) do
+    # This job is triggered daily and schedules individual refresh jobs
+    schedule_country_refresh()
+    schedule_city_refresh()
 
-    if type == "city" && country do
-      Logger.info("Starting Unsplash image gallery refresh for #{length(names)} cities in #{country}")
-    else
-      Logger.info("Starting Unsplash image gallery refresh for #{length(names)} #{type}s")
-    end
+    # Schedule the next daily job
+    schedule_daily_refresh()
+    :ok
+  end
 
-    # Get configured delay, defaulting to @request_delay if not set
-    delay =
-      try do
-        :persistent_term.get(:unsplash_request_delay)
-      rescue
-        _ -> @request_delay
-      end
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"type" => "country", "names" => names, "unique_key" => _unique_key}}) do
+    Logger.info("Processing refresh job for #{length(names)} countries")
 
-    # Process each item with a delay to avoid rate limiting
-    names
-    |> Enum.with_index()
-    |> Enum.each(fn {name, index} ->
-      # Add delay between requests (except for the first one)
-      if index > 0 do
-        Process.sleep(delay)
-      end
+    for name <- names do
+      country = Repo.get_by(TriviaAdvisor.Locations.Country, name: name)
 
-      # Fetch and store images based on the type
-      try do
-        case type do
-          "country" ->
-            Logger.info("Refreshing country image gallery for #{name}")
-            UnsplashImageFetcher.fetch_and_store_country_images(name)
-          "city" ->
-            location_info = if country, do: "#{name} (#{country})", else: name
-            Logger.info("Refreshing city image gallery for #{location_info}")
-            UnsplashImageFetcher.fetch_and_store_city_images(name, country)
-        end
-
-        if type == "city" && country do
-          Logger.info("Successfully refreshed #{type} image gallery for #{name} in #{country}")
+      if country && needs_refresh?("country", country) do
+        Logger.info("Fetching new images for country: #{name}")
+        UnsplashImageFetcher.fetch_and_store_country_images(name)
+      else
+        if country do
+          Logger.info("Skipping refresh for country: #{name} - not due for refresh yet")
         else
-          Logger.info("Successfully refreshed #{type} image gallery for #{name}")
+          Logger.warning("Country not found: #{name}")
         end
-      rescue
-        e ->
-          if type == "city" && country do
-            Logger.error("Error refreshing #{type} image gallery for #{name} in #{country}: #{inspect(e)}")
-          else
-            Logger.error("Error refreshing #{type} image gallery for #{name}: #{inspect(e)}")
-          end
       end
-    end)
+    end
 
     :ok
   end
 
-  def perform(%Oban.Job{args: %{"action" => "refresh"}} = _job) do
-    # This kicks off the daily refresh of all images
-    Logger.info("Starting daily Unsplash image gallery refresh")
-    schedule_country_refresh()
-    schedule_city_refresh()
+  @impl Oban.Worker
+  def perform(%Oban.Job{args: %{"type" => "city", "country" => country, "names" => city_names, "unique_key" => _unique_key}}) do
+    Logger.info("Processing refresh job for #{length(city_names)} cities in #{country}")
+
+    for city_name <- city_names do
+      city = Repo.get_by(TriviaAdvisor.Locations.City, name: city_name)
+
+      if city && needs_refresh?("city", city) do
+        Logger.info("Fetching new images for city: #{city_name}")
+        UnsplashImageFetcher.fetch_and_store_city_images(city_name)
+      else
+        if city do
+          Logger.info("Skipping refresh for city: #{city_name} - not due for refresh yet")
+        else
+          Logger.warning("City not found: #{city_name}")
+        end
+      end
+    end
+
     :ok
   end
 
@@ -282,5 +278,80 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   defp fetch_all_city_names do
     fetch_all_cities_with_country()
     |> Enum.flat_map(fn {_, cities} -> cities end)
+  end
+
+  # Check if a location needs to be refreshed based on venue count and last refresh time
+  defp needs_refresh?(type, record) do
+    # Get venue count
+    venue_count = case type do
+      "country" -> get_country_venue_count(record.id)
+      "city" -> get_city_venue_count(record.id)
+    end
+
+    # Determine refresh interval based on type and venue count
+    refresh_interval = determine_refresh_interval(type, venue_count)
+
+    # Check last refresh time (if it exists)
+    gallery = record.unsplash_gallery
+
+    cond do
+      # If no gallery exists yet, it definitely needs a refresh
+      is_nil(gallery) -> true
+
+      # If last_refreshed_at is missing, it needs a refresh
+      !Map.has_key?(gallery, "last_refreshed_at") -> true
+
+      # Otherwise check if enough time has passed since last refresh
+      true ->
+        last_refreshed_at =
+          gallery["last_refreshed_at"]
+          |> DateTime.from_iso8601()
+          |> case do
+               {:ok, datetime, _} -> datetime
+               _ -> DateTime.add(DateTime.utc_now(), -refresh_interval - 1, :second)
+             end
+
+        seconds_since_refresh = DateTime.diff(DateTime.utc_now(), last_refreshed_at)
+        seconds_since_refresh >= refresh_interval
+    end
+  end
+
+  # Determine refresh interval based on location type and venue count
+  defp determine_refresh_interval(type, venue_count) do
+    case type do
+      "country" when venue_count >= @country_high_venue_threshold ->
+        @daily_refresh
+      "city" when venue_count >= @city_high_venue_threshold ->
+        @weekly_refresh
+      _ ->
+        @monthly_refresh
+    end
+  end
+
+  # Helper to get venue count for a country
+  defp get_country_venue_count(country_id) do
+    # Using string-based query since TriviaAdvisor.Venues.Venue is not available
+    query = """
+    SELECT COUNT(v.id)
+    FROM venues v
+    JOIN cities c ON v.city_id = c.id
+    WHERE c.country_id = $1
+    """
+
+    %{rows: [[count]]} = Repo.query!(query, [country_id])
+    count || 0
+  end
+
+  # Helper to get venue count for a city
+  defp get_city_venue_count(city_id) do
+    # Using string-based query since TriviaAdvisor.Venues.Venue is not available
+    query = """
+    SELECT COUNT(v.id)
+    FROM venues v
+    WHERE v.city_id = $1
+    """
+
+    %{rows: [[count]]} = Repo.query!(query, [city_id])
+    count || 0
   end
 end
