@@ -20,14 +20,33 @@ defmodule TriviaAdvisor.Debug.PopulateImageGalleries do
     # Process 5 random cities from each of those countries
     countries = get_top_countries(5)
 
-    Enum.each(countries, fn country ->
-      cities = get_random_cities_for_country(country.id, 5)
-      Logger.info("Processing #{length(cities)} cities for #{country.name}")
+    # Batch size for city imports (to avoid rate limiting)
+    batch_size = 10
 
-      Enum.each(cities, fn city ->
-        Logger.info("Fetching and storing images for city: #{city.name}")
-        UnsplashImageFetcher.fetch_and_store_city_images(city.name, country.name)
-        Process.sleep(2000) # Avoid rate limiting
+    # Process countries
+    Enum.each(countries, fn country ->
+      IO.puts("Processing country: #{country.name}")
+      UnsplashImageFetcher.fetch_and_store_country_images(country.name)
+
+      # Get cities for this country
+      cities = Repo.all(from c in City, where: c.country_id == ^country.id)
+
+      # Process cities in batches with a delay between batches
+      cities
+      |> Enum.chunk_every(batch_size)
+      |> Enum.with_index()
+      |> Enum.each(fn {batch, index} ->
+        if index > 0 do
+          # Sleep between batches to avoid rate limiting
+          IO.puts("Sleeping for 10 seconds before next batch...")
+          :timer.sleep(10000)
+        end
+
+        # Process each city in the batch
+        Enum.each(batch, fn city ->
+          IO.puts("  Processing city: #{city.name}")
+          UnsplashImageFetcher.fetch_and_store_city_images(city.name)
+        end)
       end)
     end)
 

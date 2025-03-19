@@ -235,8 +235,49 @@ defmodule TriviaAdvisor.Services.UnsplashService do
   end
 
   @impl true
-  def handle_call({:refresh_city_images, city_name, country_name}, _from, state) do
-    result = UnsplashImageFetcher.fetch_and_store_city_images(city_name, country_name)
+  def handle_call({:refresh_city_images, city_name, _country_name}, _from, state) do
+    result = UnsplashImageFetcher.fetch_and_store_city_images(city_name)
+    {:reply, result, state}
+  end
+
+  @impl true
+  def handle_call({:fetch_city_images, city_name, opts}, _from, state) do
+    # Queue a background job to refresh or fetch new images for the city
+    if opts[:refresh] == true do
+      # Refresh the cache immediately
+      result = UnsplashImageFetcher.fetch_and_store_city_images(city_name)
+
+      # Return the result of the fetch operation
+      {:reply, result, state}
+    else
+      # Just fetch the existing images or get them from Unsplash if needed
+      {:reply, get_city_image(city_name), state}
+    end
+  end
+
+  @impl true
+  def handle_call({:get_city_image, city_name}, _from, state) do
+    {:reply, get_city_image(city_name), state}
+  end
+
+  @impl true
+  def handle_call({:get_country_image, country_name}, _from, state) do
+    {:reply, get_country_image(country_name), state}
+  end
+
+  @impl true
+  def handle_call({:rotate_city_image, city_name}, _from, state) do
+    {:reply, rotate_city_image(city_name), state}
+  end
+
+  @impl true
+  def handle_call({:rotate_country_image, country_name}, _from, state) do
+    {:reply, rotate_country_image(country_name), state}
+  end
+
+  @impl true
+  def handle_call({:fetch_city_image, city_name, _country_name}, _from, state) do
+    result = UnsplashImageFetcher.fetch_and_store_city_images(city_name)
     {:reply, result, state}
   end
 

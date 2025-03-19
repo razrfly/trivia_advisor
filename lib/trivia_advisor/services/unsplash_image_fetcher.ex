@@ -15,39 +15,19 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
   Fetch and store images for a country.
   Returns {:ok, images_count} or {:error, reason}.
   """
+  @spec fetch_and_store_country_images(String.t()) :: {:ok, map()} | {:error, atom()}
   def fetch_and_store_country_images(country_name) do
-    case get_country_by_name(country_name) do
-      nil ->
-        Logger.error("Country not found: #{country_name}")
-        {:error, :not_found}
+    Logger.info("Fetching images for country: #{country_name}")
+    try do
+      # Get country images from Unsplash
+      images = fetch_country_images(country_name)
 
-      country ->
-        Logger.info("Fetching images for country: #{country_name}")
-        case fetch_unsplash_images("country", country_name) do
-          {:ok, images} ->
-            gallery = %{
-              "images" => images,
-              "last_refreshed" => DateTime.utc_now() |> DateTime.to_iso8601(),
-              "current_index" => 0
-            }
-
-            result = Repo.update(
-              Country.changeset(country, %{unsplash_gallery: gallery})
-            )
-
-            case result do
-              {:ok, _updated} ->
-                Logger.info("Stored #{length(images)} images for country: #{country_name}")
-                {:ok, length(images)}
-              {:error, changeset} ->
-                Logger.error("Failed to update country: #{inspect(changeset.errors)}")
-                {:error, changeset}
-            end
-
-          {:error, reason} ->
-            Logger.error("Failed to fetch images for country #{country_name}: #{inspect(reason)}")
-            {:error, reason}
-        end
+      # Store the gallery in the database
+      create_gallery("country", country_name, images)
+    rescue
+      e ->
+        Logger.error("Error fetching images for country #{country_name}: #{inspect(e)}")
+        {:error, :fetch_failed}
     end
   end
 
@@ -55,53 +35,19 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
   Fetch and store images for a city.
   Returns {:ok, images_count} or {:error, reason}.
   """
-  def fetch_and_store_city_images(city_name, country_name \\ nil) do
-    city_query = if country_name do
-      # If country name is provided, use it to narrow down the search
-      from(c in City,
-        join: country in assoc(c, :country),
-        where: c.name == ^city_name and country.name == ^country_name,
-        preload: [:country])
-    else
-      from(c in City,
-        where: c.name == ^city_name,
-        preload: [:country])
-    end
+  @spec fetch_and_store_city_images(String.t()) :: {:ok, map()} | {:error, atom()}
+  def fetch_and_store_city_images(city_name) do
+    Logger.info("Fetching images for city: #{city_name}")
+    try do
+      # Get city images from Unsplash
+      images = fetch_city_images(city_name)
 
-    case Repo.one(city_query) do
-      nil ->
-        Logger.error("City not found: #{city_name}")
-        {:error, :not_found}
-
-      city ->
-        Logger.info("Fetching images for city: #{city_name}" <> if country_name, do: " in #{country_name}", else: "")
-        search_term = "#{city_name} #{city.country.name} city"
-
-        case fetch_unsplash_images("city", search_term) do
-          {:ok, images} ->
-            gallery = %{
-              "images" => images,
-              "last_refreshed" => DateTime.utc_now() |> DateTime.to_iso8601(),
-              "current_index" => 0
-            }
-
-            result = Repo.update(
-              City.changeset(city, %{unsplash_gallery: gallery})
-            )
-
-            case result do
-              {:ok, _updated} ->
-                Logger.info("Stored #{length(images)} images for city: #{city_name}")
-                {:ok, length(images)}
-              {:error, changeset} ->
-                Logger.error("Failed to update city: #{inspect(changeset.errors)}")
-                {:error, changeset}
-            end
-
-          {:error, reason} ->
-            Logger.error("Failed to fetch images for city #{city_name}: #{inspect(reason)}")
-            {:error, reason}
-        end
+      # Store the gallery in the database
+      create_gallery("city", city_name, images)
+    rescue
+      e ->
+        Logger.error("Error fetching images for city #{city_name}: #{inspect(e)}")
+        {:error, :fetch_failed}
     end
   end
 
@@ -175,11 +121,6 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
 
   # Private helpers
 
-  defp get_country_by_name(name) do
-    Repo.get_by(Country, name: name)
-  end
-
-  # Private helper to implement backoff and retry
   defp fetch_with_backoff(url, type, name, attempt) do
     max_attempts = 3
 
@@ -256,6 +197,80 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
           Logger.error("Unsplash API request failed: #{inspect(error)}")
           {:error, :api_error}
       end
+    end
+  end
+
+  def create_gallery(type, name, images) do
+    # Normalize the name to ensure consistency
+    name = String.trim(name)
+
+    # Build gallery structure with images and timestamp
+    gallery = %{
+      "images" => images,
+      "current_index" => 0,
+      "last_refreshed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    # Store the gallery in the database
+    case type do
+      "country" ->
+        country = Repo.get_by(Country, name: name)
+        if country do
+          {:ok, _updated} = Repo.update(Country.changeset(country, %{unsplash_gallery: gallery}))
+          {:ok, gallery}
+        else
+          Logger.warning("Could not find country #{name} to store gallery")
+          {:error, :not_found}
+        end
+
+      "city" ->
+        city = Repo.get_by(City, name: name)
+        if city do
+          {:ok, _updated} = Repo.update(City.changeset(city, %{unsplash_gallery: gallery}))
+          {:ok, gallery}
+        else
+          Logger.warning("Could not find city #{name} to store gallery")
+          {:error, :not_found}
+        end
+
+      _ ->
+        {:error, :invalid_type}
+    end
+  end
+
+  # Fetch images for a city from Unsplash
+  @spec fetch_city_images(String.t()) :: list(map())
+  defp fetch_city_images(city_name) do
+    # Look up the city to get the country for a more specific search
+    city =
+      from(c in City,
+        where: c.name == ^city_name,
+        preload: [:country])
+      |> Repo.one()
+
+    search_term = if city && city.country do
+      # Use city and country name for better search results
+      "#{city_name} #{city.country.name} city"
+    else
+      # Fallback to just the city name
+      "#{city_name} city"
+    end
+
+    case fetch_unsplash_images("city", search_term) do
+      {:ok, images} -> images
+      {:error, _reason} -> []
+    end
+  end
+
+  # Fetch images for a country from Unsplash
+  @spec fetch_country_images(String.t()) :: list(map())
+  defp fetch_country_images(country_name) do
+    # Search term with country name and landmarks for better results
+    search_term = "#{country_name} landmarks landscape"
+
+    case fetch_unsplash_images("country", search_term) do
+      {:ok, images} -> images
+      {:error, _reason} -> []
     end
   end
 end
