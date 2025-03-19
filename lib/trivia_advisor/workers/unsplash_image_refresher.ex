@@ -11,8 +11,8 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     max_attempts: 3,
     unique: [period: 60 * 60, fields: [:worker, :args], keys: [:unique_key]]
   require Logger
-  alias TriviaAdvisor.Services.UnsplashImageFetcher
   alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Services.UnsplashImageFetcher
   import Ecto.Query
 
   # Refresh threshold configuration
@@ -21,9 +21,9 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   @city_high_venue_threshold 5
 
   # Refresh interval configuration (in seconds)
-  @daily_refresh 24 * 60 * 60  # 1 day
-  @weekly_refresh 7 * 24 * 60 * 60  # 7 days
-  @monthly_refresh 30 * 24 * 60 * 60  # 30 days
+  @daily_refresh 7 * 24 * 60 * 60  # 7 days instead of 1 day
+  @weekly_refresh 14 * 24 * 60 * 60  # 14 days instead of 7 days
+  @monthly_refresh 60 * 24 * 60 * 60  # 60 days instead of 30 days
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"action" => "refresh"}}) do
@@ -40,20 +40,7 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   def perform(%Oban.Job{args: %{"type" => "country", "names" => names, "unique_key" => _unique_key}}) do
     Logger.info("Processing refresh job for #{length(names)} countries")
 
-    for name <- names do
-      country = Repo.get_by(TriviaAdvisor.Locations.Country, name: name)
-
-      if country && needs_refresh?("country", country) do
-        Logger.info("Fetching new images for country: #{name}")
-        UnsplashImageFetcher.fetch_and_store_country_images(name)
-      else
-        if country do
-          Logger.info("Skipping refresh for country: #{name} - not due for refresh yet")
-        else
-          Logger.warning("Country not found: #{name}")
-        end
-      end
-    end
+    run_country_refresh(names)
 
     :ok
   end
@@ -193,15 +180,15 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   This creates a recurring job that will run daily at the specified time.
   """
   def schedule_daily_refresh do
-    # Create a job that runs daily at 1:00 AM UTC
+    # Create a job that runs weekly at 1:00 AM UTC on Monday
     try do
       %{action: "refresh"}
-      |> __MODULE__.new(schedule: "0 1 * * *")
+      |> __MODULE__.new(schedule: "0 1 * * 1")  # Weekly on Monday at 1 AM
       |> Oban.insert!()
       {:ok, :scheduled}
     rescue
       e ->
-        Logger.error("Failed to schedule daily refresh: #{inspect(e)}")
+        Logger.error("Failed to schedule weekly refresh: #{inspect(e)}")
         {:error, :scheduling_failed}
     end
   end
@@ -362,5 +349,27 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
 
     %{rows: [[count]]} = Repo.query!(query, [city_id])
     count || 0
+  end
+
+  # Helper to get a country by name
+  defp get_country_by_name(name) do
+    Repo.get_by(TriviaAdvisor.Locations.Country, name: name)
+  end
+
+  defp run_country_refresh(country_names) do
+    Enum.each(country_names, fn name ->
+      country = get_country_by_name(name)
+
+      if country && needs_refresh?("country", country) do
+        Logger.info("Fetching new images for country: #{name}")
+        UnsplashImageFetcher.fetch_and_store_country_images(name)
+      else
+        if country do
+          Logger.info("Skipping refresh for country: #{name} - not due for refresh yet")
+        else
+          Logger.warning("Country not found: #{name}")
+        end
+      end
+    end)
   end
 end
