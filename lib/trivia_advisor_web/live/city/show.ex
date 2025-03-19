@@ -555,7 +555,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     # Get the start time from the first event if available
     if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      time = Map.get(event, :start_time)
+      # Since start_time is required in the schema, no fallback needed
+      time = event.start_time
 
       # Get country data for proper localization
       country = get_venue_country(venue)
