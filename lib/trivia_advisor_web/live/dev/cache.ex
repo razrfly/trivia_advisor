@@ -129,18 +129,14 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
 
   @impl true
   def handle_event("clear-city-cache", %{"city_name" => city_name}, socket) when city_name != "" do
-    case UnsplashService.clear_cache("city", city_name) do
-      :ok -> {:noreply, put_flash(socket, :info, "Cache for city '#{city_name}' cleared successfully")}
-      :not_found -> {:noreply, put_flash(socket, :info, "No cached image found for city '#{city_name}'")}
-    end
+    UnsplashService.clear_cache("city", city_name)
+    {:noreply, put_flash(socket, :info, "Cache for city '#{city_name}' cleared successfully")}
   end
 
   @impl true
   def handle_event("clear-venue-cache", %{"venue_name" => venue_name}, socket) when venue_name != "" do
-    case UnsplashService.clear_cache("venue", venue_name) do
-      :ok -> {:noreply, put_flash(socket, :info, "Cache for venue '#{venue_name}' cleared successfully")}
-      :not_found -> {:noreply, put_flash(socket, :info, "No cached image found for venue '#{venue_name}'")}
-    end
+    UnsplashService.clear_cache("venue", venue_name)
+    {:noreply, put_flash(socket, :info, "Cache for venue '#{venue_name}' cleared successfully")}
   end
 
   @impl true

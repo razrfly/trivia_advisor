@@ -504,24 +504,25 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
       if venue.google_place_images && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
         TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
       else
-        # First try Unsplash
-        case UnsplashService.get_venue_image(venue.name) do
-          {:ok, image_url} ->
-            image_url
-          {:error, _reason} ->
-            # Then try to fetch and store Google Places images if venue has place_id
-            if venue.place_id && venue.place_id != "" do
-              case TriviaAdvisor.Services.GooglePlaceImageStore.process_venue_images(venue) do
-                {:ok, updated_venue} ->
-                  TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(updated_venue)
-                _ ->
-                  # Fallback to direct API call if processing fails
-                  GooglePlacesService.get_venue_image(venue.id) || get_fallback_image(venue.name)
-              end
-            else
-              # Fall back to hardcoded images
-              get_fallback_image(venue.name)
+        # Try Unsplash - note that the API returns nil now, not a tuple
+        image_url = UnsplashService.get_venue_image(venue.name)
+
+        if image_url do
+          image_url
+        else
+          # Then try to fetch and store Google Places images if venue has place_id
+          if venue.place_id && venue.place_id != "" do
+            case TriviaAdvisor.Services.GooglePlaceImageStore.process_venue_images(venue) do
+              {:ok, updated_venue} ->
+                TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(updated_venue)
+              _ ->
+                # Fallback to direct API call if processing fails
+                GooglePlacesService.get_venue_image(venue.id) || get_fallback_image(venue.name)
             end
+          else
+            # Fall back to hardcoded images
+            get_fallback_image(venue.name)
+          end
         end
       end
     rescue
