@@ -151,7 +151,7 @@ defmodule TriviaAdvisor.Services.UnsplashService do
             # Try to fetch in background but don't wait for result
             _ = get_city_image(city_name)
           end)
-          Map.put(acc, city_name, nil)
+          Map.put(acc, city_name, %{url: nil, image_url: nil})
 
         gallery when is_nil(gallery) or gallery == %{} ->
           # Gallery not present, schedule fetching and return nil for now
@@ -159,7 +159,7 @@ defmodule TriviaAdvisor.Services.UnsplashService do
             # Try to fetch in background but don't wait for result
             _ = get_city_image(city_name)
           end)
-          Map.put(acc, city_name, nil)
+          Map.put(acc, city_name, %{url: nil, image_url: nil})
 
         gallery ->
           # Extract image URL from gallery
@@ -167,12 +167,13 @@ defmodule TriviaAdvisor.Services.UnsplashService do
           current_index = Map.get(gallery, "current_index", 0)
 
           if Enum.empty?(images) do
-            Map.put(acc, city_name, nil)
+            Map.put(acc, city_name, %{url: nil, image_url: nil})
           else
             # Get current image URL
             current_index = min(current_index, length(images) - 1)
             image = Enum.at(images, current_index)
-            Map.put(acc, city_name, if(is_nil(image), do: nil, else: image["url"]))
+            url = if(is_nil(image), do: nil, else: image["url"])
+            Map.put(acc, city_name, %{url: url, image_url: url})
           end
       end
     end)

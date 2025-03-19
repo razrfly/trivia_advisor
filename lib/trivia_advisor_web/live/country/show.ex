@@ -57,8 +57,8 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
             <p class="mt-2 text-lg"><%= length(@cities) %> Cities with Trivia Venues</p>
             <%= if @country.attribution do %>
               <p class="mt-1 text-xs opacity-80">
-                Photo by <a href={@country.attribution.photographer_url} target="_blank" rel="noopener" class="hover:underline"><%= @country.attribution.photographer_name %></a>
-                on <a href={@country.attribution.unsplash_url} target="_blank" rel="noopener" class="hover:underline">Unsplash</a>
+                Photo by <a href={Map.get(@country.attribution, :photographer_url) || Map.get(@country.attribution, "photographer_url")} target="_blank" rel="noopener" class="hover:underline"><%= Map.get(@country.attribution, :photographer_name) || Map.get(@country.attribution, "photographer_name") %></a>
+                on <a href={Map.get(@country.attribution, :unsplash_url) || Map.get(@country.attribution, "unsplash_url")} target="_blank" rel="noopener" class="hover:underline">Unsplash</a>
               </p>
             <% end %>
           </div>
@@ -102,14 +102,29 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
         # Get the country's image using UnsplashService with better search terms and attribution
         image_data = UnsplashService.get_country_image(country.name)
 
+        # Default image URL if none is found
+        default_image_url = "/images/default_country.jpg"
+
+        # Extract image URL safely with fallback
+        image_url = case image_data do
+          %{image_url: url} when is_binary(url) and url != "" -> url
+          _ -> default_image_url
+        end
+
+        # Extract attribution safely
+        attribution = case image_data do
+          %{attribution: attr} when is_map(attr) -> attr
+          _ -> %{"photographer_name" => "Default Image"}
+        end
+
         # Build the country data structure
         {:ok, %{
           id: country.id,
           name: country.name,
           code: country.code,
           country: country,  # Include the full country struct for future use
-          image_url: image_data.url,
-          attribution: image_data.attribution
+          image_url: image_url,
+          attribution: attribution
         }}
     end
   end
@@ -129,7 +144,15 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
     |> Enum.map(fn city ->
       # Transform each city to match the format expected by the CityCard component
       # Get image from pre-fetched batch
-      image_url = Map.get(city_images, city.name)
+      image_data = Map.get(city_images, city.name, %{url: nil, image_url: nil})
+
+      # Extract the image URL, supporting both :url and :image_url keys for backward compatibility
+      image_url = cond do
+        is_map(image_data) && Map.has_key?(image_data, :url) -> image_data.url
+        is_map(image_data) && Map.has_key?(image_data, :image_url) -> image_data.image_url
+        is_binary(image_data) -> image_data
+        true -> nil
+      end
 
       %{
         id: city.id,

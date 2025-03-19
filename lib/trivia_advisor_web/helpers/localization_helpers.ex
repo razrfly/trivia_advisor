@@ -3,7 +3,6 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
   Helper functions for handling localization of times, dates, and other values
   based on country data.
   """
-  require Logger
 
   # Define our CLDR module for the project - dynamically including common locales
   # but not hardcoding specific countries
@@ -31,9 +30,6 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     # Get locale from country data
     locale = get_locale_from_country(country)
 
-    # Log for debugging
-    Logger.debug("Formatting time #{inspect(time)} with locale: #{inspect(locale)}, country: #{inspect(country)}")
-
     # Convert to Time struct
     case normalize_time(time) do
       %Time{} = time_struct ->
@@ -51,9 +47,6 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
             DateTime.new!(Date.utc_today(), time_struct, tz)
         end
 
-        # Log which timezone we're using
-        Logger.debug("Using timezone: #{datetime.time_zone} for country: #{inspect(country)}")
-
         # Determine format based on country's time format preference
         format_options = if uses_24h_format?(country) do
           # 24-hour format (use "Hm" format which is HH:mm)
@@ -65,7 +58,6 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
 
         # Use CLDR with appropriate format
         result = TriviaAdvisor.Cldr.DateTime.to_string(datetime, format_options ++ [locale: locale])
-        Logger.debug("CLDR formatting result: #{inspect(result)} with options: #{inspect(format_options)}")
 
         case result do
           {:ok, formatted} -> formatted
@@ -121,8 +113,7 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
             true -> true
           end
         rescue
-          e ->
-            Logger.debug("Error determining time format for #{inspect(country.code)}: #{inspect(e)}")
+          _e ->
             # Default to 24h format if we can't determine - majority of world uses it
             true
         end
@@ -170,7 +161,6 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
       true ->
         try do
           country_code = country.code
-          Logger.debug("Determining locale for country code: #{country_code}")
 
           # Try to get country info from Countries library
           country_data = Countries.get(country_code)
@@ -208,8 +198,6 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
               String.downcase(country_code)
             end
 
-          Logger.debug("Found language code #{language_code} for country #{country_code}")
-
           # Construct locale
           case country_code do
             "GB" -> "en-GB"  # Special case for UK English
@@ -231,8 +219,7 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
           end
 
         rescue
-          e ->
-            Logger.debug("Error determining locale for #{inspect(country)}: #{inspect(e)}")
+          _e ->
             # Simple fallback to "en" for all errors
             "en"
         end
@@ -315,8 +302,7 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
           end
         end
       rescue
-        e ->
-          Logger.debug("Error determining timezone for #{inspect(country)}: #{inspect(e)}")
+        _e ->
           nil  # Let the caller use the default
       end
     end
