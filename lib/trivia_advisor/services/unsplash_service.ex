@@ -19,11 +19,24 @@ defmodule TriviaAdvisor.Services.UnsplashService do
   Get an image URL for a city, either from cache or from Unsplash API.
   """
   def get_city_image(city_name) do
-    case lookup_cache(cache_key("city", city_name)) do
-      {:ok, url} ->
-        url
-      :not_found ->
-        GenServer.call(__MODULE__, {:fetch_image, "city", city_name})
+    # Try to get from cache first
+    case get_from_cache("city", city_name) do
+      {:ok, cached_url} ->
+        cached_url
+
+      _ ->
+        # Call the GenServer to fetch and cache the image
+        try do
+          GenServer.call(__MODULE__, {:fetch_image, "city", city_name})
+        rescue
+          e ->
+            Logger.error("Error fetching city image for #{city_name}: #{inspect(e)}")
+            nil
+        catch
+          :exit, reason ->
+            Logger.error("GenServer call failed for city image #{city_name}: #{inspect(reason)}")
+            nil
+        end
     end
   end
 
@@ -32,11 +45,24 @@ defmodule TriviaAdvisor.Services.UnsplashService do
   Returns a map with the image URL and attribution data.
   """
   def get_country_image(country_name) do
-    case lookup_cache(cache_key("country", country_name)) do
-      {:ok, data} ->
-        data
-      :not_found ->
-        GenServer.call(__MODULE__, {:fetch_image, "country", country_name, true})
+    # Try to get from cache first
+    case get_from_cache("country", country_name) do
+      {:ok, cached_data} ->
+        cached_data
+
+      _ ->
+        # Call the GenServer to fetch and cache the image
+        try do
+          GenServer.call(__MODULE__, {:fetch_image_with_attribution, "country", country_name})
+        rescue
+          e ->
+            Logger.error("Error fetching country image for #{country_name}: #{inspect(e)}")
+            %{image_url: nil, attribution: nil}
+        catch
+          :exit, reason ->
+            Logger.error("GenServer call failed for country image #{country_name}: #{inspect(reason)}")
+            %{image_url: nil, attribution: nil}
+        end
     end
   end
 
@@ -340,6 +366,15 @@ defmodule TriviaAdvisor.Services.UnsplashService do
       3 -> "https://images.unsplash.com/photo-1444723121867-7a241cacace9?w=1200"
       4 -> "https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=1200"
       _ -> "https://images.unsplash.com/photo-1514924013411-cbf25faa35bb?w=1200"
+    end
+  end
+
+  defp get_from_cache(type, name) do
+    case lookup_cache(cache_key(type, name)) do
+      {:ok, value} ->
+        {:ok, value}
+      :not_found ->
+        :not_found
     end
   end
 end

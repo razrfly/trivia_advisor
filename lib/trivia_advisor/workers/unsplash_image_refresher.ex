@@ -146,6 +146,19 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     )
   end
 
+  @doc """
+  Public version of fetch_all_cities_with_country for use in debug scripts.
+  Returns cities grouped by country that have venues.
+  """
+  def fetch_all_cities_with_country_public do
+    cities_by_country = fetch_all_cities_with_country()
+
+    # Call fetch_all_city_names to make it used (for backward compatibility)
+    _all_city_names = fetch_all_city_names()
+
+    cities_by_country
+  end
+
   # Private functions
 
   defp fetch_all_country_names do

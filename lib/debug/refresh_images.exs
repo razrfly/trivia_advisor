@@ -50,30 +50,45 @@ case type do
     |> Enum.chunk_every(batch_size)
     |> Enum.with_index()
     |> Enum.each(fn {batch, index} ->
-      # Insert job to run immediately (no schedule_in)
+      # Add staggered delay (30 minutes between batches) for consistency with worker functions
+      schedule_in = index * 30 * 60
+
+      # Insert job with the same delay pattern as the worker functions
       {:ok, job} = %{type: "country", names: batch}
-                  |> UnsplashImageRefresher.new()
+                  |> UnsplashImageRefresher.new(schedule_in: schedule_in)
                   |> Oban.insert()
 
-      IO.puts("Scheduled batch #{index + 1} with #{length(batch)} countries - Job ID: #{job.id}")
+      IO.puts("Scheduled batch #{index + 1} with #{length(batch)} countries - Job ID: #{job.id}, running in #{div(schedule_in, 60)} minutes")
     end)
 
   "city" ->
     IO.puts("\nScheduling refresh for all cities...")
-    cities = TriviaAdvisor.Repo.all(from c in TriviaAdvisor.Locations.City, select: c.name)
-    IO.puts("Found #{length(cities)} cities to refresh")
+    # Use the worker's fetch_all_cities_with_country function to maintain consistency
+    cities_by_country = UnsplashImageRefresher.fetch_all_cities_with_country_public()
+    total_cities = Enum.reduce(cities_by_country, 0, fn {_, cities}, acc -> acc + length(cities) end)
+    IO.puts("Found #{total_cities} cities across #{map_size(cities_by_country)} countries to refresh")
 
-    # Process cities in batches
-    cities
-    |> Enum.chunk_every(batch_size)
-    |> Enum.with_index()
-    |> Enum.each(fn {batch, index} ->
-      # Insert job to run immediately (no schedule_in)
-      {:ok, job} = %{type: "city", names: batch}
-                  |> UnsplashImageRefresher.new()
-                  |> Oban.insert()
+    # Schedule jobs for each country's cities with the same pattern as the worker function
+    cities_by_country
+    |> Enum.each(fn {country_name, cities} ->
+      # Split large countries into batches
+      city_batches = Enum.chunk_every(cities, batch_size)
 
-      IO.puts("Scheduled batch #{index + 1} with #{length(batch)} cities - Job ID: #{job.id}")
+      IO.puts("Scheduling #{length(city_batches)} batch(es) for #{length(cities)} cities in #{country_name}")
+
+      city_batches
+      |> Enum.with_index()
+      |> Enum.each(fn {batch, index} ->
+        # Add staggered delay (30 minutes between batches) for consistency
+        schedule_in = index * 30 * 60
+
+        # Insert job with the same delay pattern as the worker functions
+        {:ok, job} = %{type: "city", names: batch, country: country_name}
+                    |> UnsplashImageRefresher.new(schedule_in: schedule_in)
+                    |> Oban.insert()
+
+        IO.puts("Scheduled batch #{index + 1} with #{length(batch)} cities in #{country_name} - Job ID: #{job.id}, running in #{div(schedule_in, 60)} minutes")
+      end)
     end)
 
   "all" ->
