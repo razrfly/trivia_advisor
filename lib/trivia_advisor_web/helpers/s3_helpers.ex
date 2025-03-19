@@ -18,23 +18,32 @@ defmodule TriviaAdvisorWeb.Helpers.S3Helpers do
   """
   def construct_url(path, default_img \\ nil) do
     if is_nil(path) or not is_binary(path) do
+      Logger.debug("S3Helpers: nil or non-binary path, using default: #{inspect(default_img)}")
       default_img || default_image()
     else
       try do
         # Already a full URL?
         if String.starts_with?(path, "http") do
+          Logger.debug("S3Helpers: Path already a URL: #{path}")
           path
         else
           # Use S3 or local storage based on config
-          if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-            build_s3_url(path)
+          storage_type = Application.get_env(:waffle, :storage)
+          Logger.debug("S3Helpers: Storage type: #{inspect(storage_type)}")
+
+          if storage_type == Waffle.Storage.S3 do
+            url = build_s3_url(path)
+            Logger.debug("S3Helpers: Built S3 URL: #{url} from path: #{path}")
+            url
           else
-            build_local_url(path)
+            url = build_local_url(path)
+            Logger.debug("S3Helpers: Built local URL: #{url} from path: #{path}")
+            url
           end
         end
       rescue
         e ->
-          Logger.error("Error constructing URL from path #{inspect(path)}: #{Exception.message(e)}")
+          Logger.error("S3Helpers: Error constructing URL from path #{inspect(path)}: #{Exception.message(e)}")
           default_img || default_image()
       end
     end
@@ -98,20 +107,25 @@ defmodule TriviaAdvisorWeb.Helpers.S3Helpers do
     s3_config = Application.get_env(:ex_aws, :s3, [])
     host = s3_config[:host] || "fly.storage.tigris.dev"
 
+    Logger.debug("S3Helpers: Building S3 URL with bucket=#{bucket}, host=#{host}")
+
     # Clean the path (remove leading slash)
     clean_path = if String.starts_with?(path, "/"), do: String.slice(path, 1..-1//1), else: path
+    Logger.debug("S3Helpers: Clean path: #{clean_path}")
 
     # Simplified approach:
     # 1. First decode any potentially encoded content to avoid double-encoding
     decoded_path = URI.decode(clean_path)
+    Logger.debug("S3Helpers: Decoded path: #{decoded_path}")
 
     # 2. For S3 URLs, we MANUALLY encode spaces as %20
-    #    This is simpler and more reliable than relying on URI.encode
-    #    which can behave differently across libraries and systems
     encoded_path = String.replace(decoded_path, " ", "%20")
+    Logger.debug("S3Helpers: Encoded path: #{encoded_path}")
 
     # 3. Build the final URL
-    "https://#{bucket}.#{host}/#{encoded_path}"
+    url = "https://#{bucket}.#{host}/#{encoded_path}"
+    Logger.debug("S3Helpers: Final URL: #{url}")
+    url
   end
 
   defp build_local_url(path) do

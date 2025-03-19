@@ -1,12 +1,16 @@
 defmodule TriviaAdvisorWeb.VenueLive.Show do
   use TriviaAdvisorWeb, :live_view
+
+  # Explicitly import S3Helpers to fix unused alias warning
+  import TriviaAdvisorWeb.Helpers.S3Helpers, only: [safe_url: 1, safe_url: 2, construct_url: 1, construct_url: 2]
+
+  alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Services.UnsplashService
   alias TriviaAdvisor.Services.GooglePlacesService
-  alias TriviaAdvisor.Locations
-  alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
   alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
   alias TriviaAdvisorWeb.Helpers.S3Helpers
+  alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
   require Logger
 
   import ImageGallery
@@ -21,6 +25,14 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
+    # Fix timezone conversion
+    timezone = socket.assigns[:timezone] || "UTC"
+    timezone = try do
+      Timex.Timezone.get(timezone)
+    rescue
+      _ -> Timex.Timezone.get("UTC")
+    end
+
     # Get venue from database by slug instead of id
     case get_venue_by_slug(slug) do
       {:ok, venue} ->
@@ -114,14 +126,8 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
             count_available_images={@count_available_images}
           />
         <% else %>
-          <div class="mb-8 overflow-hidden rounded-lg">
-            <div class="w-full p-1">
-              <img
-                src={"https://placehold.co/1200x400?text=Venue Not Found"}
-                alt="Venue Not Found"
-                class="h-96 w-full object-cover rounded-lg"
-              />
-            </div>
+          <div class="mb-4 bg-white p-8 text-center">
+            <div class="text-2xl font-semibold text-gray-500">No venue found</div>
           </div>
         <% end %>
 
@@ -215,7 +221,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                     <div class="flex items-center space-x-4 rounded-lg border p-4 transition hover:bg-gray-50">
                       <div class="h-16 w-16 flex-shrink-0 overflow-hidden rounded-md">
                         <img
-                          src={venue_info.venue.hero_image_url || get_venue_image(venue_info.venue) || "https://placehold.co/100x100?text=#{venue_info.venue.name}"}
+                          src={safe_url(venue_info.venue.hero_image_url || get_venue_image(venue_info.venue) || "https://placehold.co/100x100?text=#{venue_info.venue.name}")}
                           alt={venue_info.venue.name}
                           class="h-full w-full object-cover"
                         />
@@ -669,25 +675,8 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                   Logger.debug("Raw hero image URL: #{inspect(raw_url)}")
 
                   if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-                    # Get bucket name from env var, with fallback
-                    bucket = System.get_env("BUCKET_NAME") ||
-                             Application.get_env(:waffle, :bucket) ||
-                             "trivia-advisor"
-
-                    # Get S3 configuration
-                    s3_config = Application.get_env(:ex_aws, :s3, [])
-                    host = case s3_config[:host] do
-                      h when is_binary(h) -> h
-                      _ -> "fly.storage.tigris.dev"
-                    end
-
-                    # Format path correctly for S3 (remove leading slash)
-                    s3_path = if String.starts_with?(raw_url, "/"), do: String.slice(raw_url, 1..-1//1), else: raw_url
-
-                    # Construct the full S3 URL using virtual host style
-                    full_url = "https://#{bucket}.#{host}/#{s3_path}"
-                    Logger.debug("Constructed S3 URL from Waffle: #{full_url}")
-                    {:ok, full_url}
+                    # Instead of manually constructing the S3 URL, use our helper
+                    {:ok, TriviaAdvisorWeb.Helpers.S3Helpers.construct_url(raw_url)}
                   else
                     # In development, use the standard approach
                     processed_url = String.replace(raw_url, ~r{^/priv/static}, "")
@@ -804,11 +793,12 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   end
 
   defp return_default_image(venue \\ nil) do
-    if venue && is_map(venue) && Map.has_key?(venue, :name) && is_binary(venue.name) do
+    url = if venue && is_map(venue) && Map.has_key?(venue, :name) && is_binary(venue.name) do
       "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
     else
-      "/images/default-venue.jpg"
+      "https://placehold.co/600x400?text=No%20Image"
     end
+    TriviaAdvisorWeb.Helpers.S3Helpers.safe_url(url)
   end
 
   # Add function to get the Google API key
@@ -834,7 +824,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   # Helper to ensure URL is a full URL
   defp ensure_full_url(path) do
-    S3Helpers.construct_url(path)
+    S3Helpers.safe_url(path)
   end
 
   # Helper to get country information
@@ -968,30 +958,31 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   # Constructing the manual hero image URL with standard URL encoding
   defp construct_hero_image_url(event, venue) do
-    S3Helpers.construct_hero_image_url(event, venue)
+    S3Helpers.safe_hero_image_url(event, venue)
   end
 
   # Use the S3Helpers module for hero image URL generation
   def hero_image_url(event, venue) do
     cond do
       is_nil(event) or is_nil(event.hero_image) or is_nil(event.hero_image.file_name) ->
-        "/images/default-placeholder.png"
+        Phoenix.HTML.raw("/images/default-placeholder.png")
 
       # Try Waffle's URL function first
       true ->
         try do
-          TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+          raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+          Phoenix.HTML.raw(raw_url)
         rescue
           e ->
             Logger.debug("Error using Waffle URL function: #{Exception.message(e)}")
             # Fallback to our helper function if Waffle fails
-            S3Helpers.construct_hero_image_url(event, venue)
+            S3Helpers.safe_hero_image_url(event, venue)
         end
     end
   end
 
   # Use the S3Helpers module for general URL construction
   def process_image_url(path) do
-    S3Helpers.construct_url(path)
+    S3Helpers.safe_url(path)
   end
 end

@@ -47,4 +47,17 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     # Return just the version prefix and sanitized name (Waffle adds extension)
     "#{version}_#{file_name}"
   end
+
+  # Override the URL generation to use our S3Helpers for consistent handling
+  def url(definition, version, options) do
+    base_url = super(definition, version, options)
+
+    if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
+      # Let S3Helpers handle this URL via construct_url in other parts of the code
+      base_url
+    else
+      # In local development, apply the normal Waffle URL handling
+      base_url
+    end
+  end
 end
