@@ -63,17 +63,26 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     Logger.info("Processing refresh job for #{length(city_names)} cities in #{country}")
 
     for city_name <- city_names do
-      city = Repo.get_by(TriviaAdvisor.Locations.City, name: city_name)
+      # Query all cities with the given name in the specified country
+      cities =
+        from(c in TriviaAdvisor.Locations.City,
+          join: country_record in assoc(c, :country),
+          where: c.name == ^city_name and country_record.name == ^country)
+        |> Repo.all()
 
-      if city && needs_refresh?("city", city) do
-        Logger.info("Fetching new images for city: #{city_name}")
-        UnsplashImageFetcher.fetch_and_store_city_images(city_name)
-      else
-        if city do
-          Logger.info("Skipping refresh for city: #{city_name} - not due for refresh yet")
-        else
-          Logger.warning("City not found: #{city_name}")
-        end
+      case cities do
+        [] ->
+          Logger.warning("City not found: #{city_name} in #{country}")
+
+        cities ->
+          Enum.each(cities, fn city ->
+            if needs_refresh?("city", city) do
+              Logger.info("Fetching new images for city: #{city_name} (ID: #{city.id})")
+              UnsplashImageFetcher.fetch_and_store_city_images(city_name)
+            else
+              Logger.info("Skipping refresh for city: #{city_name} (ID: #{city.id}) - not due for refresh yet")
+            end
+          end)
       end
     end
 
