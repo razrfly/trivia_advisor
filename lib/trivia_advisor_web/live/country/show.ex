@@ -118,12 +118,18 @@ defmodule TriviaAdvisorWeb.CountryLive.Show do
     # Get cities for this country and include venue counts
     cities = Locations.list_cities_by_country_with_venue_counts(country.id)
 
+    # Get city names for batch image fetching
+    city_names = Enum.map(cities, & &1.name)
+
+    # Batch fetch images for all cities
+    city_images = UnsplashService.get_city_images_batch(city_names)
+
     # Sort cities by venue count in descending order
     Enum.sort_by(cities, & &1.venue_count, :desc)
     |> Enum.map(fn city ->
       # Transform each city to match the format expected by the CityCard component
-      # Get city image from UnsplashService
-      image_url = UnsplashService.get_city_image(city.name)
+      # Get image from pre-fetched batch
+      image_url = Map.get(city_images, city.name)
 
       %{
         id: city.id,

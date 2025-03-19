@@ -128,6 +128,56 @@ defmodule TriviaAdvisor.Services.UnsplashService do
     GenServer.call(__MODULE__, {:refresh_city_images, city_name, country_name})
   end
 
+  @doc """
+  Get multiple city images in a batch to avoid N+1 query problem.
+  Takes a list of city names and returns a map of {city_name => image_url}.
+  """
+  def get_city_images_batch(city_names) when is_list(city_names) do
+    # Get all cities from database in a single query
+    query = from c in City,
+      where: c.name in ^city_names,
+      select: {c.name, c.unsplash_gallery}
+
+    # Create a map of city_name => gallery
+    db_results = Repo.all(query) |> Map.new()
+
+    # Process each city name and build the result map
+    city_names
+    |> Enum.reduce(%{}, fn city_name, acc ->
+      case Map.get(db_results, city_name) do
+        nil ->
+          # City not in database, schedule fetching and return nil for now
+          Task.start(fn ->
+            # Try to fetch in background but don't wait for result
+            _ = get_city_image(city_name)
+          end)
+          Map.put(acc, city_name, nil)
+
+        gallery when is_nil(gallery) or gallery == %{} ->
+          # Gallery not present, schedule fetching and return nil for now
+          Task.start(fn ->
+            # Try to fetch in background but don't wait for result
+            _ = get_city_image(city_name)
+          end)
+          Map.put(acc, city_name, nil)
+
+        gallery ->
+          # Extract image URL from gallery
+          images = Map.get(gallery, "images", [])
+          current_index = Map.get(gallery, "current_index", 0)
+
+          if Enum.empty?(images) do
+            Map.put(acc, city_name, nil)
+          else
+            # Get current image URL
+            current_index = min(current_index, length(images) - 1)
+            image = Enum.at(images, current_index)
+            Map.put(acc, city_name, image["url"])
+          end
+      end
+    end)
+  end
+
   # Server callbacks
 
   @impl true

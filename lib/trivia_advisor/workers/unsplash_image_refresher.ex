@@ -91,16 +91,35 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     Logger.info("Scheduling refresh for #{length(countries)} country galleries with venues")
 
     # Schedule a job to refresh country images with small batches
-    countries
-    |> Enum.chunk_every(10) # Process in batches of 10
+    batches = countries |> Enum.chunk_every(10) # Process in batches of 10
+
+    # Log all batches to help debug
+    Logger.debug("Country batches to be scheduled: #{inspect(batches)}")
+
+    batches
     |> Enum.with_index()
     |> Enum.each(fn {batch, index} ->
       # Stagger jobs by 30 minutes to avoid overlapping
       schedule_in = index * 30 * 60
 
-      %{type: "country", names: batch}
-      |> __MODULE__.new(schedule_in: schedule_in)
-      |> Oban.insert()
+      # Ensure we're not scheduling empty batches
+      if Enum.empty?(batch) do
+        Logger.warning("Skipping empty country batch at index #{index}")
+      else
+        # Use a unique ID for idempotent jobs to prevent duplicates
+        unique_id = "country_batch_#{index}_#{Enum.join(batch, "_")}"
+
+        args = %{
+          type: "country",
+          names: batch
+        }
+
+        {:ok, job} = args
+          |> __MODULE__.new(schedule_in: schedule_in, id: unique_id)
+          |> Oban.insert()
+
+        Logger.info("Scheduled country batch job #{job.id} for #{inspect(batch)} in #{div(schedule_in, 60)} minutes")
+      end
     end)
   end
 
@@ -120,6 +139,8 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     |> Enum.each(fn {{country, cities}, country_index} ->
       chunk_size = 10
 
+      Logger.debug("Scheduling batches for #{length(cities)} cities in #{country}")
+
       cities
       |> Enum.chunk_every(chunk_size)
       |> Enum.with_index()
@@ -128,14 +149,25 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
         # This gives more time between batches to avoid rate limiting
         schedule_in = country_index * 60 * 60 + batch_index * 10 * 60 # 60 min between countries, 10 min between batches
 
-        args = %{
-          "type" => "city",
-          "names" => batch,
-          "country" => country
-        }
+        # Skip empty batches
+        if Enum.empty?(batch) do
+          Logger.warning("Skipping empty city batch at index #{batch_index} for #{country}")
+        else
+          # Create a unique ID for this job to prevent duplicates
+          unique_id = "city_batch_#{country}_#{batch_index}_#{Enum.join(batch, "_")}"
 
-        {:ok, job} = args |> new(schedule_in: schedule_in) |> Oban.insert()
-        Logger.info("Scheduled job #{job.id} to refresh #{length(batch)} cities in #{country} in #{div(schedule_in, 60)} minutes")
+          args = %{
+            "type" => "city",
+            "names" => batch,
+            "country" => country
+          }
+
+          {:ok, job} = args
+            |> new(schedule_in: schedule_in, id: unique_id)
+            |> Oban.insert()
+
+          Logger.info("Scheduled job #{job.id} to refresh #{length(batch)} cities in #{country} in #{div(schedule_in, 60)} minutes")
+        end
       end)
     end)
   end
@@ -150,6 +182,24 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
       %{action: "refresh"}
       |> __MODULE__.new(schedule_in: 86_400) # 24 hours in seconds
     )
+  end
+
+  @doc """
+  Manually trigger a full refresh of all images.
+  This will create a unique job to avoid duplicates.
+  """
+  def trigger_full_refresh do
+    # Generate a unique timestamp to prevent duplicate jobs
+    timestamp = DateTime.utc_now() |> DateTime.to_unix()
+    unique_id = "full_refresh_#{timestamp}"
+
+    Logger.info("Triggering full image refresh with unique ID: #{unique_id}")
+
+    {:ok, job} = %{action: "refresh"}
+      |> __MODULE__.new(id: unique_id)
+      |> Oban.insert()
+
+    {:ok, job.id}
   end
 
   @doc """
@@ -175,7 +225,13 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
       distinct: true,
       select: c.name
 
-    Repo.all(query)
+    countries = Repo.all(query)
+
+    # Log the countries we're about to process
+    Logger.info("Found #{length(countries)} countries: #{inspect(countries)}")
+
+    # Ensure uniqueness by running through MapSet
+    countries |> MapSet.new() |> MapSet.to_list()
   end
 
   defp fetch_all_cities_with_country do
