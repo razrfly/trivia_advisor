@@ -205,11 +205,19 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
     name = String.trim(name)
 
     # Build gallery structure with images and timestamp
+    # Only set last_refreshed_at when there are actual images
     gallery = %{
       "images" => images,
-      "current_index" => 0,
-      "last_refreshed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+      "current_index" => 0
     }
+
+    # Add last_refreshed_at only if there are images
+    gallery = if Enum.empty?(images) do
+      Logger.warning("No images found for #{type}: #{name} - not setting refresh timestamp")
+      gallery
+    else
+      Map.put(gallery, "last_refreshed_at", DateTime.utc_now() |> DateTime.to_iso8601())
+    end
 
     # Store the gallery in the database
     case type do
