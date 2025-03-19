@@ -6,7 +6,10 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   Stores image galleries in the database.
   """
 
-  use Oban.Worker, queue: :images, max_attempts: 3
+  use Oban.Worker,
+    queue: :images,
+    max_attempts: 3,
+    unique: [period: 60 * 60, fields: [:worker, :args], keys: [:unique_key]]
   require Logger
   alias TriviaAdvisor.Services.UnsplashImageFetcher
   alias TriviaAdvisor.Repo
@@ -106,19 +109,23 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
       if Enum.empty?(batch) do
         Logger.warning("Skipping empty country batch at index #{index}")
       else
-        # Use a unique ID for idempotent jobs to prevent duplicates
-        unique_id = "country_batch_#{index}_#{Enum.join(batch, "_")}"
+        # Create a unique key for this specific batch to prevent duplicates
+        unique_batch_key = "country_batch_#{index}_#{Enum.join(batch, "_")}"
 
         args = %{
           type: "country",
-          names: batch
+          names: batch,
+          unique_key: unique_batch_key  # Add unique key to args instead of using :id
         }
 
-        {:ok, job} = args
-          |> __MODULE__.new(schedule_in: schedule_in, id: unique_id)
-          |> Oban.insert()
-
-        Logger.info("Scheduled country batch job #{job.id} for #{inspect(batch)} in #{div(schedule_in, 60)} minutes")
+        case args
+          |> __MODULE__.new(schedule_in: schedule_in)
+          |> Oban.insert() do
+          {:ok, job} ->
+            Logger.info("Scheduled country batch job #{job.id} for #{inspect(batch)} in #{div(schedule_in, 60)} minutes")
+          {:error, error} ->
+            Logger.error("Failed to schedule country batch: #{inspect(error)}")
+        end
       end
     end)
   end
@@ -153,20 +160,24 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
         if Enum.empty?(batch) do
           Logger.warning("Skipping empty city batch at index #{batch_index} for #{country}")
         else
-          # Create a unique ID for this job to prevent duplicates
-          unique_id = "city_batch_#{country}_#{batch_index}_#{Enum.join(batch, "_")}"
+          # Create a unique identifier for this job
+          unique_batch_key = "city_batch_#{country}_#{batch_index}_#{Enum.join(batch, "_")}"
 
           args = %{
             "type" => "city",
             "names" => batch,
-            "country" => country
+            "country" => country,
+            "unique_key" => unique_batch_key
           }
 
-          {:ok, job} = args
-            |> new(schedule_in: schedule_in, id: unique_id)
-            |> Oban.insert()
-
-          Logger.info("Scheduled job #{job.id} to refresh #{length(batch)} cities in #{country} in #{div(schedule_in, 60)} minutes")
+          case args
+            |> new(schedule_in: schedule_in)
+            |> Oban.insert() do
+            {:ok, job} ->
+              Logger.info("Scheduled job #{job.id} to refresh #{length(batch)} cities in #{country} in #{div(schedule_in, 60)} minutes")
+            {:error, error} ->
+              Logger.error("Failed to schedule city batch for #{country}: #{inspect(error)}")
+          end
         end
       end)
     end)
@@ -177,11 +188,17 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   This creates a recurring job that will run daily at the specified time.
   """
   def schedule_daily_refresh do
-    # Create a daily job that runs 24 hours from now (Oban doesn't support {hour, minute, second} format)
-    Oban.insert!(
+    # Create a job that runs daily at 1:00 AM UTC
+    try do
       %{action: "refresh"}
-      |> __MODULE__.new(schedule_in: 86_400) # 24 hours in seconds
-    )
+      |> __MODULE__.new(schedule: "0 1 * * *")
+      |> Oban.insert!()
+      {:ok, :scheduled}
+    rescue
+      e ->
+        Logger.error("Failed to schedule daily refresh: #{inspect(e)}")
+        {:error, :scheduling_failed}
+    end
   end
 
   @doc """
@@ -191,15 +208,25 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   def trigger_full_refresh do
     # Generate a unique timestamp to prevent duplicate jobs
     timestamp = DateTime.utc_now() |> DateTime.to_unix()
-    unique_id = "full_refresh_#{timestamp}"
+    unique_key = "full_refresh_#{timestamp}"
 
-    Logger.info("Triggering full image refresh with unique ID: #{unique_id}")
+    Logger.info("Triggering full image refresh with unique key: #{unique_key}")
 
-    {:ok, job} = %{action: "refresh"}
-      |> __MODULE__.new(id: unique_id)
-      |> Oban.insert()
+    args = %{
+      action: "refresh",
+      unique_key: unique_key  # Use uniqueness within the args
+    }
 
-    {:ok, job.id}
+    case args
+      |> __MODULE__.new()
+      |> Oban.insert() do
+      {:ok, job} ->
+        Logger.info("Scheduled full refresh job #{job.id}")
+        {:ok, job.id}
+      {:error, error} ->
+        Logger.error("Failed to schedule full refresh: #{inspect(error)}")
+        {:error, error}
+    end
   end
 
   @doc """

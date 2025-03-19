@@ -172,7 +172,7 @@ defmodule TriviaAdvisor.Services.UnsplashService do
             # Get current image URL
             current_index = min(current_index, length(images) - 1)
             image = Enum.at(images, current_index)
-            Map.put(acc, city_name, image["url"])
+            Map.put(acc, city_name, if(is_nil(image), do: nil, else: image["url"]))
           end
       end
     end)
@@ -301,55 +301,32 @@ defmodule TriviaAdvisor.Services.UnsplashService do
     end
   end
 
-  defp rotate_db_image("country", country_name) do
-    # Get the country record
-    country = Repo.get_by(Country, name: country_name)
+  # Define the function with defaults in the header
+  defp rotate_db_image(type, name, format_fn \\ &(&1))
 
-    if is_nil(country) do
-      {:error, :not_found}
-    else
-      gallery = country.unsplash_gallery
-
-      if is_nil(gallery) do
-        {:error, :no_gallery}
-      else
-        images = Map.get(gallery, "images", [])
-        current_index = Map.get(gallery, "current_index", 0)
-
-        if Enum.empty?(images) do
-          {:error, :no_images}
-        else
-          # Calculate the next index (wrap around if needed)
-          next_index = rem(current_index + 1, length(images))
-
-          # Update the gallery with the new index
-          updated_gallery = Map.put(gallery, "current_index", next_index)
-
-          # Update the database
-          {:ok, _updated} = Repo.update(
-            Country.changeset(country, %{unsplash_gallery: updated_gallery})
-          )
-
-          # Return the new current image
-          new_image = Enum.at(updated_gallery["images"], next_index)
-
-          {:ok, %{
-            image_url: new_image["url"],
-            attribution: new_image["attribution"]
-          }}
-        end
-      end
-    end
+  # Type-specific implementations
+  defp rotate_db_image("country", country_name, _format_fn) do
+    rotate_db_image("country", country_name, fn image ->
+      %{image_url: image["url"], attribution: image["attribution"]}
+    end)
   end
 
-  defp rotate_db_image("city", city_name) do
-    # Get the city record
-    city = Repo.get_by(City, name: city_name)
+  defp rotate_db_image("city", city_name, _format_fn) do
+    rotate_db_image("city", city_name, fn image -> image["url"] end)
+  end
 
-    if is_nil(city) do
+  # Generic implementation
+  defp rotate_db_image(type, name, format_fn) when type in ["country", "city"] do
+    # Get the model and record
+    {model, record} = case type do
+      "country" -> {Country, Repo.get_by(Country, name: name)}
+      "city" -> {City, Repo.get_by(City, name: name)}
+    end
+
+    if is_nil(record) do
       {:error, :not_found}
     else
-      gallery = city.unsplash_gallery
+      gallery = Map.get(record, :unsplash_gallery)
 
       if is_nil(gallery) do
         {:error, :no_gallery}
@@ -366,15 +343,16 @@ defmodule TriviaAdvisor.Services.UnsplashService do
           # Update the gallery with the new index
           updated_gallery = Map.put(gallery, "current_index", next_index)
 
-          # Update the database
-          {:ok, _updated} = Repo.update(
-            City.changeset(city, %{unsplash_gallery: updated_gallery})
-          )
-
-          # Return the new current image URL
-          new_image = Enum.at(updated_gallery["images"], next_index)
-
-          {:ok, new_image["url"]}
+          # Update the database using appropriate changeset function
+          case Repo.update(apply(model, :changeset, [record, %{unsplash_gallery: updated_gallery}])) do
+            {:ok, _updated} ->
+              # Return the new current image
+              new_image = Enum.at(updated_gallery["images"], next_index)
+              {:ok, format_fn.(new_image)}
+            {:error, changeset} ->
+              Logger.error("Failed to update #{type} gallery: #{inspect(changeset.errors)}")
+              {:error, :update_failed}
+          end
         end
       end
     end
