@@ -149,10 +149,25 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
           />
         </div>
         <div class="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
-        <div class="absolute bottom-0 w-full p-4 text-white sm:p-6">
-          <div class="mx-auto max-w-7xl">
-            <h1 class="text-3xl font-bold sm:text-4xl md:text-5xl"><%= @city.name %></h1>
-            <p class="text-xl text-white/80"><%= @city.venue_count %> Venues • <%= @city.country_name %></p>
+        <div class="absolute bottom-0 w-full px-4 py-8 text-white sm:px-6 lg:px-8">
+          <div class="container mx-auto">
+            <h1 class="text-4xl font-bold"><%= @city.name %>, <%= @city.country_name %></h1>
+            <p class="mt-2 text-lg"><%= @city.venue_count %> Trivia Venues</p>
+            <%= if @city.attribution do %>
+              <p class="mt-1 text-xs opacity-80">
+                Photo by
+                <%= if Map.get(@city.attribution, "photographer_url") do %>
+                  <a href={Map.get(@city.attribution, :photographer_url) || Map.get(@city.attribution, "photographer_url")} target="_blank" rel="noopener" class="hover:underline">
+                    <%= Map.get(@city.attribution, :photographer_name) || Map.get(@city.attribution, "photographer_name") %>
+                  </a>
+                <% else %>
+                  <%= Map.get(@city.attribution, :photographer_name) || Map.get(@city.attribution, "photographer_name") %>
+                <% end %>
+                <%= if Map.get(@city.attribution, :unsplash_url) || Map.get(@city.attribution, "unsplash_url") do %>
+                  on <a href={Map.get(@city.attribution, :unsplash_url) || Map.get(@city.attribution, "unsplash_url")} target="_blank" rel="noopener" class="hover:underline">Unsplash</a>
+                <% end %>
+              </p>
+            <% end %>
           </div>
         </div>
       </div>
@@ -400,13 +415,17 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         # Use count_venues_with_events_near_city to only count venues with events
         venues_count = Locations.count_venues_with_events_near_city(city, radius_km: 50)
 
+        # Get the image data from the city's unsplash_gallery
+        {image_url, attribution} = get_image_data_from_gallery(city)
+
         {:ok, %{
           id: city.id,
           name: city.name,
           slug: city.slug,
           country_name: city.country.name,
           venue_count: venues_count,
-          image_url: get_city_image(city.name),
+          image_url: image_url,
+          attribution: attribution,
           city: city
         }}
 
@@ -419,6 +438,46 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     end
   end
 
+  # Extract image data from the city's unsplash_gallery
+  defp get_image_data_from_gallery(city) do
+    # Default image URL if none is found
+    default_image_url = "/images/default_city.jpg"
+
+    if city.unsplash_gallery &&
+       is_map(city.unsplash_gallery) &&
+       Map.has_key?(city.unsplash_gallery, "images") &&
+       is_list(city.unsplash_gallery["images"]) &&
+       length(city.unsplash_gallery["images"]) > 0 do
+
+      # Get the current index or default to 0
+      current_index = Map.get(city.unsplash_gallery, "current_index", 0)
+
+      # Get the current image safely
+      current_image = Enum.at(city.unsplash_gallery["images"], current_index) || List.first(city.unsplash_gallery["images"])
+
+      if current_image && Map.has_key?(current_image, "url") do
+        # Extract the image URL
+        image_url = current_image["url"]
+
+        # Extract attribution
+        attribution = if Map.has_key?(current_image, "attribution") do
+          current_image["attribution"]
+        else
+          %{"photographer_name" => "Photographer", "photographer_url" => nil, "unsplash_url" => "https://unsplash.com"}
+        end
+
+        {image_url, attribution}
+      else
+        # Fallback to default if no URL in the gallery
+        {default_image_url, %{"photographer_name" => "Default Image"}}
+      end
+    else
+      # If no gallery or no images, use fallback hardcoded image URL
+      image_url = get_city_image(city.name)
+      {image_url, %{"photographer_name" => "Unsplash", "unsplash_url" => "https://unsplash.com"}}
+    end
+  end
+
   # Get mock city data by slug (for development only)
   defp get_mock_city_by_slug(slug) do
     mock_cities = [
@@ -428,7 +487,12 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         slug: "london",
         country_name: "United Kingdom",
         venue_count: 120,
-        image_url: "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
+        image_url: "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000",
+        attribution: %{
+          "photographer_name" => "Benjamin Davies",
+          "photographer_url" => "https://unsplash.com/@bendavisual",
+          "unsplash_url" => "https://unsplash.com/photos/Oja2ty_9ZLM"
+        }
       },
       %{
         id: "2",
@@ -436,15 +500,38 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         slug: "new-york",
         country_name: "United States",
         venue_count: 87,
-        image_url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
+        image_url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000",
+        attribution: %{
+          "photographer_name" => "Luca Bravo",
+          "photographer_url" => "https://unsplash.com/@lucabravo",
+          "unsplash_url" => "https://unsplash.com/photos/ESkw2ayO2As"
+        }
       },
       %{
         id: "3",
         name: "Sydney",
         slug: "sydney",
         country_name: "Australia",
-        venue_count: 45,
-        image_url: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
+        venue_count: 65,
+        image_url: "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000",
+        attribution: %{
+          "photographer_name" => "Dan Freeman",
+          "photographer_url" => "https://unsplash.com/@danfreemanphoto",
+          "unsplash_url" => "https://unsplash.com/photos/7Zb7kUyQg1E"
+        }
+      },
+      %{
+        id: "4",
+        name: "Melbourne",
+        slug: "melbourne",
+        country_name: "Australia",
+        venue_count: 54,
+        image_url: "https://images.unsplash.com/photo-1545044846-351ba102b6d5?q=80&w=2000",
+        attribution: %{
+          "photographer_name" => "Weyne Yew",
+          "photographer_url" => "https://unsplash.com/@weyneyew",
+          "unsplash_url" => "https://unsplash.com/photos/D4YrzSwyIFQ"
+        }
       }
     ]
 
