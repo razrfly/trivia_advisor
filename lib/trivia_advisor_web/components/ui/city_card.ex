@@ -15,7 +15,14 @@ defmodule TriviaAdvisorWeb.Components.UI.CityCard do
         <div class="flex items-center gap-2">
           <span class="text-sm"><%= @city.venue_count %> Venues</span>
           <span class="text-xs">•</span>
-          <span class="text-sm"><%= @city.country_name %></span>
+          <span class="text-sm">
+            <a
+              href={~p"/countries/#{slug_for_country(@city.country_name)}"}
+              class="hover:underline"
+            >
+              <%= @city.country_name %>
+            </a>
+          </span>
         </div>
         <a
           href={~p"/cities/#{@city.slug || String.downcase(@city.name) |> String.replace(~r/[^a-z0-9]+/, "-")}"}
@@ -29,5 +36,10 @@ defmodule TriviaAdvisorWeb.Components.UI.CityCard do
       </div>
     </div>
     """
+  end
+
+  # Convert country name to slug
+  defp slug_for_country(country_name) do
+    Slug.slugify(country_name)
   end
 end

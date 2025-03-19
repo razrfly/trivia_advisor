@@ -7,6 +7,7 @@ defmodule TriviaAdvisor.Locations.Country do
     field :name, :string
     field :code, :string
     field :slug, :string
+    field :unsplash_gallery, :map
 
     has_many :cities, City
 
@@ -16,7 +17,7 @@ defmodule TriviaAdvisor.Locations.Country do
   @doc false
   def changeset(country, attrs) do
     country
-    |> cast(attrs, [:code, :name])
+    |> cast(attrs, [:code, :name, :unsplash_gallery])
     |> validate_required([:code, :name])
     |> generate_slug()
     |> unique_constraint(:code)

@@ -13,7 +13,8 @@ config :trivia_advisor, Oban,
   queues: [
     default: 20,
     google_api: [limit: 5],
-    scraper: [limit: 10]
+    scraper: [limit: 10],
+    images: [limit: 2]
   ],
   repo: TriviaAdvisor.Repo,
   plugins: [

@@ -10,6 +10,7 @@ defmodule TriviaAdvisor.Locations.City do
     field :slug, :string
     field :latitude, :decimal
     field :longitude, :decimal
+    field :unsplash_gallery, :map
 
     belongs_to :country, Country
     has_many :venues, Venue
@@ -20,7 +21,7 @@ defmodule TriviaAdvisor.Locations.City do
   @doc false
   def changeset(city, attrs) do
     city
-    |> cast(attrs, [:name, :country_id, :latitude, :longitude])
+    |> cast(attrs, [:name, :country_id, :latitude, :longitude, :unsplash_gallery])
     |> validate_required([:name, :country_id])
     |> validate_number(:latitude, greater_than_or_equal_to: -90, less_than_or_equal_to: 90)
     |> validate_number(:longitude, greater_than_or_equal_to: -180, less_than_or_equal_to: 180)
