@@ -555,7 +555,22 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     # Get the start time from the first event if available
     if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      time = Map.get(event, :start_time)
+      raw_time = Map.get(event, :start_time)
+
+      # Pre-process raw numeric times before passing to the localization helper
+      time = if is_binary(raw_time) do
+        # Check if it's a numeric string like "730"
+        if Regex.match?(~r/^\d+$/, raw_time) && String.length(raw_time) >= 3 do
+          # Format numeric time like "730" to "7:30" before localization
+          hours = String.slice(raw_time, 0..-3//1)
+          minutes = String.slice(raw_time, -2..-1//1)
+          "#{hours}:#{minutes}"
+        else
+          raw_time
+        end
+      else
+        raw_time
+      end
 
       # Get country data for proper localization
       country = get_venue_country(venue)

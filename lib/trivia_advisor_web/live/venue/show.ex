@@ -449,7 +449,26 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     # Get the start time from the first event if available
     if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      Map.get(event, :start_time, "7:00 PM") # Default time if not found
+
+      # Get the raw start time value
+      start_time = Map.get(event, :start_time, "7:00 PM")
+
+      # If it's a raw numeric string (like "730"), format it properly
+      if is_binary(start_time) do
+        # Check if it's a numeric string like "730"
+        if Regex.match?(~r/^\d+$/, start_time) && String.length(start_time) >= 3 do
+          # Format time properly
+          hours = String.slice(start_time, 0..-3//1)
+          minutes = String.slice(start_time, -2..-1//1)
+          "#{hours}:#{minutes}"
+        else
+          # Return time as is
+          start_time
+        end
+      else
+        # Return non-string values as is
+        start_time
+      end
     else
       # Default value if no events
       "7:00 PM"

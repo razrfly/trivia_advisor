@@ -30,6 +30,20 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
     # Get locale from country data
     locale = get_locale_from_country(country)
 
+    # Special case: if time is a number-only string like "730", convert it to proper format
+    time = if is_binary(time) do
+      if Regex.match?(~r/^\d+$/, time) && String.length(time) >= 3 do
+        # Convert numeric string like "730" to "7:30" format
+        hours = String.slice(time, 0..-3//1)
+        minutes = String.slice(time, -2..-1//1)
+        "#{hours}:#{minutes}"
+      else
+        time
+      end
+    else
+      time
+    end
+
     # Convert to Time struct
     case normalize_time(time) do
       %Time{} = time_struct ->
@@ -73,7 +87,31 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
         end
 
       _ ->
-        "#{time}"
+        # If we couldn't parse it as a time, but it's a numeric string, format it nicely
+        if is_binary(time) do
+          if Regex.match?(~r/^\d+$/, time) && String.length(time) >= 3 do
+            hours = String.slice(time, 0..-3//1)
+            minutes = String.slice(time, -2..-1//1)
+            hour_int = String.to_integer(hours)
+
+            # Format with AM/PM for countries using 12h format
+            if uses_24h_format?(country) do
+              "#{hours}:#{minutes}"
+            else
+              am_pm = if hour_int >= 12, do: "PM", else: "AM"
+              hour_12 = cond do
+                hour_int == 0 -> 12
+                hour_int > 12 -> hour_int - 12
+                true -> hour_int
+              end
+              "#{hour_12}:#{minutes} #{am_pm}"
+            end
+          else
+            "#{time}"
+          end
+        else
+          "#{time}"
+        end
     end
   end
 
