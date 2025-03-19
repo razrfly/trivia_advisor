@@ -4,6 +4,7 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
   alias TriviaAdvisor.Services.UnsplashService
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
   alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
+  alias TriviaAdvisorWeb.Helpers.S3Helpers
   require Logger
   import FormatHelpers, only: [
     time_ago: 1,
@@ -11,46 +12,53 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     get_event_source_data: 1
   ]
 
+  # Radius options used in the template
   @radius_options [
     {"5 km", 5},
     {"10 km", 10},
     {"25 km", 25},
     {"50 km", 50}
   ]
-  @default_radius 25
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
     # Fetch the city by slug
     case get_city_data(slug) do
-      {:ok, city_data} ->
-        socket = socket
-          |> assign(:page_title, "#{city_data.name} - Trivia Venues")
-          |> assign(:city, city_data)
-          |> assign(:radius, @default_radius)
-          |> assign(:radius_options, @radius_options)
-          |> assign(:selected_suburbs, [])
-          |> assign(:suburbs, get_suburbs(city_data.city))
+      {:ok, city} ->
+        # Default radius of 25km
+        radius = 25
 
-        # Get venues for the city using spatial search
-        {:ok, assign(socket, :venues, get_venues_near_city(city_data.city, @default_radius))}
+        # Get venues for the city using the actual venue fetching function
+        venues = get_venues_near_city(city.city, radius)
 
-      {:error, _} ->
+        # Get Mapbox token for the map
+        mapbox_token = Application.get_env(:trivia_advisor, :mapbox)[:access_token] || ""
+
         {:ok,
          socket
-         |> assign(:page_title, "City Not Found")
-         |> assign(:city, %{
-           id: nil,
-           name: "Unknown City",
-           country_name: "Unknown Country",
-           venue_count: 0,
-           image_url: nil
-         })
+         |> assign(:page_title, "#{city.name}, #{city.country_name} - TriviaAdvisor")
+         |> assign(:slug, slug)
+         |> assign(:city, city)
+         |> assign(:country, %{name: city.country_name, code: "US"})  # Placeholder country
+         |> assign(:venues, venues)
+         |> assign(:mapbox_token, mapbox_token)
+         |> assign(:radius, radius)  # Default radius of 25km
+         |> assign(:radius_options, @radius_options)  # Make radius options available to template
+         |> assign(:suburbs, [])  # Empty list of suburbs
+         |> assign(:selected_suburbs, [])}  # Empty list of selected suburbs
+
+      {:error, _reason} ->
+        {:ok,
+         socket
+         |> assign(:page_title, "City Not Found - TriviaAdvisor")
+         |> assign(:slug, slug)
+         |> assign(:city, nil)
+         |> assign(:country, nil)
          |> assign(:venues, [])
-         |> assign(:radius, @default_radius)
          |> assign(:radius_options, @radius_options)
-         |> assign(:selected_suburbs, [])
-         |> assign(:suburbs, [])}
+         |> assign(:radius, 25)
+         |> assign(:suburbs, [])
+         |> assign(:selected_suburbs, [])}
     end
   end
 
@@ -742,34 +750,8 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
                 {:ok, url} ->
                   url
                 _ ->
-                  # Fallback to manual URL construction (which we know works)
-                  if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-                    # Get bucket name from env var, with fallback
-                    bucket = System.get_env("BUCKET_NAME") ||
-                             Application.get_env(:waffle, :bucket) ||
-                             "trivia-advisor"
-
-                    # Get S3 configuration
-                    s3_config = Application.get_env(:ex_aws, :s3, [])
-                    host = case s3_config[:host] do
-                      h when is_binary(h) -> h
-                      _ -> "fly.storage.tigris.dev"
-                    end
-
-                    # Get file name parts
-                    file_name = event.hero_image.file_name
-                    extension = Path.extname(file_name)
-                    base_name = Path.basename(file_name, extension)
-
-                    # Construct manual URL like we did in our working solution
-                    original_path = "uploads/venues/#{venue.slug}/original_#{base_name}#{extension}"
-                    Logger.debug("Fallback to manual S3 URL: https://#{bucket}.#{host}/#{original_path}")
-                    "https://#{bucket}.#{host}/#{original_path}"
-                  else
-                    # In development, try again with standard approach
-                    raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
-                    String.replace(raw_url, ~r{^/priv/static}, "")
-                  end
+                  # Fallback to manual URL construction with Tigris encoding
+                  construct_hero_image_url(event, venue)
               end
             rescue
               e ->
@@ -821,52 +803,28 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
     end
   end
 
-  # Helper to process image URLs to ensure they're full URLs
-  defp process_image_url(path) do
-    # Return a default image if path is nil or not a binary
-    if is_nil(path) or not is_binary(path) do
-      "/images/default-venue.jpg"
-    else
-      try do
-        cond do
-          # Already a full URL
-          String.starts_with?(path, "http") ->
-            path
+  # Use the S3Helpers module for hero image URL generation
+  def hero_image_url(event, venue) do
+    cond do
+      is_nil(event) or is_nil(event.hero_image) or is_nil(event.hero_image.file_name) ->
+        "/images/default-placeholder.png"
 
-          # Check if using S3 storage in production
-          Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
-            # Get S3 configuration
-            s3_config = Application.get_env(:ex_aws, :s3, [])
-            bucket = Application.get_env(:waffle, :bucket, "trivia-advisor")
-
-            # For Tigris S3-compatible storage, we need to use a public URL pattern
-            # that doesn't rely on object ACLs
-            host = case s3_config[:host] do
-              h when is_binary(h) -> h
-              _ -> "fly.storage.tigris.dev"
-            end
-
-            # Format path correctly for S3 (remove leading slash)
-            s3_path = if String.starts_with?(path, "/"), do: String.slice(path, 1..-1//1), else: path
-
-            # Construct the full S3 URL
-            # Using direct virtual host style URL
-            "https://#{bucket}.#{host}/#{s3_path}"
-
-          # Local development
-          true ->
-            if String.starts_with?(path, "/") do
-              "#{TriviaAdvisorWeb.Endpoint.url()}#{path}"
-            else
-              "#{TriviaAdvisorWeb.Endpoint.url()}/#{path}"
-            end
+      # Try Waffle's URL function first
+      true ->
+        try do
+          TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
+        rescue
+          e ->
+            Logger.debug("Error using Waffle URL function: #{Exception.message(e)}")
+            # Fallback to our helper function if Waffle fails
+            S3Helpers.construct_hero_image_url(event, venue)
         end
-      rescue
-        e ->
-          Logger.error("Error constructing URL from path #{inspect(path)}: #{Exception.message(e)}")
-          "/images/default-venue.jpg"
-      end
     end
+  end
+
+  # Use the S3Helpers module for general URL construction
+  def process_image_url(path) do
+    S3Helpers.construct_url(path)
   end
 
   # Get a city image URL from Unsplash service or use a fallback
@@ -945,17 +903,6 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
 
   defp format_day(day) do
     format_day_of_week(day)
-  end
-
-  # Get suburbs (nearby cities) with venue counts
-  defp get_suburbs(city) do
-    try do
-      Locations.find_suburbs_near_city(city, radius_km: 50, limit: 10)
-    rescue
-      e ->
-        Logger.error("Error fetching suburbs for city: #{inspect(e)}")
-        []
-    end
   end
 
   # Filter venues based on selected suburbs
@@ -1058,5 +1005,10 @@ defmodule TriviaAdvisorWeb.CityLive.Show do
         _ -> venue
       end
     end
+  end
+
+  # Constructing the manual hero image URL with standard URL encoding
+  defp construct_hero_image_url(event, venue) do
+    S3Helpers.construct_hero_image_url(event, venue)
   end
 end

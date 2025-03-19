@@ -690,7 +690,10 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
           Application.get_env(:waffle, :storage) == Waffle.Storage.S3 ->
             # Get S3 configuration
             s3_config = Application.get_env(:ex_aws, :s3, [])
-            bucket = System.get_env("BUCKET_NAME") ||
+
+            # Get bucket name from env vars with fallback - prioritize TIGRIS_BUCKET_NAME
+            bucket = System.get_env("TIGRIS_BUCKET_NAME") ||
+                     System.get_env("BUCKET_NAME") ||
                      Application.get_env(:waffle, :bucket) ||
                      "trivia-app"
 
@@ -704,9 +707,23 @@ defmodule TriviaAdvisor.Services.GooglePlaceImageStore do
             # Format path correctly for S3 (remove leading slash)
             s3_path = if String.starts_with?(path, "/"), do: String.slice(path, 1..-1//1), else: path
 
-            # Construct the full S3 URL
-            # Using direct virtual host style URL
-            "https://#{bucket}.#{host}/#{s3_path}"
+            # Split the path into directory and filename
+            dir = Path.dirname(s3_path)
+            filename = Path.basename(s3_path)
+
+            # Encode only the filename - this is safer than encoding the whole path
+            # because slashes would be encoded as well
+            encoded_filename = URI.encode(filename)
+
+            # Rejoin the path with the encoded filename
+            full_path = if dir == "." do
+              encoded_filename
+            else
+              "#{dir}/#{encoded_filename}"
+            end
+
+            # Construct the full S3 URL using virtual host style
+            "https://#{bucket}.#{host}/#{full_path}"
 
           # Local development
           true ->
