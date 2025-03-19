@@ -449,7 +449,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     # Get the start time from the first event if available
     if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      Map.get(event, :start_time, "7:00 PM") # Default time if not found
+      Map.get(event, :start_time)
     else
       # Default value if no events
       "7:00 PM"
