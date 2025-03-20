@@ -235,12 +235,25 @@ end
 For new scrapers, implement the following enhanced pattern which separates Place API calls into a dedicated queue:
 
 1. Continue to use **VenueStore.process_venue** as the primary entry point
-2. Use **GooglePlaceImageStore.maybe_update_venue_images** for venue images with the 90-day refresh policy
-3. Use an optional flag to explicitly request or skip image processing:
+2. After successful venue creation, schedule a separate job for Google Place lookups:
+   ```elixir
+   # Schedule a GooglePlaceLookupJob to handle Google Places API operations
+   defp schedule_place_lookup(venue) do
+     %{"venue_id" => venue.id}
+     |> TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob.new()
+     |> Oban.insert()
+   end
+   ```
+3. Use an optional flag to explicitly request or skip image processing at the VenueStore level:
    ```elixir
    # Skip image processing entirely for batch jobs
    venue_attrs = Map.put(venue_attrs, :skip_image_processing, true)
    ```
+
+This pattern ensures that Google Places API interactions are:
+- Isolated in a dedicated job for better monitoring
+- Rate-limited independently from other operations
+- More easily maintained across all scrapers
 
 ## Error Handling
 

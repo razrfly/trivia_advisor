@@ -10,7 +10,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
   alias TriviaAdvisor.Scraping.Scrapers.Pubquiz.Extractor
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
-  alias TriviaAdvisor.Scraping.Oban.PubquizPlaceLookupJob
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   # Polish to numeric day mapping (0-6, where 0 is Sunday)
@@ -322,7 +322,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
   defp schedule_place_lookup(venue) do
     # Create a job with the venue ID
     %{"venue_id" => venue.id}
-    |> PubquizPlaceLookupJob.new()
+    |> GooglePlaceLookupJob.new()
     |> Oban.insert()
   end
 

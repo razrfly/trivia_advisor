@@ -13,6 +13,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   alias TriviaAdvisor.Events.EventStore
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do
@@ -79,8 +80,9 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
           }
 
           with {:ok, venue} <- VenueStore.process_venue(venue_data) do
-            # The venue is already fully prepared with images from GoogleLookupJob
-            # No need to call GooglePlaceImageStore.maybe_update_venue_images anymore
+            # Schedule a separate job for Google Place lookup
+            Logger.info("🔄 Scheduling Google Place lookup job for venue: #{venue.name}")
+            schedule_place_lookup(venue)
 
             # Process the hero image using the centralized ImageDownloader
             hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
@@ -169,5 +171,13 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
         Logger.error("❌ Error fetching venue #{url}: #{inspect(error)}")
         {:error, error}
     end
+  end
+
+  # Schedules a separate job for Google Place API lookups
+  defp schedule_place_lookup(venue) do
+    # Create a job with the venue ID
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
   end
 end

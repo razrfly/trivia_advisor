@@ -1,6 +1,6 @@
-defmodule TriviaAdvisor.Scraping.Oban.PubquizPlaceLookupJob do
+defmodule TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob do
   @moduledoc """
-  Isolated Oban job for handling Google Places API interactions for Pubquiz venues.
+  Generic Oban job for handling Google Places API interactions for venues across all scrapers.
 
   This job separates expensive Google Places API calls from the main venue processing
   flow, allowing us to:
@@ -8,7 +8,12 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizPlaceLookupJob do
   2. Rate limit these expensive calls independently
   3. Apply different retry strategies for API failures
 
-  In the future, this pattern could be applied to all scrapers.
+  Usage:
+  ```
+  %{"venue_id" => venue.id}
+  |> GooglePlaceLookupJob.new()
+  |> Oban.insert()
+  ```
   """
 
   use Oban.Worker,
@@ -30,7 +35,6 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizPlaceLookupJob do
       Logger.info("🔍 Processing Google Place lookup for venue: #{venue.name}")
 
       # Use the GooglePlaceImageStore service to update venue images
-      # This is the expensive operation we're isolating
       updated_venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
       case updated_venue do
