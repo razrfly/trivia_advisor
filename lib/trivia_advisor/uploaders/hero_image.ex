@@ -40,11 +40,22 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
 
   # Generate a unique filename, without adding extension (Waffle adds it automatically)
   def filename(version, {file, _scope}) do
-    # Extract the base filename without extension
-    file_name = Path.rootname(file.file_name)
-    # Sanitize the filename to ensure it's URL-safe
-    file_name = String.replace(file_name, ~r/[^a-zA-Z0-9\-_]/, "-")
-    # Return just the version prefix and sanitized name (Waffle adds extension)
-    "#{version}_#{file_name}"
+    # Get complete filename and strip any query string
+    original_name = file.file_name
+      |> String.split("?") |> List.first() # Remove query parameters
+
+    # Check if we have a file extension, remove it because Waffle will add it automatically
+    base_name = Path.rootname(original_name)
+
+    # Only do minimal sanitization for truly problematic characters
+    # but preserve most of the original name structure
+    sanitized_name = String.replace(base_name, ~r/[<>:"|?*\0]/, "-")
+
+    # Skip adding the version prefix for original versions to keep filename clean
+    # Only add version for thumbnails
+    case version do
+      :original -> sanitized_name
+      _ -> "#{version}_#{sanitized_name}"
+    end
   end
 end

@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
+  alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
@@ -81,6 +82,21 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
             # The venue is already fully prepared with images from GoogleLookupJob
             # No need to call GooglePlaceImageStore.maybe_update_venue_images anymore
 
+            # Process the hero image using the centralized ImageDownloader
+            hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
+              case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url) do
+                {:ok, upload} ->
+                  Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
+                  %{hero_image: upload, hero_image_url: extracted_data.hero_image_url}
+                {:error, reason} ->
+                  Logger.warning("⚠️ Failed to download hero image for #{venue.name}: #{inspect(reason)}")
+                  %{hero_image_url: extracted_data.hero_image_url}
+              end
+            else
+              Logger.debug("ℹ️ No hero image URL provided for venue: #{venue.name}")
+              %{}
+            end
+
             # Then process the event with the venue
             event_data = %{
               raw_title: raw_title,
@@ -88,9 +104,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
               time_text: extracted_data.time_text,
               description: extracted_data.description,
               fee_text: extracted_data.fee_text,
-              hero_image_url: extracted_data.hero_image_url,
               source_url: url
-            }
+            } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
 
             case EventStore.process_event(venue, event_data, source.id) do
               {:ok, _event} ->

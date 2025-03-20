@@ -54,7 +54,18 @@ defmodule TriviaAdvisor.Events.EventStore do
                 end
 
                 # Create a new upload struct with the filename + detected extension
-                new_filename = upload.filename <> detected_ext
+                # But first check if the filename already ends with the correct extension to avoid duplication
+                root_name = Path.rootname(upload.filename)
+                filename_without_query = root_name |> String.split("?") |> List.first()
+
+                # Only add extension if the filename doesn't already end with it
+                new_filename = if String.ends_with?(String.downcase(filename_without_query), detected_ext) do
+                  filename_without_query
+                else
+                  filename_without_query <> detected_ext
+                end
+
+                # Create the new Plug.Upload struct with the corrected filename
                 new_upload = %Plug.Upload{
                   path: upload.path,
                   filename: new_filename,
@@ -318,65 +329,9 @@ defmodule TriviaAdvisor.Events.EventStore do
 
   # Download hero image from URL
   defp download_hero_image(url) do
-    try do
-      # Create a temporary file path
-      temp_dir = System.tmp_dir!()
-      random_id = :crypto.strong_rand_bytes(16) |> Base.encode16()
-      temp_file = Path.join(temp_dir, "hero_image_#{random_id}")
-
-      # Download the image
-      case HTTPoison.get(url, [], follow_redirect: true, max_redirects: 5) do
-        {:ok, %{status_code: 200, body: body, headers: headers}} ->
-          # Get content type from headers
-          content_type = Enum.find_value(headers, fn
-            {"Content-Type", value} -> value
-            {"content-type", value} -> value
-            _ -> nil
-          end)
-
-          # Determine file extension from content type
-          extension = case content_type do
-            "image/jpeg" -> ".jpg"
-            "image/jpg" -> ".jpg"
-            "image/png" -> ".png"
-            "image/gif" -> ".gif"
-            "image/webp" -> ".webp"
-            _ ->
-              # If content type is not recognized, try to get extension from URL
-              url_ext = Path.extname(url) |> String.downcase()
-              if url_ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"] do
-                url_ext
-              else
-                ".jpg" # Default to jpg
-              end
-          end
-
-          # Update the file path with the extension
-          final_temp_file = temp_file <> extension
-
-          # Write the file
-          File.write!(final_temp_file, body)
-
-          # Create a proper file struct for Waffle
-          {:ok, %Plug.Upload{
-            path: final_temp_file,
-            filename: Path.basename(final_temp_file),
-            content_type: content_type || "image/jpeg"
-          }}
-
-        {:ok, %{status_code: status}} ->
-          Logger.error("Failed to download hero image from #{url} with status #{status}")
-          {:error, "HTTP #{status}"}
-
-        {:error, error} ->
-          Logger.error("Error downloading hero image from #{url}: #{inspect(error)}")
-          {:error, "Download error"}
-      end
-    rescue
-      e ->
-        Logger.error("Error downloading hero image from #{url}: #{inspect(e)}")
-        {:error, "Exception: #{Exception.message(e)}"}
-    end
+    # Use the centralized ImageDownloader to ensure consistent filename handling
+    alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+    ImageDownloader.download_event_hero_image(url)
   end
 
   # Ensure the upload directory exists
