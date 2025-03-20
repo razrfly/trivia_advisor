@@ -9,13 +9,13 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.QuestionOne.VenueExtractor
-  # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: args, id: job_id}) do
     url = Map.get(args, "url")
     title = Map.get(args, "title")
     source_id = Map.get(args, "source_id")
@@ -26,7 +26,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
     source = Repo.get!(Source, source_id)
 
     # Process the venue using the existing logic
-    result = fetch_venue_details(%{url: url, title: title}, source)
+    result = fetch_venue_details(%{url: url, title: title}, source, job_id)
 
     # Debug log the exact structure we're getting
     Logger.debug("📊 Result structure: #{inspect(result)}")
@@ -60,7 +60,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   # to avoid modifying the original code
 
   # Process a venue and create an event - adapted from QuestionOne.fetch_venue_details
-  defp fetch_venue_details(%{url: url, title: raw_title}, source) do
+  defp fetch_venue_details(%{url: url, title: raw_title}, source, job_id) do
     Logger.info("\n🔍 Processing venue: #{raw_title}")
 
     case HTTPoison.get(url, [], follow_redirect: true) do
@@ -108,8 +108,30 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
             } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
 
             case EventStore.process_event(venue, event_data, source.id) do
-              {:ok, _event} ->
+              {:ok, {:ok, event}} ->
                 Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+
+                # Create metadata for reporting
+                metadata = %{
+                  "venue_name" => venue.name,
+                  "venue_id" => venue.id,
+                  "venue_url" => url,
+                  "event_id" => event.id,
+                  "address" => venue.address,
+                  "phone" => venue.phone || "",
+                  "description" => extracted_data.description || "",
+                  "source_name" => source.name,
+                  "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+                  "time_text" => extracted_data.time_text || "",
+                  "fee_text" => extracted_data.fee_text || ""
+                }
+
+                # Update job metadata
+                JobMetadata.update_detail_job(job_id, metadata, %{
+                  venue_id: venue.id,
+                  event_id: event.id
+                })
+
                 {:ok, venue}
               {:error, reason} ->
                 Logger.error("❌ Failed to process event: #{inspect(reason)}")
