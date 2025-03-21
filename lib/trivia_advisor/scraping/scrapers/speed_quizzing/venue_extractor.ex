@@ -107,7 +107,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
 
         host_name = title_host || meta_host
 
-        if host_name do
+        if is_binary(host_name) and String.trim(host_name) != "" do
           Logger.debug("🎭 Found performer in metadata: #{host_name}")
           %{
             name: host_name,
@@ -128,24 +128,24 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
           |> String.trim()
           |> clean_performer_name()
 
-        # Extract host image - try multiple possible selectors
-        profile_image = host_section
-          |> Floki.find(".host-img, .quiz-master-img, img[alt*='host'], img[alt*='quiz master']")
-          |> Floki.attribute("src")
-          |> List.first()
-          |> case do
-            nil -> nil
-            url -> if String.starts_with?(url, "http"), do: url, else: "#{@base_url}#{url}"
-          end
+        # Only return if we found a valid name
+        if is_binary(name) and String.trim(name) != "" do
+          # Extract host image - try multiple possible selectors
+          profile_image = host_section
+            |> Floki.find(".host-img, .quiz-master-img, img[alt*='host'], img[alt*='quiz master']")
+            |> Floki.attribute("src")
+            |> List.first()
+            |> case do
+              nil -> nil
+              url -> if String.starts_with?(url, "http"), do: url, else: "#{@base_url}#{url}"
+            end
 
-        # Extract host description - try multiple possible selectors
-        description = host_section
-          |> Floki.find(".sm1, .host-description, .quiz-master-description")
-          |> Floki.text()
-          |> String.trim()
+          # Extract host description - try multiple possible selectors
+          description = host_section
+            |> Floki.find(".sm1, .host-description, .quiz-master-description")
+            |> Floki.text()
+            |> String.trim()
 
-        # Only return if we found a name
-        if name != "" do
           Logger.debug("🎭 Found performer: #{name}")
           %{
             name: name,
@@ -153,7 +153,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
             description: description
           }
         else
-          Logger.debug("🎭 No performer name found in host section")
+          Logger.debug("🎭 Empty performer name found in host section")
           nil
         end
     end
@@ -196,8 +196,16 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor do
   # Helper function to extract host name from title or metadata
   defp extract_host_from_text(nil), do: nil
   defp extract_host_from_text(text) do
+    Logger.debug("🎭 Extracting host from text: #{text}")
     case Regex.run(~r/Hosted by ([^•\n\r]+)/, text) do
-      [_, host_name] -> clean_performer_name(String.trim(host_name))
+      [_, host_name] ->
+        cleaned = clean_performer_name(String.trim(host_name))
+        # Only return if we have a real name
+        if is_binary(cleaned) and String.trim(cleaned) != "" do
+          cleaned
+        else
+          nil
+        end
       _ -> nil
     end
   end

@@ -305,6 +305,27 @@ end
    - Image retrieval using GooglePlaceImageStore
 5. Once coordinates are stored, they're never looked up again
 
+### Source-Provided Coordinates
+
+Some sources like Speed Quizzing and Geeks Who Drink provide venue coordinates directly in their API:
+
+- When coordinates are available from the source API, Google's Geocoding API can be skipped
+- In these cases, pass the coordinates directly to VenueStore:
+  ```elixir
+  venue_attrs = %{
+    name: venue_data.venue_name,
+    address: venue_data.address,
+    latitude: venue_data.lat,  # From source API
+    longitude: venue_data.lng, # From source API
+    skip_image_processing: true
+  }
+  ```
+- Always schedule a GooglePlaceLookupJob separately to handle Place Images:
+  ```elixir
+  # Even with coordinates, we still need Google Place images
+  schedule_place_lookup(venue)
+  ```
+
 ### Optimized Flow (For New Scrapers)
 
 For new scrapers, implement the following enhanced pattern which separates Place API calls into a dedicated queue:
