@@ -13,6 +13,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer, Event}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
 
   # Increased timeout values to prevent hanging requests
   @http_options [
@@ -23,34 +25,66 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   ]
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}}) do
+  def perform(%Oban.Job{id: job_id, args: %{"venue" => venue_data, "source_id" => source_id}}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
     source = Repo.get!(Source, source_id)
 
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
-      {:ok, %{venue: venue, event: {:ok, event_struct}}} ->
-        # Handle the case where event is a tuple
+      {:ok, %{venue: venue, final_data: final_data} = result} ->
+        # Extract event data from any possible structure formats
+        {event_id, _event} = normalize_event_result(result[:event])
+
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, %{venue_id: venue.id, event_id: event_struct.id}}
 
-      {:ok, %{venue: venue, event: event}} when is_map(event) ->
-        # Handle the case where event is already unwrapped
+        # Add timestamps and result data to final_data for metadata
+        metadata = final_data
+          |> Map.take([:name, :address, :phone, :day_of_week, :start_time, :frequency, :url, :description])
+          |> Map.put(:venue_id, venue.id)
+          |> Map.put(:event_id, event_id)
+          |> Map.put(:processed_at, DateTime.utc_now() |> DateTime.to_iso8601())
+
+        # Convert to string keys for consistency
+        string_metadata = for {key, val} <- metadata, into: %{} do
+          {"#{key}", val}
+        end
+
+        result_data = {:ok, %{venue_id: venue.id, event_id: event_id}}
+        JobMetadata.update_detail_job(job_id, string_metadata, result_data)
+        result_data
+
+      {:ok, %{venue: venue} = result} ->
+        # Handle case where final_data is not available
+        {event_id, _event} = normalize_event_result(result[:event])
+
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, %{venue_id: venue.id, event_id: event.id}}
 
-      # Handle nested structure cases
-      {:ok, %{venue: venue, event: {:ok, %{event: event}}}} ->
-        Logger.info("✅ Successfully processed venue: #{venue.name} with nested event result")
-        {:ok, %{venue_id: venue.id, event_id: event.id}}
+        # Create minimal metadata with available info
+        metadata = %{
+          "venue_name" => venue.name,
+          "venue_id" => venue.id,
+          "event_id" => event_id,
+          "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        }
 
-      {:ok, %{venue: venue, event: %{event: event}}} ->
-        Logger.info("✅ Successfully processed venue: #{venue.name} with map-wrapped event")
-        {:ok, %{venue_id: venue.id, event_id: event.id}}
+        result_data = {:ok, %{venue_id: venue.id, event_id: event_id}}
+        JobMetadata.update_detail_job(job_id, metadata, result_data)
+        result_data
 
       {:error, reason} ->
         Logger.error("❌ Failed to process venue: #{inspect(reason)}")
+        JobMetadata.update_error(job_id, reason, context: %{"venue" => venue_data["name"]})
         {:error, reason}
+    end
+  end
+
+  # Helper to normalize different event result structures into consistent id and map
+  defp normalize_event_result(event_data) do
+    case event_data do
+      {:ok, %{event: event}} when is_map(event) -> {event.id, event}
+      {:ok, event} when is_map(event) -> {event.id, event}
+      %{event: event} when is_map(event) -> {event.id, event}
+      event when is_map(event) -> {event.id, event}
     end
   end
 
@@ -176,6 +210,10 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
             case VenueStore.process_venue(venue_store_data) do
               {:ok, venue} ->
+                # Schedule a separate job for Google Place lookup
+                Logger.info("🔄 Scheduling Google Place lookup job for venue: #{venue.name}")
+                schedule_place_lookup(venue)
+
                 final_data = Map.put(merged_data, :venue_id, venue.id)
                 VenueHelpers.log_venue_details(final_data)
 
@@ -341,19 +379,28 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                        |> Repo.update() do
                     {:ok, updated_event} ->
                       Logger.info("✅ Successfully updated existing event #{updated_event.id} with performer_id #{updated_event.performer_id}")
-                      {:ok, %{venue: venue, event: updated_event}}
+                      # Include final_data in the return value
+                      {:ok, %{venue: venue, event: updated_event, final_data: final_data}}
                     {:error, changeset} ->
                       Logger.error("❌ Failed to update existing event with performer_id: #{inspect(changeset.errors)}")
                       # Continue with normal event processing - note that this result is a tuple with event inside
                       result = process_event_with_performer(venue, event_data, source.id, performer_id)
-                      Logger.debug("🔍 Process event with performer result: #{inspect(result)}")
-                      result
+                      case result do
+                        {:ok, result_map} ->
+                          # Add final_data to result
+                          {:ok, Map.put(result_map, :final_data, final_data)}
+                        error -> error
+                      end
                   end
                 else
                   # No existing event or no performer, proceed with normal event processing
                   result = process_event_with_performer(venue, event_data, source.id, performer_id)
-                  Logger.debug("🔍 Process event with performer result: #{inspect(result)}")
-                  result
+                  case result do
+                    {:ok, result_map} ->
+                      # Add final_data to result
+                      {:ok, Map.put(result_map, :final_data, final_data)}
+                    error -> error
+                  end
                 end
 
               error ->
@@ -542,5 +589,13 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     end
 
     "#{day_name} #{start_time}"
+  end
+
+  # Schedules a separate job for Google Place API lookups
+  defp schedule_place_lookup(venue) do
+    # Create a job with the venue ID
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
   end
 end

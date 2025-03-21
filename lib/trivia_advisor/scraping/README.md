@@ -75,3 +75,48 @@ When using hourly capped scheduling:
 4. The schedule_in parameter is set based on the job's position
 
 Jobs will be processed over time instead of all at once, preventing system overload. 
+
+## Best Practices
+
+### Return Value Handling
+
+When handling return values from scraper functions, follow these principles:
+
+1. **NEVER** write repetitive case statements that handle multiple similar structure variations. Instead, normalize return values with helper functions:
+
+```elixir
+# BAD - Don't do this
+case process_venue(venue_data, source) do
+  {:ok, %{venue: venue, event: {:ok, event_struct}}} ->
+    # Handle case 1...
+  
+  {:ok, %{venue: venue, event: event}} when is_map(event) ->
+    # Handle case 2 with duplicate code...
+  
+  {:ok, %{venue: venue, event: {:ok, %{event: event}}}} ->
+    # Handle case 3 with more duplicate code...
+end
+
+# GOOD - Do this instead
+case process_venue(venue_data, source) do
+  {:ok, %{venue: venue} = result} ->
+    {event_id, event} = normalize_event_result(result[:event])
+    # Process with normalized values
+end
+
+# Helper to normalize different result structures
+defp normalize_event_result(event_data) do
+  case event_data do
+    {:ok, %{event: event}} when is_map(event) -> {event.id, event}
+    {:ok, event} when is_map(event) -> {event.id, event}
+    %{event: event} when is_map(event) -> {event.id, event}
+    event when is_map(event) -> {event.id, event}
+  end
+end
+```
+
+2. **ALWAYS** normalize complex data structures inside the functions that produce them, not in the functions that consume them
+
+3. **PREFER** consistent return value shapes across similar functions
+
+4. **USE** pattern guards to differentiate cases, not multiple pattern clauses that do the same thing 

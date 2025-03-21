@@ -535,6 +535,32 @@ event_attrs = %{
 EventStore.process_event(venue, event_attrs, source_id)
 ```
 
+### Image Update and Replacement
+
+Both hero images and performer images are handled with an update-on-change policy:
+
+1. **Automatic Image Replacement**:
+   - When a new image is detected with a different filename, the old image is automatically replaced
+   - This happens both for event hero images and performer profile images
+   - The system compares filenames to determine if the image has changed
+
+2. **File Cleanup**:
+   - Old files are automatically deleted when replaced with new images
+   - The Waffle library (used for file uploads) handles this cleanup during updates
+   - Only one version of an image is kept for each event/performer
+
+3. **Duplicate Prevention**:
+   - The system prevents duplicate files by replacing existing images
+   - When a performer or event is deleted, all associated image files are also removed
+   - Storage directories are organized by venue/performer to maintain clean structure
+
+For performer images, similar rules apply as for hero images:
+- Use `ImageDownloader.download_performer_image` for consistency
+- Ensure proper error handling and logging
+- Let the system handle file replacement and cleanup automatically
+
+This approach ensures that the system maintains a clean file structure without duplicates while also keeping images up to date with the latest versions from source websites.
+
 This standardized approach ensures all hero images are processed consistently across all scrapers.
 
 ## Testing

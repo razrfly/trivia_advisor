@@ -220,4 +220,5 @@ end
 2. Always follow the existing pattern for consistency
 3. Maintain comprehensive logging
 4. Handle errors gracefully
-5. Use the VenueHelpers module for common functionality.
+5. Use the VenueHelpers module for common functionality
+6. NEVER write repetitive case statements that do the same thing with different data structures - see [Scraping Best Practices](lib/trivia_advisor/scraping/README.md#best-practices) for details
