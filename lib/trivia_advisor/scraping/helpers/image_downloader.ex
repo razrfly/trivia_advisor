@@ -272,18 +272,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     |> Path.basename()
     |> normalize_filename()
 
-    # Generate a deterministic filename based on the URL
-    url_hash = :crypto.hash(:md5, url) |> Base.encode16()
-    consistent_filename = if basename != "" do
-      # Use the normalized original filename with a hash to ensure uniqueness
-      base_without_ext = Path.rootname(basename)
-      "performer_image_#{base_without_ext}_#{url_hash}"
-    else
-      # Fallback if we can't extract a good filename
-      "performer_image_#{url_hash}"
-    end
-
-    case download_image(url, consistent_filename) do
+    # Use the original filename without modification - just like hero images
+    # Let download_image use it directly
+    case download_image(url, basename) do
       %{filename: filename, path: path} when not is_nil(path) ->
         # Create a Plug.Upload struct compatible with Waffle's cast_attachments
         content_type = case Path.extname(filename) |> String.downcase() do
