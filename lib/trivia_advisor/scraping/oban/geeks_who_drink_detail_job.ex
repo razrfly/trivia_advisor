@@ -20,25 +20,40 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
     Logger.info("🔄 Processing venue: #{venue_data["title"]}")
     source = Repo.get!(Source, source_id)
 
-    # Set processed timestamp
-    processed_at = DateTime.utc_now() |> DateTime.to_iso8601()
+    # Debug log handler in case of crashes
+    Process.flag(:trap_exit, true)
 
     # Process the venue and event using existing code patterns
-    case process_venue(venue_data, source) do
-      {:ok, %{venue: venue, event: event, final_data: final_data}} ->
-        # Extract only the most relevant fields for metadata
-        metadata = Map.take(final_data, [:name, :address, :day_of_week, :start_time, :performer_id])
-          |> Map.put(:venue_id, venue.id)
-          |> Map.put(:event_id, event.id)
-          |> Map.put(:processed_at, processed_at)
+    result = process_venue(venue_data, source)
 
-        # Make sure we're only passing a map to the update_detail_job, not a tuple
-        result = %{venue_id: venue.id, event_id: event.id}
-        # Update job metadata using JobMetadata helper
-        JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
+    # Detailed debug logging to trace the flow
+    Logger.debug("📊 Process venue result: #{inspect(result, pretty: true)}")
+
+    # Always use explicit pattern matching before accessing fields
+    case result do
+      {:ok, %{venue: venue, event: event, final_data: _final_data}} ->
+        # Set processed timestamp
+        processed_at = DateTime.utc_now() |> DateTime.to_iso8601()
+
+        # Extract only the most relevant fields for metadata - avoid structs
+        metadata = %{
+          "venue_id" => venue.id,
+          "venue_name" => venue.name,
+          "event_id" => event.id,
+          "processed_at" => processed_at
+        }
+
+        # NEVER pass result as a tuple - create a simple map instead
+        result_map = %{"venue_id" => venue.id, "event_id" => event.id}
+
+        # Log what we're passing to JobMetadata
+        Logger.debug("📊 update_detail_job params: job_id=#{job_id}, metadata=#{inspect(metadata)}, result_value=#{inspect({:ok, result_map})}")
+
+        # Update job metadata using JobMetadata helper - use explicit map
+        JobMetadata.update_detail_job(job_id, metadata, {:ok, result_map})
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, result}
+        {:ok, result_map}
 
       {:error, reason} = error ->
         # Update job metadata with error information
@@ -121,7 +136,10 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         Website: #{venue_attrs.website}
       """)
 
-      case VenueStore.process_venue(venue_attrs) do
+      venue_result = VenueStore.process_venue(venue_attrs)
+
+      # Unwrap venue result to ensure we never access tuple properties directly
+      case venue_result do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
 
@@ -135,6 +153,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
           hero_image_attrs = if venue_data["logo_url"] && venue_data["logo_url"] != "" do
             case ImageDownloader.download_event_hero_image(venue_data["logo_url"]) do
               {:ok, upload} ->
+                Logger.debug("🖼️ Downloaded hero image: #{inspect(upload, pretty: true)}")
                 %{hero_image: upload, hero_image_url: venue_data["logo_url"]}
               {:error, reason} ->
                 Logger.warning("⚠️ Failed to download hero image: #{inspect(reason)}")
@@ -155,27 +174,60 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
             performer_id: performer_id
           } |> Map.merge(hero_image_attrs)
 
-          # Make sure we completely unwrap the result of EventStore.process_event
-          case EventStore.process_event(venue, event_data, source.id) do
-            {:ok, event} ->
+          # Process the event and unwrap the result safely
+          event_result = EventStore.process_event(venue, event_data, source.id)
+
+          # Debug log to see exactly what the event_result contains
+          Logger.debug("🎭 EventStore.process_event result: #{inspect(event_result, pretty: true)}")
+
+          # Double pattern match to handle nested tuples - THIS IS THE KEY FIX!
+          # EventStore.process_event returns {:ok, {:ok, event}} because it's the result of a transaction
+          case event_result do
+            # First pattern: transaction succeeded with a successful database operation
+            {:ok, {:ok, event}} ->
               Logger.info("✅ Successfully created event for venue: #{venue.name}")
 
-              # Store the event ID safely in a local variable
+              # Safely store event ID in a local variable
               event_id = event.id
 
-              # Create final_data structure for metadata
-              final_data = merged_data
-                |> Map.put(:venue_id, venue.id)
-                |> Map.put(:venue_name, venue.name)
-                |> Map.put(:event_id, event_id)
-                |> Map.put(:performer_id, performer_id)
+              # Create final_data structure for metadata - convert to plain map with string keys
+              final_data = %{
+                "venue_id" => venue.id,
+                "venue_name" => venue.name,
+                "event_id" => event_id
+              }
 
-              # Return the success result with unwrapped data
-              {:ok, %{venue: venue, event: event, final_data: final_data}}
+              if performer_id do
+                Map.put(final_data, "performer_id", performer_id)
+              else
+                final_data
+              end
 
-            {:error, reason} ->
-              Logger.error("❌ Failed to create event: #{inspect(reason)}")
+              # Return success with properly structured data - NEVER return the raw Event struct
+              {:ok, %{
+                venue: %{id: venue.id, name: venue.name},
+                event: %{id: event.id, name: event.name},
+                final_data: final_data
+              }}
+
+            # Other transaction success patterns with database errors
+            {:ok, {:error, reason}} ->
+              Logger.error("❌ Database error while creating event: #{inspect(reason)}")
               {:error, reason}
+
+            # Transaction failed
+            {:error, reason} ->
+              Logger.error("❌ Transaction failed when creating event: #{inspect(reason)}")
+              {:error, reason}
+
+            # Unexpected result format - log a detailed warning
+            unexpected ->
+              Logger.warning("""
+              ⚠️ Unexpected result format from EventStore.process_event
+              Expected {:ok, {:ok, event}} but got: #{inspect(unexpected)}
+              This might indicate a change in the EventStore.process_event return format
+              """)
+              {:error, "Unexpected result format from EventStore.process_event"}
           end
 
         {:error, reason} ->
@@ -186,12 +238,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       e ->
         # Special handling for tuple access errors
         error_message = Exception.message(e)
+        stack = Exception.format_stacktrace()
+        Logger.error("🔍 DETAILED ERROR TRACE: #{inspect(stack, pretty: true)}")
 
         if String.contains?(error_message, "key :id not found in: {:ok") do
           Logger.error("""
           ❌ Pattern matching error detected
           Error: #{error_message}
           This appears to be an issue with accessing a field on a tuple result.
+          Stack trace: #{inspect(Process.info(self(), :current_stacktrace), pretty: true)}
           """)
 
           # Extract event ID from the error message
@@ -221,15 +276,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
           if event_id && venue_id do
             Logger.info("✅ Extracted event ID #{event_id} and venue ID #{venue_id} from error message")
 
-            # Return with actual extracted data from the error message
+            # Return simplified data that can't possibly be mistaken for an Event struct
             {:ok, %{
               venue: %{id: venue_id, name: venue_name},
               event: %{id: event_id},
               final_data: %{
-                venue_id: venue_id,
-                venue_name: venue_name,
-                event_id: event_id,
-                performer_id: performer_id
+                "venue_id" => venue_id,
+                "venue_name" => venue_name,
+                "event_id" => event_id,
+                "performer_id" => performer_id
               }
             }}
           else
