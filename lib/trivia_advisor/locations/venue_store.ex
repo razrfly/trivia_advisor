@@ -20,6 +20,38 @@ defmodule TriviaAdvisor.Locations.VenueStore do
   is found, it's returned immediately. Otherwise, it schedules a GoogleLookupJob
   to handle the Google API call and venue creation/update.
   """
+  def process_venue(%{address: address, latitude: lat, longitude: lng} = attrs)
+      when is_binary(address) and not is_nil(lat) and not is_nil(lng) do
+    # If coordinates are directly provided in the attributes, use them immediately
+    Logger.info("✅ Using provided coordinates for venue: #{attrs.name} (#{lat}, #{lng})")
+
+    # Check for existing venue first
+    case find_existing_venue(attrs) do
+      %Venue{} = existing ->
+        # Update venue with coordinates if needed
+        if is_nil(existing.latitude) or is_nil(existing.longitude) do
+          Logger.info("🔄 Updating existing venue with coordinates: #{existing.name}")
+          update_venue(existing, %{latitude: lat, longitude: lng})
+        else
+          {:ok, existing}
+        end
+
+      nil ->
+        # We need to find the city for this venue using the coordinates
+        case TriviaAdvisor.Scraping.Oban.GoogleLookupJob.find_city_from_coordinates(lat, lng, attrs.name) do
+          {:ok, %{city_id: city_id}} ->
+            # Add city_id to venue attributes and create venue
+            venue_attrs = Map.put(attrs, :city_id, city_id)
+            Logger.info("✅ Found city_id #{city_id} for venue #{attrs.name}")
+            create_venue_with_coordinates(venue_attrs)
+
+          {:error, reason} ->
+            Logger.error("❌ Failed to find city for coordinates: #{inspect(reason)}")
+            {:error, reason}
+        end
+    end
+  end
+
   def process_venue(%{address: address} = attrs) when is_binary(address) do
     # Check for existing venue with coordinates
     case find_existing_venue(attrs) do
@@ -56,6 +88,28 @@ defmodule TriviaAdvisor.Locations.VenueStore do
             {:ok, venue}
           error -> error
         end
+    end
+  end
+
+  # Create a new venue directly with coordinates
+  defp create_venue_with_coordinates(attrs) do
+    # Create a basic venue with the coordinates
+    Logger.info("""
+    🏠 Creating new venue with coordinates: #{attrs.name}
+    Address: #{attrs.address}
+    Coordinates: #{attrs.latitude},#{attrs.longitude}
+    """)
+
+    %Venue{}
+    |> Venue.changeset(attrs)
+    |> Repo.insert()
+    |> case do
+      {:ok, venue} ->
+        Logger.info("✅ Created venue: #{venue.name} with coordinates")
+        {:ok, venue}
+      {:error, changeset} ->
+        Logger.error("❌ Failed to create venue: #{inspect(changeset.errors)}")
+        {:error, changeset}
     end
   end
 

@@ -24,6 +24,70 @@ defmodule TriviaAdvisor.Scraping.Oban.GoogleLookupJob do
   alias TriviaAdvisor.Scraping.GoogleLookup
   alias TriviaAdvisor.Services.{GooglePlacesService, GooglePlaceImageStore}
 
+  @doc """
+  Finds city and country for given coordinates using geocoding API.
+  Returns {:ok, %{city_id: city_id}} or {:error, reason}.
+
+  This function is intended to be used directly from VenueStore when we already have
+  coordinates but need to determine the city and country for a venue.
+
+  This uses the much cheaper Geocoding API instead of Places API, providing just
+  the information needed for creating a venue with valid city_id.
+  """
+  def find_city_from_coordinates(lat, lng, venue_name \\ nil) do
+    Logger.info("🌍 Finding city data for coordinates: #{lat}, #{lng}")
+
+    # Convert string coordinates to float if needed
+    {lat, lng} = case {lat, lng} do
+      {lat, lng} when is_binary(lat) and is_binary(lng) ->
+        {lat_float, _} = Float.parse(lat)
+        {lng_float, _} = Float.parse(lng)
+        {lat_float, lng_float}
+      {lat, lng} when is_number(lat) and is_number(lng) ->
+        {lat, lng}
+      _ ->
+        Logger.error("❌ Invalid coordinates format: lat=#{inspect(lat)}, lng=#{inspect(lng)}")
+        {:error, :invalid_coordinates}
+    end
+
+    # Short-circuit on invalid coordinates
+    if is_tuple(lat) and elem(lat, 0) == :error, do: lat, else: find_city_from_valid_coordinates(lat, lng, venue_name)
+  end
+
+  # Implementation with validated float coordinates
+  defp find_city_from_valid_coordinates(lat, lng, venue_name) when is_number(lat) and is_number(lng) do
+    venue_name = venue_name || "Venue at #{lat}, #{lng}"
+
+    # Use the lookup_by_coordinates from GoogleLookup but with minimum fields
+    # This is much more economical than a full Places lookup
+    venue_opts = [venue_name: venue_name, fields: ["addressComponents"]]
+
+    case GoogleLookup.lookup_by_coordinates(lat, lng, venue_opts) do
+      {:ok, location_data} ->
+        Logger.info("✅ Found location data for coordinates")
+
+        # First create the country
+        with {:ok, country} <- find_or_create_country(location_data["country"]),
+             {:ok, city} <- find_or_create_city(location_data["city"], country) do
+
+          Logger.info("✅ Successfully found city #{city.name} (#{city.id}) for coordinates")
+          {:ok, %{city_id: city.id}}
+        else
+          {:error, :missing_city} ->
+            Logger.error("❌ No city found in geocoding data")
+            {:error, :missing_city}
+
+          {:error, reason} = error ->
+            Logger.error("❌ Failed to process city/country: #{inspect(reason)}")
+            error
+        end
+
+      {:error, reason} = error ->
+        Logger.error("❌ Failed to geocode coordinates: #{inspect(reason)}")
+        error
+    end
+  end
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: args}) do
     venue_name = args["venue_name"]

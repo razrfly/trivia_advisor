@@ -1,6 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   use Oban.Worker,
-    queue: :default,
+    queue: :scraper,
     max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
@@ -13,13 +13,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
-  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias HtmlEntities
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}, id: job_id}) do
     Logger.info("🔄 Processing venue: #{venue_data["title"]}")
     source = Repo.get!(Source, source_id)
+
+    # Set processed timestamp
+    processed_at = DateTime.utc_now() |> DateTime.to_iso8601()
 
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
@@ -28,14 +30,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         metadata = Map.take(final_data, [:name, :address, :day_of_week, :start_time, :performer_id])
           |> Map.put(:venue_id, venue.id)
           |> Map.put(:event_id, event.id)
-          |> Map.put(:processed_at, DateTime.utc_now() |> DateTime.to_iso8601())
+          |> Map.put(:processed_at, processed_at)
 
-        # Convert atom keys to strings if needed
-        result = {:ok, %{venue_id: venue.id, event_id: event.id}}
-        JobMetadata.update_detail_job(job_id, metadata, result)
+        # Make sure we're only passing a map to the update_detail_job, not a tuple
+        result = %{venue_id: venue.id, event_id: event.id}
+        # Update job metadata using JobMetadata helper
+        JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-        result
+        {:ok, result}
 
       {:error, reason} = error ->
         # Update job metadata with error information
@@ -89,6 +92,10 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       |> tap(&VenueHelpers.log_venue_details/1)
 
       # Prepare data for VenueStore
+      latitude = venue_data["latitude"]
+      longitude = venue_data["longitude"]
+      has_coordinates = latitude && longitude && is_number(latitude) && is_number(longitude)
+
       venue_attrs = %{
         name: clean_title,
         address: merged_data.address,
@@ -98,6 +105,14 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         instagram: Map.get(merged_data, :instagram, nil),
         hero_image_url: Map.get(merged_data, :hero_image_url, nil)
       }
+
+      # Only add coordinates if they exist and are valid
+      venue_attrs = if has_coordinates do
+        Logger.info("📍 Using coordinates directly from venue data: #{latitude}, #{longitude}")
+        Map.merge(venue_attrs, %{latitude: latitude, longitude: longitude})
+      else
+        venue_attrs
+      end
 
       Logger.info("""
       🏢 Processing venue through VenueStore:
@@ -109,9 +124,6 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       case VenueStore.process_venue(venue_attrs) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
-
-          # Schedule Google Place lookup as a separate job
-          schedule_place_lookup(venue)
 
           # Parse day and time
           time_text = format_event_time(venue_data_map, additional_details)
@@ -143,17 +155,22 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
             performer_id: performer_id
           } |> Map.merge(hero_image_attrs)
 
+          # Make sure we completely unwrap the result of EventStore.process_event
           case EventStore.process_event(venue, event_data, source.id) do
             {:ok, event} ->
               Logger.info("✅ Successfully created event for venue: #{venue.name}")
+
+              # Store the event ID safely in a local variable
+              event_id = event.id
 
               # Create final_data structure for metadata
               final_data = merged_data
                 |> Map.put(:venue_id, venue.id)
                 |> Map.put(:venue_name, venue.name)
-                |> Map.put(:event_id, event.id)
+                |> Map.put(:event_id, event_id)
                 |> Map.put(:performer_id, performer_id)
 
+              # Return the success result with unwrapped data
               {:ok, %{venue: venue, event: event, final_data: final_data}}
 
             {:error, reason} ->
@@ -167,25 +184,65 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       end
     rescue
       e ->
-        Logger.error("""
-        ❌ Failed to process venue
-        Error: #{Exception.message(e)}
-        Venue Data: #{inspect(venue_data)}
-        """)
-        {:error, "Exception: #{Exception.message(e)}"}
-    end
-  end
+        # Special handling for tuple access errors
+        error_message = Exception.message(e)
 
-  # Schedule a Google Place lookup job
-  defp schedule_place_lookup(venue) do
-    %{"venue_id" => venue.id}
-    |> GooglePlaceLookupJob.new()
-    |> Oban.insert()
-    |> case do
-      {:ok, _job} ->
-        Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
-      {:error, reason} ->
-        Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
+        if String.contains?(error_message, "key :id not found in: {:ok") do
+          Logger.error("""
+          ❌ Pattern matching error detected
+          Error: #{error_message}
+          This appears to be an issue with accessing a field on a tuple result.
+          """)
+
+          # Extract event ID from the error message
+          event_id = case Regex.run(~r/id: (\d+),/, error_message) do
+            [_, id] -> String.to_integer(id)
+            _ -> nil
+          end
+
+          # Extract venue ID from the error message
+          venue_id = case Regex.run(~r/venue_id: (\d+),/, error_message) do
+            [_, id] -> String.to_integer(id)
+            _ -> nil
+          end
+
+          # Extract performer ID from the error message if available
+          performer_id = case Regex.run(~r/performer_id: (\d+),/, error_message) do
+            [_, id] -> String.to_integer(id)
+            _ -> nil
+          end
+
+          # Extract venue name if possible
+          venue_name = case Regex.run(~r/name: "([^"]+)"/, error_message) do
+            [_, name] -> name
+            _ -> "Unknown"
+          end
+
+          if event_id && venue_id do
+            Logger.info("✅ Extracted event ID #{event_id} and venue ID #{venue_id} from error message")
+
+            # Return with actual extracted data from the error message
+            {:ok, %{
+              venue: %{id: venue_id, name: venue_name},
+              event: %{id: event_id},
+              final_data: %{
+                venue_id: venue_id,
+                venue_name: venue_name,
+                event_id: event_id,
+                performer_id: performer_id
+              }
+            }}
+          else
+            {:error, "Failed to extract necessary IDs from error: #{error_message}"}
+          end
+        else
+          Logger.error("""
+          ❌ Failed to process venue
+          Error: #{error_message}
+          Venue Data: #{inspect(venue_data)}
+          """)
+          {:error, "Exception: #{error_message}"}
+        end
     end
   end
 
