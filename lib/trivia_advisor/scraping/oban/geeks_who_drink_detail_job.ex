@@ -20,40 +20,24 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
     Logger.info("🔄 Processing venue: #{venue_data["title"]}")
     source = Repo.get!(Source, source_id)
 
-    # Debug log handler in case of crashes
-    Process.flag(:trap_exit, true)
-
     # Process the venue and event using existing code patterns
-    result = process_venue(venue_data, source)
-
-    # Detailed debug logging to trace the flow
-    Logger.debug("📊 Process venue result: #{inspect(result, pretty: true)}")
-
-    # Always use explicit pattern matching before accessing fields
-    case result do
-      {:ok, %{venue: venue, event: event, final_data: _final_data}} ->
-        # Set processed timestamp
-        processed_at = DateTime.utc_now() |> DateTime.to_iso8601()
-
-        # Extract only the most relevant fields for metadata - avoid structs
-        metadata = %{
+    case process_venue(venue_data, source) do
+      {:ok, %{venue: venue, event: event, final_data: final_data}} ->
+        # Simply add timestamp and essential IDs to the final_data
+        metadata = Map.merge(final_data, %{
+          "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
           "venue_id" => venue.id,
-          "venue_name" => venue.name,
-          "event_id" => event.id,
-          "processed_at" => processed_at
-        }
+          "event_id" => event.id
+        })
 
-        # NEVER pass result as a tuple - create a simple map instead
-        result_map = %{"venue_id" => venue.id, "event_id" => event.id}
+        # Create simple result for return value
+        result = %{venue_id: venue.id, event_id: event.id}
 
-        # Log what we're passing to JobMetadata
-        Logger.debug("📊 update_detail_job params: job_id=#{job_id}, metadata=#{inspect(metadata)}, result_value=#{inspect({:ok, result_map})}")
-
-        # Update job metadata using JobMetadata helper - use explicit map
-        JobMetadata.update_detail_job(job_id, metadata, {:ok, result_map})
+        # Update job metadata
+        JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, result_map}
+        {:ok, result}
 
       {:error, reason} = error ->
         # Update job metadata with error information
@@ -187,26 +171,32 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
             {:ok, {:ok, event}} ->
               Logger.info("✅ Successfully created event for venue: #{venue.name}")
 
-              # Safely store event ID in a local variable
-              event_id = event.id
-
-              # Create final_data structure for metadata - convert to plain map with string keys
+              # Create final_data structure with all essential information for metadata
               final_data = %{
                 "venue_id" => venue.id,
                 "venue_name" => venue.name,
-                "event_id" => event_id
+                "address" => venue_data["address"],
+                "url" => venue_data["source_url"],
+                "event_id" => event.id,
+                "day_of_week" => event.day_of_week,
+                "start_time" => event.start_time && Time.to_iso8601(event.start_time),
+                "frequency" => event.frequency && to_string(event.frequency),
+                "fee_text" => "Free",
+                "time_text" => time_text,
+                "source_name" => source.name
               }
 
-              if performer_id do
+              # Add performer ID if available
+              final_data = if performer_id do
                 Map.put(final_data, "performer_id", performer_id)
               else
                 final_data
               end
 
-              # Return success with properly structured data - NEVER return the raw Event struct
+              # Return success with properly structured data
               {:ok, %{
-                venue: %{id: venue.id, name: venue.name},
-                event: %{id: event.id, name: event.name},
+                venue: venue,
+                event: event,
                 final_data: final_data
               }}
 
@@ -238,15 +228,12 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       e ->
         # Special handling for tuple access errors
         error_message = Exception.message(e)
-        stack = Exception.format_stacktrace()
-        Logger.error("🔍 DETAILED ERROR TRACE: #{inspect(stack, pretty: true)}")
 
         if String.contains?(error_message, "key :id not found in: {:ok") do
           Logger.error("""
           ❌ Pattern matching error detected
           Error: #{error_message}
           This appears to be an issue with accessing a field on a tuple result.
-          Stack trace: #{inspect(Process.info(self(), :current_stacktrace), pretty: true)}
           """)
 
           # Extract event ID from the error message
@@ -276,27 +263,33 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
           if event_id && venue_id do
             Logger.info("✅ Extracted event ID #{event_id} and venue ID #{venue_id} from error message")
 
-            # Return simplified data that can't possibly be mistaken for an Event struct
+            # Simplified approach for error recovery
+            final_data = %{
+              "venue_id" => venue_id,
+              "venue_name" => venue_name,
+              "event_id" => event_id,
+              "error_recovered" => true
+            }
+
+            # Add performer ID if available
+            final_data = if performer_id do
+              Map.put(final_data, "performer_id", performer_id)
+            else
+              final_data
+            end
+
+            # Return using consistent format
             {:ok, %{
               venue: %{id: venue_id, name: venue_name},
               event: %{id: event_id},
-              final_data: %{
-                "venue_id" => venue_id,
-                "venue_name" => venue_name,
-                "event_id" => event_id,
-                "performer_id" => performer_id
-              }
+              final_data: final_data
             }}
           else
             {:error, "Failed to extract necessary IDs from error: #{error_message}"}
           end
         else
-          Logger.error("""
-          ❌ Failed to process venue
-          Error: #{error_message}
-          Venue Data: #{inspect(venue_data)}
-          """)
-          {:error, "Exception: #{error_message}"}
+          Logger.error("❌ Failed to process venue: #{error_message}")
+          {:error, error_message}
         end
     end
   end
