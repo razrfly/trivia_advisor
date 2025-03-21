@@ -13,6 +13,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionDetailJob
   alias TriviaAdvisor.Scraping.RateLimiter
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do
@@ -163,11 +164,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: metadata]
-        )
+        # Use JobMetadata helper instead of direct SQL
+        JobMetadata.update_index_job(job_id, metadata)
 
     {:ok, %{
       venue_count: total_venues,
@@ -179,17 +177,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         # Handle the error case
         Logger.error("❌ Failed to fetch Inquizition venues: #{inspect(reason)}")
 
-        # Update job metadata with error
-        error_metadata = %{
-          "error" => inspect(reason),
-          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        }
-
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: error_metadata]
-        )
+        # Update job metadata with error using JobMetadata helper
+        JobMetadata.update_error(job_id, reason, context: %{source_id: source.id})
 
         # Return the error
         {:error, reason}

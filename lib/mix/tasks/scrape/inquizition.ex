@@ -1,29 +1,46 @@
 defmodule Mix.Tasks.Scrape.Inquizition do
   use Mix.Task
-  alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
 
-  @shortdoc "Scrapes quiz data from Inquizition"
+  @shortdoc "Scrape venues from Inquizition"
+
   @moduledoc """
-  Scrapes quiz data from Inquizition website.
+  Scrapes venue and event data from Inquizition.
 
   ## Examples
 
       mix scrape.inquizition
 
+  For testing with limited number of venues:
+
+      mix scrape.inquizition --limit=3
   """
 
-  @impl Mix.Task
-  def run(_) do
+  def run(args) do
+    # Parse args
+    {opts, _, _} = OptionParser.parse(args, strict: [limit: :integer])
+    limit = Keyword.get(opts, :limit)
+
+    # Start the application
     Mix.Task.run("app.start")
-    Application.ensure_all_started(:httpoison)
 
-    case Scraper.scrape() do
-      [] ->
-        Mix.shell().error("No venues found")
+    # Log version of recommended approach
+    Mix.shell().info("ℹ️ Running Inquizition scraper using Oban job...")
 
-      venues when is_list(venues) ->
-        Mix.shell().info("Found #{length(venues)} venues")
-        venues
+    # Insert the job
+    job_args = if limit, do: %{"limit" => limit}, else: %{}
+
+    case Oban.insert(TriviaAdvisor.Scraping.Oban.InquizitionIndexJob.new(job_args)) do
+      {:ok, job} ->
+        Mix.shell().info("✅ Successfully scheduled Inquizition scraper job with ID: #{job.id}")
+        Mix.shell().info("🔍 Monitor progress in Dashboard: http://localhost:4000/oban")
+        # Return success
+        :ok
+
+      {:error, changeset} ->
+        # Log the error
+        Mix.shell().error("❌ Failed to schedule job: #{inspect(changeset.errors)}")
+        # Return error code
+        exit({:shutdown, 1})
     end
   end
 end
