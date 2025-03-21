@@ -1,5 +1,67 @@
 # TriviaAdvisor Scraper Specification
 
+## IMPORTANT: ScrapeLog Deprecation Notice
+
+**The ScrapeLog system is now deprecated and is being phased out in favor of Oban's native job tracking capabilities.**
+
+When updating existing scrapers or creating new ones:
+- Do NOT use ScrapeLog for tracking scrape status or errors
+- Use Oban's job metadata for tracking and reporting scrape results
+- Remove all references to ScrapeLog from code
+- Use `JobMetadata.update_detail_job` and similar helpers for metadata tracking
+
+**Updated Pattern:**
+```elixir
+# Old approach (deprecated)
+{:ok, log} = ScrapeLog.create_log(source)
+# ...
+ScrapeLog.update_log(log, %{success: true})
+# ...
+ScrapeLog.log_error(log, error)
+
+# New approach (using Oban's native capabilities)
+# In perform function with job_id available
+metadata = %{
+  "total_venues" => venue_count,
+  "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+}
+Repo.update_all(
+  from(j in "oban_jobs", where: j.id == ^job_id),
+  set: [meta: metadata]
+)
+
+# Or using helper
+JobMetadata.update_detail_job(job_id, metadata, result)
+```
+
+## Queue Naming Clarification
+
+**IMPORTANT: Only use the following queues for all scrapers:**
+
+1. `:default` - Used for most scraping operations including detail jobs
+2. `:scraper` - Used for index jobs 
+3. `:google_api` - Reserved for Google API operations only
+
+There is NO `:venue_processor` queue available in the system. Any references to this queue are incorrect and should be updated to use the `:default` queue instead.
+
+```elixir
+# CORRECT queue usage
+use Oban.Worker,
+  queue: :default,  # For detail jobs
+  max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+  priority: TriviaAdvisor.Scraping.RateLimiter.priority()
+
+# For index jobs
+use Oban.Worker,
+  queue: :scraper,
+  max_attempts: 3
+  
+# For Google API operations only
+use Oban.Worker,
+  queue: :google_api,
+  max_attempts: 3
+```
+
 This document provides a comprehensive specification for implementing scrapers in the TriviaAdvisor application. It covers the architectural patterns, design considerations, and best practices learned from implementing the existing scrapers (Question One, Inquizition, Geeks Who Drink, Speed Quizzing, and Quizmeisters).
 
 ## Table of Contents
@@ -142,7 +204,7 @@ The Detail Job follows this pattern:
 ```elixir
 defmodule TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob do
   use Oban.Worker,
-    queue: :venue_processor,
+    queue: :default,
     max_attempts: 3
 
   require Logger
@@ -513,7 +575,7 @@ Implement these testing strategies:
 5. **Monitoring** through Oban dashboard or database queries:
    ```elixir
    # Query jobs by state
-   Repo.all(from j in Oban.Job, where: j.queue == "venue_processor" and j.state == "executing")
+   Repo.all(from j in Oban.Job, where: j.queue == "default" and j.state == "executing")
    ```
 
 ---

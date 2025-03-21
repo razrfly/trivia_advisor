@@ -184,56 +184,40 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                   %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
                     Logger.info("🎭 Found performer data for #{venue.name}: Name: #{name}, Image URL: #{String.slice(image_url, 0, 50)}...")
 
-                    # Use a timeout for image downloads too
-                    case safe_download_performer_image(image_url) do
-                      {:ok, profile_image} ->
-                        Logger.info("📸 Successfully downloaded performer image for #{name}")
+                    # Use ImageDownloader directly - it returns a %Plug.Upload{} struct or nil, not a result tuple
+                    profile_image = ImageDownloader.download_performer_image(image_url)
 
-                        # Create or update performer - with timeout protection
-                        performer_attrs = %{
-                          name: name,
-                          profile_image: profile_image,
-                          source_id: source.id
-                        }
+                    if profile_image do
+                      Logger.info("📸 Successfully downloaded performer image for #{name}")
 
-                        Logger.debug("🎭 Performer attributes: #{inspect(performer_attrs)}")
+                      # Create or update performer - with timeout protection
+                      performer_attrs = %{
+                        name: name,
+                        profile_image: profile_image,
+                        source_id: source.id
+                      }
 
-                        # Wrap performer creation in a Task with timeout to prevent it from blocking the job
-                        performer_task = Task.async(fn ->
-                          Performer.find_or_create(performer_attrs)
-                        end)
+                      Logger.debug("🎭 Performer attributes: #{inspect(performer_attrs)}")
 
-                        case Task.yield(performer_task, 30_000) || Task.shutdown(performer_task) do
-                          {:ok, {:ok, performer}} ->
-                            Logger.info("✅ Successfully created/updated performer #{performer.id} (#{performer.name}) for venue #{venue.name}")
-                            performer.id
-                          {:ok, {:error, changeset}} ->
-                            Logger.error("❌ Failed to create/update performer: #{inspect(changeset.errors)}")
-                            nil
-                          _ ->
-                            Logger.error("⏱️ Timeout creating/updating performer for #{name}")
-                            nil
-                        end
-                      {:ok, nil} ->
-                        # Image download returned nil but not an error
-                        Logger.warning("⚠️ Image download returned nil for performer #{name}, proceeding without image")
+                      # Wrap performer creation in a Task with timeout to prevent it from blocking the job
+                      performer_task = Task.async(fn ->
+                        Performer.find_or_create(performer_attrs)
+                      end)
 
-                        # Try to create performer without image
-                        performer_attrs = %{
-                          name: name,
-                          source_id: source.id
-                        }
-
-                        case Performer.find_or_create(performer_attrs) do
-                          {:ok, performer} ->
-                            Logger.info("✅ Created performer #{performer.id} without image")
-                            performer.id
-                          _ ->
-                            nil
-                        end
-                      {:error, reason} ->
-                        Logger.error("❌ Failed to download performer image: #{inspect(reason)}")
-                        nil
+                      case Task.yield(performer_task, 30_000) || Task.shutdown(performer_task) do
+                        {:ok, {:ok, performer}} ->
+                          Logger.info("✅ Successfully created/updated performer #{performer.id} (#{performer.name}) for venue #{venue.name}")
+                          performer.id
+                        {:ok, {:error, changeset}} ->
+                          Logger.error("❌ Failed to create/update performer: #{inspect(changeset.errors)}")
+                          nil
+                        _ ->
+                          Logger.error("⏱️ Timeout creating/updating performer for #{name}")
+                          nil
+                      end
+                    else
+                      Logger.error("❌ Failed to download performer image")
+                      nil
                     end
                   nil ->
                     Logger.info("ℹ️ No performer data found for #{venue.name}")
@@ -245,16 +229,31 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
                 # Process the event using EventStore like QuestionOne
                 # IMPORTANT: Use string keys for the event_data map to ensure compatibility with EventStore.process_event
+
+                # Process the hero image using the centralized ImageDownloader
+                hero_image_attrs = if final_data.hero_image_url && final_data.hero_image_url != "" do
+                  case ImageDownloader.download_event_hero_image(final_data.hero_image_url) do
+                    {:ok, upload} ->
+                      Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
+                      %{"hero_image" => upload, "hero_image_url" => final_data.hero_image_url}
+                    {:error, reason} ->
+                      Logger.warning("⚠️ Failed to download hero image for #{venue.name}: #{inspect(reason)}")
+                      %{"hero_image_url" => final_data.hero_image_url}
+                  end
+                else
+                  Logger.debug("ℹ️ No hero image URL provided for venue: #{venue.name}")
+                  %{}
+                end
+
                 event_data = %{
                   "raw_title" => final_data.raw_title,
                   "name" => venue.name,
                   "time_text" => format_time_text(final_data.day_of_week, final_data.start_time),
                   "description" => final_data.description,
                   "fee_text" => "Free", # All Quizmeisters events are free
-                  "hero_image_url" => final_data.hero_image_url,
                   "source_url" => venue_data.url,
                   "performer_id" => performer_id
-                }
+                } |> Map.merge(hero_image_attrs)
 
                 # Log whether we have a performer_id
                 if performer_id do
@@ -420,27 +419,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       unexpected ->
         Logger.error("❌ Completely unexpected result from EventStore.process_event: #{inspect(unexpected)}")
         {:error, "Unexpected result format from EventStore.process_event"}
-    end
-  end
-
-  # Safe wrapper around ImageDownloader.download_performer_image with timeout
-  defp safe_download_performer_image(url) do
-    # Skip nil URLs early
-    if is_nil(url) or String.trim(url) == "" do
-      {:error, "Invalid image URL"}
-    else
-      task = Task.async(fn -> ImageDownloader.download_performer_image(url) end)
-
-      # Increase timeout for image downloads
-      case Task.yield(task, 40_000) || Task.shutdown(task) do
-        {:ok, result} ->
-          # Handle any result (including nil)
-          {:ok, result}
-        _ ->
-          Logger.error("Timeout or error downloading performer image from #{url}")
-          # Return nil instead of error to allow processing to continue
-          {:ok, nil}
-      end
     end
   end
 
