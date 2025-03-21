@@ -50,13 +50,31 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
         end
     end
 
-    # Use the prefix directly if it includes a hash pattern (our consistent filenames)
-    # Otherwise generate a random filename as before
-    filename = if String.contains?(prefix, "_") do
-      "#{prefix}#{extension}"
-    else
-      hash = :crypto.strong_rand_bytes(16) |> Base.encode16()
-      "#{prefix}_#{hash}#{extension}"
+    # Get a normalized version of the original filename if we can extract it
+    original_filename = url
+    |> URI.parse()
+    |> Map.get(:path, "")
+    |> Path.basename()
+    |> normalize_filename()
+
+    # Determine the filename to use
+    filename = cond do
+      # If prefix contains the original filename already, just use it directly
+      prefix == original_filename ->
+        original_filename
+
+      # If prefix contains underscores (indicating it's already a consistent filename)
+      String.contains?(prefix, "_") ->
+        prefix
+
+      # Use the original filename if available
+      original_filename != "" ->
+        original_filename
+
+      # Fallback to a generated name with prefix
+      true ->
+        hash = :crypto.strong_rand_bytes(16) |> Base.encode16()
+        "#{prefix}_#{hash}#{extension}"
     end
 
     # Create full path for downloaded file
@@ -75,6 +93,36 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
         nil
     end
   end
+
+  @doc """
+  Normalize a filename according to consistent rules:
+  - Spaces converted to dashes (-)
+  - URL-encoded characters decoded and formatted properly
+  - Query parameters stripped (everything after ? removed)
+  - Double dashes (--) reduced to single dash (-)
+  - Consistent case handling (lowercase)
+
+  ## Parameters
+    - filename: The original filename to normalize
+
+  ## Returns
+    - Normalized filename string
+
+  ## Example
+      normalize_filename("image%20with%20spaces.jpg?12345")
+      # => "image-with-spaces.jpg"
+  """
+  def normalize_filename(filename) when is_binary(filename) do
+    filename
+    |> URI.decode() # Decode URL-encoded characters
+    |> String.split("?") |> List.first() # Remove query parameters
+    |> String.replace(~r/\s+/, "-") # Replace spaces with dashes
+    |> String.replace(~r/\%20|\+/, "-") # Replace %20 or + with dash
+    |> String.replace(~r/-+/, "-") # Replace multiple dashes with single dash
+    |> String.downcase() # Ensure consistent case
+  end
+  def normalize_filename(nil), do: ""
+  def normalize_filename(_), do: ""
 
   # Attempt to detect file extension from URL or headers
   defp detect_extension_from_url(url) do
@@ -151,12 +199,17 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
   def download_event_hero_image(url) when is_binary(url) and url != "" do
     Logger.info("📸 Processing event hero image URL: #{url}")
 
-    # Generate a deterministic filename based on the URL
-    url_hash = :crypto.hash(:md5, url) |> Base.encode16()
-    consistent_filename = "event_hero_#{url_hash}"
+    # Get the base filename from the URL and normalize it
+    basename = url
+    |> URI.parse()
+    |> Map.get(:path, "")
+    |> Path.basename()
+    |> normalize_filename()
 
+    # Just use the original filename with no modification
+    # Let download_image use it directly
     try do
-      case download_image(url, consistent_filename) do
+      case download_image(url, basename) do
         %{filename: filename, path: path} when not is_nil(path) ->
           # Get file extension - needed for content type and proper file handling
           ext = Path.extname(filename) |> String.downcase()
@@ -212,9 +265,23 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     - `nil` if the download fails
   """
   def download_performer_image(url) when is_binary(url) do
+    # Get the base filename from the URL and normalize it
+    basename = url
+    |> URI.parse()
+    |> Map.get(:path, "")
+    |> Path.basename()
+    |> normalize_filename()
+
     # Generate a deterministic filename based on the URL
     url_hash = :crypto.hash(:md5, url) |> Base.encode16()
-    consistent_filename = "performer_image_#{url_hash}"
+    consistent_filename = if basename != "" do
+      # Use the normalized original filename with a hash to ensure uniqueness
+      base_without_ext = Path.rootname(basename)
+      "performer_image_#{base_without_ext}_#{url_hash}"
+    else
+      # Fallback if we can't extract a good filename
+      "performer_image_#{url_hash}"
+    end
 
     case download_image(url, consistent_filename) do
       %{filename: filename, path: path} when not is_nil(path) ->

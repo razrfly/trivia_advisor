@@ -8,6 +8,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   require Logger
   alias TriviaAdvisor.Scraping.Scrapers.QuestionOne.VenueExtractor
   alias TriviaAdvisor.Services.GooglePlaceImageStore
+  alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
   @base_url "https://questionone.com"
   @feed_url "#{@base_url}/venues/feed/"
@@ -157,15 +158,30 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
             venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
 
             # Then process the event with the venue
+
+            # Process the hero image using the centralized ImageDownloader
+            hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
+              case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url) do
+                {:ok, upload} ->
+                  Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
+                  %{hero_image: upload}
+                {:error, reason} ->
+                  Logger.warning("⚠️ Failed to download hero image for #{venue.name}: #{inspect(reason)}")
+                  %{}
+              end
+            else
+              Logger.debug("ℹ️ No hero image URL provided for venue: #{venue.name}")
+              %{}
+            end
+
             event_data = %{
               raw_title: raw_title,
               name: venue.name,
               time_text: extracted_data.time_text,
               description: extracted_data.description,
               fee_text: extracted_data.fee_text,
-              hero_image_url: extracted_data.hero_image_url,
               source_url: url
-            }
+            } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
 
             case TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id) do
               {:ok, _event} ->

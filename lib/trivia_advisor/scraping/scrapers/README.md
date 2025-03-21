@@ -13,7 +13,8 @@ This document provides a comprehensive specification for implementing scrapers i
 7. [Data Validation](#data-validation)
 8. [Rate Limiting](#rate-limiting)
 9. [Common Helpers](#common-helpers)
-10. [Testing](#testing)
+10. [Image Handling](#image-handling)
+11. [Testing](#testing)
 
 ## Dependencies
 
@@ -234,12 +235,25 @@ end
 For new scrapers, implement the following enhanced pattern which separates Place API calls into a dedicated queue:
 
 1. Continue to use **VenueStore.process_venue** as the primary entry point
-2. Use **GooglePlaceImageStore.maybe_update_venue_images** for venue images with the 90-day refresh policy
-3. Use an optional flag to explicitly request or skip image processing:
+2. After successful venue creation, schedule a separate job for Google Place lookups:
+   ```elixir
+   # Schedule a GooglePlaceLookupJob to handle Google Places API operations
+   defp schedule_place_lookup(venue) do
+     %{"venue_id" => venue.id}
+     |> TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob.new()
+     |> Oban.insert()
+   end
+   ```
+3. Use an optional flag to explicitly request or skip image processing at the VenueStore level:
    ```elixir
    # Skip image processing entirely for batch jobs
    venue_attrs = Map.put(venue_attrs, :skip_image_processing, true)
    ```
+
+This pattern ensures that Google Places API interactions are:
+- Isolated in a dedicated job for better monitoring
+- Rate-limited independently from other operations
+- More easily maintained across all scrapers
 
 ## Error Handling
 
@@ -373,6 +387,93 @@ Make use of these helper modules:
 2. **TimeParser** - Functions for parsing and standardizing time strings
 3. **ImageDownloader** - Utilities for downloading and processing images
 4. **JobMetadata** - Helpers for managing job metadata
+
+## Image Handling
+
+### Consistent Image Naming
+
+All scrapers must follow these guidelines for hero image handling:
+
+1. **Always use the centralized ImageDownloader module**:
+   ```elixir
+   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+   
+   # For event hero images
+   case ImageDownloader.download_event_hero_image(hero_image_url) do
+     {:ok, upload} -> 
+       # Use the upload in your event data
+       %{hero_image: upload}
+     {:error, reason} ->
+       Logger.warning("Failed to download hero image: #{inspect(reason)}")
+       %{}
+   end
+   ```
+
+2. **Never implement custom image downloading logic**:
+   - ❌ Don't use `VenueHelpers.download_image` for hero images
+   - ❌ Don't use HTTPoison directly for image downloading
+   - ❌ Don't create custom filename generation logic
+   - ✅ Always use `ImageDownloader.download_event_hero_image` for consistent behavior
+
+3. **When to download images**:
+   - Download images at the detail job level, not the venue processing level
+   - Include the downloaded image in the data passed to EventStore
+
+4. **Filename Normalization Rules**:
+   All hero image filenames adhere to these rules:
+   - Original filename preserved as much as possible
+   - Spaces converted to dashes (-)
+   - URL-encoded characters decoded and formatted properly
+   - Query parameters stripped (everything after ? removed)
+   - Double dashes (--) reduced to single dash
+   - Consistent case handling (lowercase preferred)
+   - Small hash suffix appended for uniqueness while preserving the original name
+   
+   IMPORTANT: Preserving original filenames is critical to prevent re-downloading 
+   the same images on subsequent scrapes. The system identifies existing images by 
+   filename, so custom naming schemes will cause continuous re-downloading of the 
+   same images, wasting bandwidth and storage.
+   
+   These rules are implemented in the `ImageDownloader` module and should not be reimplemented.
+
+### Image Processing Flow
+
+The correct flow for handling hero images in scrapers:
+
+1. **Extract image URL** from the source website
+2. **Pass the raw URL** to `ImageDownloader.download_event_hero_image`
+3. **Include the returned Plug.Upload struct** in the event attributes
+4. **Pass to EventStore** which will handle storage and database references
+
+Example implementation:
+```elixir
+# In your venue/event detail extraction
+hero_image_url = extract_hero_image_url_from_page(html)
+
+# Process the hero image
+hero_image_attrs = if hero_image_url && hero_image_url != "" do
+  case ImageDownloader.download_event_hero_image(hero_image_url) do
+    {:ok, upload} ->
+      %{hero_image: upload}
+    {:error, _reason} ->
+      %{}  # No image if download fails
+  end
+else
+  %{}  # No image if URL is empty or nil
+end
+
+# Merge with other event attributes
+event_attrs = %{
+  name: "Event Name",
+  day_of_week: day_of_week,
+  # Other attributes...
+} |> Map.merge(hero_image_attrs)
+
+# Pass to EventStore
+EventStore.process_event(venue, event_attrs, source_id)
+```
+
+This standardized approach ensures all hero images are processed consistently across all scrapers.
 
 ## Testing
 
