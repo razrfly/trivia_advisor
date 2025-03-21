@@ -10,6 +10,7 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
@@ -141,7 +142,8 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         website: venue_data.event_url,
         latitude: venue_data.lat,
         longitude: venue_data.lng,
-        postcode: venue_data.postcode
+        postcode: venue_data.postcode,
+        skip_image_processing: true # Skip image processing in VenueStore, we'll handle it separately
       }
 
       Logger.info("""
@@ -156,6 +158,10 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
       case VenueStore.process_venue(venue_attrs) do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+          # Schedule Google Place lookup job for images
+          schedule_place_lookup(venue)
+
           create_event_for_venue(venue, venue_data, source)
 
         {:error, :missing_city} ->
@@ -175,6 +181,19 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
         Venue Data: #{inspect(venue_data)}
         """)
         {:error, e}
+    end
+  end
+
+  # Schedule a GooglePlaceLookupJob to handle Google Places API operations
+  defp schedule_place_lookup(venue) do
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} ->
+        Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
+      {:error, reason} ->
+        Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
     end
   end
 
@@ -235,10 +254,22 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob do
   # Get performer ID if performer data is available
   defp get_performer_id(nil, _source_id), do: nil
   defp get_performer_id(performer, source_id) when is_map(performer) do
-    # Create performer
+    # Download the profile image if URL is available
+    profile_image = if is_binary(performer.profile_image) and performer.profile_image != "" do
+      case TriviaAdvisor.Scraping.Helpers.ImageDownloader.safe_download_performer_image(performer.profile_image) do
+        {:ok, upload} -> upload
+        {:error, reason} ->
+          Logger.warning("Failed to download performer image: #{inspect(reason)}")
+          nil
+      end
+    else
+      nil
+    end
+
+    # Create performer with downloaded image
     case Performer.find_or_create(%{
       name: performer.name,
-      profile_image: nil, # Skip image download for now
+      profile_image: profile_image,
       source_id: source_id
     }) do
       {:ok, performer} -> performer.id
