@@ -67,16 +67,21 @@ defmodule TriviaAdvisor.Scraping.Helpers.JobMetadata do
   def update_detail_job(job_id, venue_data, result, opts \\ [])
   def update_detail_job(nil, _venue_data, _result, _opts), do: :ok
   def update_detail_job(job_id, venue_data, result, opts) do
+    # Debug what we're getting
+    Logger.debug("📊 JobMetadata.update_detail_job called with: job_id=#{job_id}, venue_data=#{inspect(venue_data)}, result=#{inspect(result)}")
+
     # Simply normalize the raw venue data
     normalized_venue_data = normalize_keys(venue_data)
 
-    # Just add the status and processed_at timestamp
-    result_status = case result do
-      {:ok, _} -> "success"
-      {:error, _} -> "error"
-      _ -> "unknown"
+    # Safely extract the result status without accessing tuple properties directly
+    result_status = cond do
+      is_tuple(result) && tuple_size(result) == 2 && elem(result, 0) == :ok -> "success"
+      is_tuple(result) && tuple_size(result) == 2 && elem(result, 0) == :error -> "error"
+      is_map(result) -> "success"  # If a map was passed directly, consider it success
+      true -> "unknown"
     end
 
+    # Add timestamp and status
     metadata = Map.merge(normalized_venue_data, %{
       "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "result_status" => result_status
@@ -89,6 +94,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.JobMetadata do
     else
       metadata
     end
+
+    # Debug what we're storing
+    Logger.debug("📊 JobMetadata.update_detail_job storing metadata: #{inspect(final_metadata)}")
 
     # Update the job's metadata
     Repo.update_all(

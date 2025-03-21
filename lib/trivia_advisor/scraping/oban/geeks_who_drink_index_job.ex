@@ -1,6 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
   use Oban.Worker,
-    queue: :default,
+    queue: :scraper,
     max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.{NonceExtractor, VenueExtractor}
   alias TriviaAdvisor.Scraping.RateLimiter
   alias TriviaAdvisor.Events.EventSource
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
   # Days threshold for skipping recently updated venues
   @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
@@ -95,44 +96,31 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
 
             # Create metadata for reporting
             metadata = %{
-              "total_venues" => total_venues,
-              "enqueued_jobs" => enqueued_count,
-              "skipped_venues" => skipped_count,
-              "applied_limit" => limit,
-              "source_id" => source.id,
-              "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+              total_venues: total_venues,
+              enqueued_count: enqueued_count,
+              skipped_count: skipped_count,
+              applied_limit: limit,
+              source_id: source.id,
+              completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
             }
 
-            # Update job metadata only if job_id is not nil
-            if job_id do
-              Repo.update_all(
-                from(j in "oban_jobs", where: j.id == ^job_id),
-                set: [meta: metadata]
-              )
-            end
+            # Update job metadata using JobMetadata helper
+            JobMetadata.update_index_job(job_id, metadata)
 
             {:ok, %{venue_count: total_venues, enqueued_jobs: enqueued_count, skipped_venues: skipped_count}}
 
           {:error, reason} ->
-            # Handle error and update job metadata
-            error_metadata = %{
-              "error" => inspect(reason),
-              "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-            }
-
-            # Update job metadata only if job_id is not nil
-            if job_id do
-              Repo.update_all(
-                from(j in "oban_jobs", where: j.id == ^job_id),
-                set: [meta: error_metadata]
-              )
-            end
+            # Update job metadata with error using JobMetadata helper
+            JobMetadata.update_error(job_id, reason, context: %{source_id: source.id})
 
             Logger.error("❌ Failed to fetch venues: #{inspect(reason)}")
             {:error, reason}
         end
 
       {:error, reason} ->
+        # Update job metadata with error using JobMetadata helper
+        JobMetadata.update_error(job_id, reason, context: %{source_id: source.id})
+
         Logger.error("❌ Failed to fetch nonce: #{inspect(reason)}")
         {:error, reason}
     end

@@ -272,18 +272,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     |> Path.basename()
     |> normalize_filename()
 
-    # Generate a deterministic filename based on the URL
-    url_hash = :crypto.hash(:md5, url) |> Base.encode16()
-    consistent_filename = if basename != "" do
-      # Use the normalized original filename with a hash to ensure uniqueness
-      base_without_ext = Path.rootname(basename)
-      "performer_image_#{base_without_ext}_#{url_hash}"
-    else
-      # Fallback if we can't extract a good filename
-      "performer_image_#{url_hash}"
-    end
-
-    case download_image(url, consistent_filename) do
+    # Use the original filename without modification - just like hero images
+    # Let download_image use it directly
+    case download_image(url, basename) do
       %{filename: filename, path: path} when not is_nil(path) ->
         # Create a Plug.Upload struct compatible with Waffle's cast_attachments
         content_type = case Path.extname(filename) |> String.downcase() do
@@ -302,6 +293,62 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
           content_type: content_type
         }
       nil -> nil
+    end
+  end
+
+  @doc """
+  Downloads a performer profile image from a URL with safety checks.
+  Similar to download_performer_image/1 but with improved error handling.
+
+  Advantages over download_performer_image:
+  - Runs in a Task with timeout to prevent hanging
+  - Returns {:ok, image} or {:error, reason} tuples consistently
+  - Ensures filenames have proper extensions
+  - Gracefully handles all error cases
+
+  ## Parameters
+    - url: The URL of the performer image to download
+
+  ## Returns
+    - {:ok, %Plug.Upload{}} if successful
+    - {:ok, nil} if the download fails but processing should continue
+    - {:error, reason} if the URL is invalid
+  """
+  def safe_download_performer_image(url) do
+    # Skip nil URLs early
+    if is_nil(url) or (is_binary(url) and String.trim(url) == "") do
+      {:error, "Invalid image URL"}
+    else
+      task = Task.async(fn ->
+        case download_performer_image(url) do
+          nil -> nil
+          result ->
+            # Ensure the filename has a proper extension
+            extension = case Path.extname(url) do
+              "" -> ".jpg"  # Default to jpg if no extension
+              ext -> ext
+            end
+
+            # If result is a Plug.Upload struct, ensure it has the extension
+            if is_map(result) && Map.has_key?(result, :filename) && !String.contains?(result.filename, ".") do
+              Logger.debug("📸 Adding extension #{extension} to filename: #{result.filename}")
+              %{result | filename: result.filename <> extension}
+            else
+              result
+            end
+        end
+      end)
+
+      # Increase timeout for image downloads
+      case Task.yield(task, 40_000) || Task.shutdown(task) do
+        {:ok, result} ->
+          # Handle any result (including nil)
+          {:ok, result}
+        _ ->
+          Logger.error("Timeout or error downloading performer image from #{url}")
+          # Return nil instead of error to allow processing to continue
+          {:ok, nil}
+      end
     end
   end
 end

@@ -19,20 +19,36 @@ ScrapeLog.update_log(log, %{success: true})
 # ...
 ScrapeLog.log_error(log, error)
 
-# New approach (using Oban's native capabilities)
+# New approach (using JobMetadata helpers)
 # In perform function with job_id available
 metadata = %{
-  "total_venues" => venue_count,
-  "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+  total_venues: venue_count,
+  processed_count: processed_count,
+  skipped_count: skipped_count
 }
-Repo.update_all(
-  from(j in "oban_jobs", where: j.id == ^job_id),
-  set: [meta: metadata]
-)
+JobMetadata.update_index_job(job_id, metadata)
 
-# Or using helper
-JobMetadata.update_detail_job(job_id, metadata, result)
+# Or for detail jobs
+final_data = %{
+  venue_id: venue.id,
+  venue_name: venue.name,
+  event_id: event.id
+}
+JobMetadata.update_detail_job(job_id, final_data, {:ok, result})
+
+# Error handling
+JobMetadata.update_error(job_id, error, context: %{venue_id: venue.id})
 ```
+
+### Metadata Best Practices
+
+When updating job metadata:
+
+1. **Keep metadata focused and minimal** - Include only the most relevant fields, not entire data structures
+2. **Use consistent key formats** - JobMetadata normalizes keys to strings automatically
+3. **Include timestamps** - Add timestamps for important events (processed_at, completed_at, etc.)
+4. **Use existing data structures** - For detail jobs, reuse existing data like `final_data` rather than creating new structures
+5. **Include proper error context** - When logging errors, include relevant IDs and context
 
 ## Queue Naming Clarification
 
@@ -77,6 +93,7 @@ This document provides a comprehensive specification for implementing scrapers i
 9. [Common Helpers](#common-helpers)
 10. [Image Handling](#image-handling)
 11. [Testing](#testing)
+12. [Performer Handling](#performer-handling)
 
 ## Dependencies
 
@@ -98,13 +115,14 @@ All TriviaAdvisor scrapers follow a two-tier Oban job architecture:
    - Processes source websites to identify venue/event listings
    - Schedules individual Detail Jobs for each venue/event
    - Rate-limits Detail Job execution to prevent system overload
-   - Records scrape logs for monitoring and debugging
+   - Tracks scrape metadata for monitoring and debugging
 
 2. **Detail Job**: Responsible for processing individual venues/events
    - Extracts detailed information for a single venue/event
    - Interacts with VenueStore/EventStore to persist data
    - Handles Google APIs for geocoding and place information
    - Processes images and additional metadata
+   - Handles performer data when applicable
 
 This separation allows for robust error handling, effective rate limiting, and independent processing of each venue without affecting others.
 
@@ -138,17 +156,18 @@ defmodule TriviaAdvisor.Scraping.Oban.[SourceName]IndexJob do
 
   require Logger
   alias TriviaAdvisor.Repo
-  alias TriviaAdvisor.Scraping.{Source, ScrapeLog, RateLimiter}
+  alias TriviaAdvisor.Scraping.{Source, RateLimiter}
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
   alias TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob
   
   @base_url "https://example.com/venues"
 
   @impl Oban.Worker
-  def perform(_job) do
-    # 1. Initialize Scrape Log
+  def perform(%Oban.Job{id: job_id, args: args}) do
+    # 1. Initialize the job (get source)
     source = Repo.get_by!(Source, name: "source_name")
-    {:ok, log} = ScrapeLog.create_log(source)
     start_time = DateTime.utc_now()
+    Logger.info("Starting #{source.name} scraper")
 
     try do
       # 2. Fetch venue list
@@ -156,36 +175,47 @@ defmodule TriviaAdvisor.Scraping.Oban.[SourceName]IndexJob do
       venues_count = length(venues)
       Logger.info("Found #{venues_count} venues")
 
-      # 3. Schedule Detail Jobs with rate limiting
-      RateLimiter.schedule_hourly_capped_jobs(
-        venues,
+      # 3. Apply limit for testing (if requested)
+      limit = Map.get(args, "limit")
+      venues_to_process = if limit, do: Enum.take(venues, limit), else: venues
+      limited_count = length(venues_to_process)
+
+      if limit do
+        Logger.info("🧪 Testing mode: Limited to #{limited_count} venues (out of #{venues_count} total)")
+      end
+
+      # 4. Schedule Detail Jobs with rate limiting
+      {enqueued_count, skipped_count} = RateLimiter.schedule_detail_jobs(
+        venues_to_process,
         [SourceName]DetailJob,
         fn venue -> 
           %{
-            venue_id: venue.id,
-            venue_data: venue,
-            log_id: log.id,
-            source_id: source.id
+            "venue" => venue,
+            "source_id" => source.id
           }
         end
       )
 
-      # 4. Update Scrape Log with success
-      ScrapeLog.update_log(log, %{
-        success: true,
-        total_venues: venues_count,
-        metadata: %{
-          started_at: start_time,
-          completed_at: DateTime.utc_now()
-        }
-      })
+      Logger.info("Enqueued #{enqueued_count} detail jobs (skipped #{skipped_count} venues)")
 
-      {:ok, %{venues_count: venues_count}}
+      # 5. Update job metadata
+      metadata = %{
+        total_venues: venues_count,
+        limited_count: limited_count,
+        enqueued_count: enqueued_count,
+        skipped_count: skipped_count,
+        started_at: start_time |> DateTime.to_iso8601(),
+        completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
+      }
+      
+      JobMetadata.update_index_job(job_id, metadata)
+
+      {:ok, %{venues_count: venues_count, enqueued: enqueued_count}}
     rescue
       e ->
-        # Log error and update scrape log
+        # Log error and update job metadata
         Logger.error("Scraper failed: #{Exception.message(e)}")
-        ScrapeLog.log_error(log, e)
+        JobMetadata.update_error(job_id, e, context: %{source_id: source.id})
         {:error, e}
     end
   end
@@ -205,19 +235,19 @@ The Detail Job follows this pattern:
 defmodule TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob do
   use Oban.Worker,
     queue: :default,
-    max_attempts: 3
+    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
   require Logger
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
-  alias TriviaAdvisor.Scraping.{ScrapeLog, Source, Helpers.VenueHelpers}
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
+  alias TriviaAdvisor.Scraping.{Source, Helpers.VenueHelpers}
+  alias TriviaAdvisor.Scraping.Helpers.{ImageDownloader, JobMetadata}
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
-    venue_data = args["venue_data"]
-    log_id = args["log_id"]
+  def perform(%Oban.Job{id: job_id, args: args}) do
+    venue_data = args["venue"]
     source_id = args["source_id"]
     
     # Get source record
@@ -225,44 +255,21 @@ defmodule TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob do
     
     try do
       # 1. Process venue details
-      venue_attrs = %{
-        name: venue_data["name"],
-        address: venue_data["address"],
-        phone: venue_data["phone"],
-        website: venue_data["website"]
-      }
-      
-      # 2. Process venue through VenueStore
-      case VenueStore.process_venue(venue_attrs) do
-        {:ok, venue} ->
-          # Optionally update Google Place images
-          venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
+      case fetch_venue_details(venue_data, source) do
+        {:ok, %{final_data: final_data} = result} ->
+          # Update job metadata with meaningful fields
+          metadata = Map.take(final_data, [:venue_id, :venue_name, :event_id, :performer_id])
+          |> Map.put(:processed_at, DateTime.utc_now() |> DateTime.to_iso8601())
           
-          # 3. Process event data
-          event_attrs = %{
-            name: "#{source.name} at #{venue.name}",
-            venue_id: venue.id,
-            day_of_week: venue_data["day_of_week"],
-            start_time: venue_data["start_time"],
-            frequency: venue_data["frequency"] || "weekly",
-            description: venue_data["description"],
-            entry_fee_cents: venue_data["entry_fee_cents"]
-          }
+          JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
+          {:ok, result}
           
-          # 4. Create/update event
-          case EventStore.process_event(venue, event_attrs, source.id) do
-            {:ok, event} ->
-              Logger.info("✅ Successfully processed event for venue: #{venue.name}")
-              {:ok, %{venue_id: venue.id, event_id: event.id}}
-              
-            {:error, reason} ->
-              Logger.error("❌ Failed to process event: #{inspect(reason)}")
-              {:error, reason}
-          end
-          
-        {:error, reason} ->
-          Logger.error("❌ Failed to process venue: #{inspect(reason)}")
-          {:error, reason}
+        {:error, reason} = error ->
+          # Update job metadata with error
+          JobMetadata.update_error(job_id, reason, context: %{
+            venue_data: venue_data
+          })
+          error
       end
     rescue
       e ->
@@ -272,9 +279,15 @@ defmodule TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob do
         Venue Data: #{inspect(venue_data)}
         """)
         
-        if log_id, do: ScrapeLog.log_venue_error(log_id, venue_data, e)
+        JobMetadata.update_error(job_id, e, context: %{venue_data: venue_data})
         {:error, e}
     end
+  end
+  
+  # Implement venue detail fetching
+  defp fetch_venue_details(venue_data, source) do
+    # Implementation depends on source
+    # Make sure to return {:ok, %{final_data: final_data}} on success
   end
 end
 ```
@@ -285,8 +298,8 @@ end
 
 1. **VenueStore.process_venue** is the entry point for Google API operations
 2. The function first checks for existing venues with coordinates
-3. For new venues or venues without coordinates, it schedules a GoogleLookupJob
-4. GoogleLookupJob handles:
+3. For new venues or venues without coordinates, it schedules a GooglePlaceLookupJob
+4. GooglePlaceLookupJob handles:
    - Place API lookups
    - Geocoding API fallbacks
    - Image retrieval using GooglePlaceImageStore
@@ -304,6 +317,12 @@ For new scrapers, implement the following enhanced pattern which separates Place
      %{"venue_id" => venue.id}
      |> TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob.new()
      |> Oban.insert()
+     |> case do
+       {:ok, _job} ->
+         Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
+       {:error, reason} ->
+         Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
+     end
    end
    ```
 3. Use an optional flag to explicitly request or skip image processing at the VenueStore level:
@@ -327,7 +346,7 @@ All scrapers should implement the following error handling pattern:
      # Main scraping logic
    rescue
      e ->
-       ScrapeLog.log_error(log, e)
+       JobMetadata.update_error(job_id, e, context: %{venue_id: venue.id})
        Logger.error("Scraper failed: #{Exception.message(e)}")
        {:error, e}
    end
@@ -469,6 +488,16 @@ All scrapers must follow these guidelines for hero image handling:
        Logger.warning("Failed to download hero image: #{inspect(reason)}")
        %{}
    end
+   
+   # For performer images
+   case ImageDownloader.safe_download_performer_image(image_url) do
+     {:ok, upload} -> 
+       # Use the upload in performer data
+       %{image: upload}
+     {:error, reason} ->
+       Logger.warning("Failed to download performer image: #{inspect(reason)}")
+       %{}
+   end
    ```
 
 2. **Never implement custom image downloading logic**:
@@ -476,6 +505,7 @@ All scrapers must follow these guidelines for hero image handling:
    - ❌ Don't use HTTPoison directly for image downloading
    - ❌ Don't create custom filename generation logic
    - ✅ Always use `ImageDownloader.download_event_hero_image` for consistent behavior
+   - ✅ Always use `ImageDownloader.safe_download_performer_image` for performer images
 
 3. **When to download images**:
    - Download images at the detail job level, not the venue processing level
@@ -555,13 +585,67 @@ Both hero images and performer images are handled with an update-on-change polic
    - Storage directories are organized by venue/performer to maintain clean structure
 
 For performer images, similar rules apply as for hero images:
-- Use `ImageDownloader.download_performer_image` for consistency
+- Use `ImageDownloader.safe_download_performer_image` for consistency
 - Ensure proper error handling and logging
 - Let the system handle file replacement and cleanup automatically
 
 This approach ensures that the system maintains a clean file structure without duplicates while also keeping images up to date with the latest versions from source websites.
 
-This standardized approach ensures all hero images are processed consistently across all scrapers.
+## Performer Handling
+
+Some scrapers may need to handle performer data. Follow these guidelines:
+
+1. **Always use standardized performer processing**:
+   ```elixir
+   def process_event_with_performer(venue, event_attrs, source_id, performer_attrs) do
+     case TriviaAdvisor.Performers.PerformerStore.process_performer(performer_attrs) do
+       {:ok, performer} ->
+         # Update event with performer ID
+         event_attrs_with_performer = Map.put(event_attrs, :performer_id, performer.id)
+         case EventStore.process_event(venue, event_attrs_with_performer, source_id) do
+           {:ok, event} -> 
+             {:ok, %{venue: venue, event: event, performer: performer}}
+           error -> error
+         end
+       error -> error
+     end
+   end
+   ```
+
+2. **Image handling for performers**:
+   Always use `ImageDownloader.safe_download_performer_image` for performer images, which:
+   - Handles proper filename normalization
+   - Prevents duplicate downloads
+   - Properly replaces images when they change
+   - Handles cleanup of old files
+
+3. **Return value structure**:
+   When processing events with performers, ensure your return values include all relevant entities:
+   ```elixir
+   {:ok, %{
+     venue: venue, 
+     event: event, 
+     performer: performer,
+     final_data: %{
+       venue_id: venue.id,
+       venue_name: venue.name,
+       event_id: event.id,
+       performer_id: performer.id,
+       performer_name: performer.name
+     }
+   }}
+   ```
+
+4. **Metadata handling**:
+   Include performer IDs and relevant data in your job metadata:
+   ```elixir
+   metadata = %{
+     venue_id: venue.id,
+     event_id: event.id,
+     performer_id: performer.id
+   }
+   JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
+   ```
 
 ## Testing
 
@@ -602,6 +686,20 @@ Implement these testing strategies:
    ```elixir
    # Query jobs by state
    Repo.all(from j in Oban.Job, where: j.queue == "default" and j.state == "executing")
+   ```
+
+6. **Force Updating All Venues**:
+   When you need to force update all venues without waiting for the standard interval:
+   ```elixir
+   # Option 1: Temporarily modify skip_if_updated_within_days to 0
+   # In RateLimiter module, change:
+   def skip_if_updated_within_days, do: 0  # Instead of 5
+
+   # Option 2: Update event source timestamps in database
+   Repo.update_all(
+     from(es in EventSource, where: es.source_id == ^source_id),
+     set: [updated_at: ~N[2023-01-01 00:00:00]]
+   )
    ```
 
 ---
