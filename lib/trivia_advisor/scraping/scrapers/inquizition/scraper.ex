@@ -10,142 +10,97 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   @zyte_api_url "https://api.zyte.com/v1/extract"
   @max_retries 3
   @timeout 60_000
-  @version "1.0.0"  # Add version tracking
+  @version "1.0.0"
 
+  @doc """
+  DEPRECATED: This legacy scraper is now deprecated.
+  Please use Oban implementation with TriviaAdvisor.Scraping.Oban.InquizitionIndexJob instead.
+
+  This function is kept for backward compatibility but will be removed in future versions.
+  """
   def scrape do
-    # Load .env file if it exists
-    if File.exists?(".env") do
-      DotenvParser.load_file(".env")
-      Logger.info("📝 Loaded .env file")
-    end
+    Logger.warning("⚠️ DEPRECATED: Using legacy scraper implementation. This will be removed in future versions.")
+    Logger.warning("⚠️ Please use TriviaAdvisor.Scraping.Oban.InquizitionIndexJob instead.")
 
-    # Verify Zyte API key is available
-    case System.get_env("ZYTE_API_KEY") do
-      key when is_binary(key) and byte_size(key) > 0 ->
-        Logger.info("🔑 Zyte API key loaded successfully")
-
-        # Also verify Google Maps API key is available
-        case System.get_env("GOOGLE_MAPS_API_KEY") do
-          google_key when is_binary(google_key) and byte_size(google_key) > 0 ->
-            Logger.info("🔑 Google Maps API key loaded successfully")
-
-            # Explicitly set Google API key in Application config
-            Application.put_env(:trivia_advisor, TriviaAdvisor.Scraping.GoogleAPI, [
-              google_maps_api_key: google_key
-            ])
-
-            do_scrape(key)
-
-          _ ->
-            Logger.error("❌ GOOGLE_MAPS_API_KEY not found in environment")
-            []
-        end
-
-      _ ->
-        Logger.error("❌ ZYTE_API_KEY not found in environment")
-        []
-    end
+    # Get API key from environment
+    api_key = System.get_env("ZYTE_API_KEY")
+    do_scrape(api_key)
   end
 
   defp do_scrape(api_key, retries \\ 0) do
-    headers = [
-      {"Authorization", "Basic #{Base.encode64(api_key <> ":")}"},
-      {"Content-Type", "application/json"}
-    ]
+    if is_nil(api_key) || api_key == "" do
+      Logger.error("❌ No API key provided")
+      []
+    else
+      headers = [
+        {"Authorization", "Basic #{Base.encode64(api_key <> ":")}"},
+        {"Content-Type", "application/json"}
+      ]
 
-    body = Jason.encode!(%{
-      url: @find_quiz_url,
-      browserHtml: true,
-      javascript: true,
-      # Add viewport size to ensure map loads properly
-      viewport: %{
-        width: 1920,
-        height: 1080
-      }
-    })
+      body = Jason.encode!(%{
+        url: @find_quiz_url,
+        browserHtml: true,
+        javascript: true,
+        # Add viewport size to ensure map loads properly
+        viewport: %{
+          width: 1920,
+          height: 1080
+        }
+      })
 
-    options = [
-      timeout: @timeout,
-      recv_timeout: @timeout,
-      hackney: [pool: :default]
-    ]
+      options = [
+        timeout: @timeout,
+        recv_timeout: @timeout,
+        hackney: [pool: :default]
+      ]
 
-    case HTTPoison.post(@zyte_api_url, body, headers, options) do
-      {:ok, %{status_code: 200, body: response}} ->
-        case Jason.decode(response) do
-          {:ok, %{"browserHtml" => html}} ->
-            # Get source for logging
-            source = Repo.get_by!(Scraping.Source, name: "inquizition")
-            start_time = DateTime.utc_now()
+      case HTTPoison.post(@zyte_api_url, body, headers, options) do
+        {:ok, %{status_code: 200, body: response}} ->
+          case Jason.decode(response) do
+            {:ok, %{"browserHtml" => html}} ->
+              # Get source for logging
+              _source = Repo.get_by!(Scraping.Source, name: "inquizition")
+              start_time = DateTime.utc_now()
 
-            results = html
-              |> Floki.parse_document!()
-              |> Floki.find(".storelocator-store")
-              |> Enum.map(&parse_venue/1)
-              |> Enum.reject(&is_nil/1)
+              results = html
+                |> Floki.parse_document!()
+                |> Floki.find(".storelocator-store")
+                |> Enum.map(&parse_venue/1)
+                |> Enum.reject(&is_nil/1)
 
-            # Calculate statistics
-            total_venues = length(results)
-            successful_venues = Enum.count(results, &match?([ok: _], &1))
-            failed_venues = total_venues - successful_venues
+              # Calculate statistics
+              total_venues = length(results)
+              successful_venues = Enum.count(results, &match?([ok: _], &1))
+              failed_venues = total_venues - successful_venues
 
-            # Extract venue details for metadata
-            venue_details = results
-              |> Enum.filter(&match?([ok: _], &1))
-              |> Enum.map(fn [ok: venue] ->
-                %{
-                  "id" => venue.id,
-                  "name" => venue.name,
-                  "phone" => venue.phone,
-                  "address" => venue.address,
-                  "website" => venue.website,
-                  "postcode" => venue.postcode
-                }
-              end)
+              # Log completion instead of creating scrape log
+              end_time = DateTime.utc_now()
+              duration_seconds = DateTime.diff(end_time, start_time)
 
-            end_time = DateTime.utc_now()
+              Logger.info("""
+              📊 Inquizition Scrape Summary:
+              Total venues: #{total_venues}
+              Successfully processed: #{successful_venues}
+              Failed to process: #{failed_venues}
+              Scraper version: #{@version}
+              Duration: #{duration_seconds} seconds
+              """)
 
-            # Create scrape log with enhanced metadata
-            Scraping.create_scrape_log(%{
-              source_id: source.id,
-              start_time: start_time,
-              end_time: end_time,
-              total_venues: total_venues,
-              successful_venues: successful_venues,
-              failed_venues: failed_venues,
-              event_count: successful_venues, # Each venue has one event
-              metadata: %{
-                "venues" => venue_details,
-                "started_at" => DateTime.to_iso8601(start_time),
-                "completed_at" => DateTime.to_iso8601(end_time),
-                "total_venues" => total_venues,
-                "scraper_version" => @version,
-                "retries" => retries
-              }
-            })
+              results
 
-            Logger.info("""
-            📊 Scrape Summary:
-            Total venues: #{total_venues}
-            Successfully processed: #{successful_venues}
-            Failed to process: #{failed_venues}
-            Scraper version: #{@version}
-            """)
+            error ->
+              Logger.error("Failed to parse Zyte response: #{inspect(error)}")
+              retry_or_fail(api_key, retries, "JSON parsing failed")
+          end
 
-            results
+        {:ok, %{status_code: status, body: body}} ->
+          Logger.error("Zyte API error (#{status}): #{body}")
+          retry_or_fail(api_key, retries, "HTTP #{status}")
 
-          error ->
-            Logger.error("Failed to parse Zyte response: #{inspect(error)}")
-            retry_or_fail(api_key, retries, "JSON parsing failed")
-        end
-
-      {:ok, %{status_code: status, body: body}} ->
-        Logger.error("Zyte API error (#{status}): #{body}")
-        retry_or_fail(api_key, retries, "HTTP #{status}")
-
-      {:error, %HTTPoison.Error{reason: reason}} ->
-        Logger.error("Failed to fetch from Zyte: #{inspect(reason)}")
-        retry_or_fail(api_key, retries, "HTTP error: #{inspect(reason)}")
+        {:error, %HTTPoison.Error{reason: reason}} ->
+          Logger.error("Failed to fetch from Zyte: #{inspect(reason)}")
+          retry_or_fail(api_key, retries, "HTTP error: #{inspect(reason)}")
+      end
     end
   end
 
@@ -246,16 +201,19 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
 
         # Try to find or create venue
         case VenueStore.process_venue(store_data) do
-          {:ok, venue} ->
-            Logger.info("✅ Successfully processed venue: #{venue.name}")
+          {:ok, processed_venue} ->
+            Logger.info("✅ Successfully processed venue: #{processed_venue.name}")
+
+            # Schedule Google Place lookup
+            schedule_place_lookup(processed_venue)
 
             # Get source from seeds
             source = Repo.get_by!(Scraping.Source, name: "inquizition")
 
             # Create or update event
             case Events.find_or_create_event(%{
-              name: "Inquizition Quiz at #{venue.name}",
-              venue_id: venue.id,
+              name: "Inquizition Quiz at #{processed_venue.name}",
+              venue_id: processed_venue.id,
               day_of_week: parsed_time.day_of_week,
               start_time: parsed_time.start_time,
               frequency: parsed_time.frequency,
@@ -263,7 +221,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
               description: time_text
             }) do
               {:ok, event} ->
-                source_url = "#{@find_quiz_url}##{venue.id}"
+                source_url = "#{@find_quiz_url}##{processed_venue.id}"
                 event_source_attrs = %{
                   event_id: event.id,
                   source_id: source.id,
@@ -275,7 +233,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
                 }
 
                 case Events.create_event_source(event_source_attrs) do
-                  {:ok, _event_source} -> [ok: venue]
+                  {:ok, _event_source} -> [ok: processed_venue]
                   error ->
                     Logger.error("Failed to create event source: #{inspect(error)}")
                     nil
@@ -364,6 +322,9 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
         {:ok, processed_venue} ->
           Logger.info("✅ Successfully processed venue: #{processed_venue.name}")
 
+          # Schedule Google Place lookup
+          schedule_place_lookup(processed_venue)
+
           # Create or update the event for this venue
           case Events.find_or_create_event(%{
             name: "Inquizition Quiz at #{processed_venue.name}",
@@ -430,11 +391,6 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
   # Function to fetch raw venues without processing them
   # This is used by the index job to get data for pre-filtering
   def fetch_raw_venues do
-    # Load .env file if it exists
-    if File.exists?(".env") do
-      DotenvParser.load_file(".env")
-    end
-
     # Get API key
     api_key = System.get_env("ZYTE_API_KEY")
 
@@ -567,6 +523,24 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper do
       error ->
         Logger.error("Failed to create event: #{inspect(error)}")
         nil
+    end
+  end
+
+  # Schedule a Google Place lookup job for venue images
+  defp schedule_place_lookup(venue) do
+    # Import needed modules only here to avoid circular dependencies
+    alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
+    alias Oban
+
+    # Create a job with the venue ID
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} ->
+        Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
+      {:error, reason} ->
+        Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
     end
   end
 end

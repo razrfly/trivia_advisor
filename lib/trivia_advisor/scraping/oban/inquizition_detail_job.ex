@@ -12,14 +12,15 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.TimeParser
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{Event, EventStore, EventSource}
-  alias TriviaAdvisor.Services.GooglePlaceImageStore
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
 
   @base_url "https://inquizition.com/find-a-quiz/"
   @standard_fee_text "£2.50" # Standard fee for all Inquizition quizzes
   @standard_fee_cents 250
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{args: args, id: job_id}) do
     # Handle both formats: args with venue_data as map key or string key
     venue_data = args[:venue_data] || args["venue_data"]
 
@@ -47,6 +48,57 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     # Log the result structure for debugging
     Logger.debug("📊 Result structure: #{inspect(result)}")
 
+    # Update job metadata with result
+    case result do
+      # Handle the case when event is already a struct
+      {:ok, %{venue: venue, event: event = %TriviaAdvisor.Events.Event{}}} ->
+        metadata = %{
+          venue_id: venue.id,
+          venue_name: venue.name,
+          event_id: event.id
+        }
+        JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
+
+      # Handle the case when event is wrapped in an :ok tuple
+      {:ok, %{venue: venue, event: {:ok, event = %TriviaAdvisor.Events.Event{}}}} ->
+        metadata = %{
+          venue_id: venue.id,
+          venue_name: venue.name,
+          event_id: event.id
+        }
+        JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
+
+      # Handle any other valid map structure by safely extracting values
+      {:ok, %{venue: venue, event: event}} ->
+        # Get the actual event struct regardless of how it's wrapped
+        event_struct = case event do
+          {:ok, e = %TriviaAdvisor.Events.Event{}} -> e
+          e = %TriviaAdvisor.Events.Event{} -> e
+          _ ->
+            Logger.warning("⚠️ Unexpected event format: #{inspect(event)}")
+            %{id: nil}
+        end
+
+        metadata = %{
+          venue_id: venue.id,
+          venue_name: venue.name,
+          event_id: event_struct.id
+        }
+        JobMetadata.update_detail_job(job_id, metadata, {:ok, result})
+
+      # Handle error case
+      {:error, reason} ->
+        JobMetadata.update_error(job_id, reason, context: %{venue_data: venue_data})
+
+      # Handle any other unexpected format
+      unexpected ->
+        Logger.error("❌ Unexpected result format: #{inspect(unexpected)}")
+        JobMetadata.update_error(job_id, "Unexpected result format", context: %{
+          venue_data: venue_data,
+          result: unexpected
+        })
+    end
+
     # Handle the processing result
     handle_processing_result(result)
   end
@@ -60,12 +112,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   # Handle different result formats - this is a helper function to ensure consistent return formats
   defp handle_processing_result(result) do
     case result do
-      {:ok, venue} when is_struct(venue, TriviaAdvisor.Locations.Venue) ->
-        Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, %{venue_id: venue.id}}
-
       {:ok, %{venue: venue, event: {:ok, event = %TriviaAdvisor.Events.Event{}}}} ->
-        # Handle nested {:ok, event} tuple
+        # Handle nested {:ok, event} tuple - unwrap it
         Logger.info("✅ Successfully processed venue and event: #{venue.name}")
         {:ok, %{venue_id: venue.id, event_id: event.id}}
 
@@ -186,9 +234,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
       {:ok, venue} ->
         Logger.info("✅ Successfully processed venue: #{venue.name}")
 
-        # Add this explicitly in the detail job - this is where image processing should happen
-        # Get venue images using the Google Places API if needed
-        venue = GooglePlaceImageStore.maybe_update_venue_images(venue)
+        # Schedule a separate job for Google Place image lookup instead of doing it directly
+        schedule_place_lookup(venue)
 
         # Get fee from venue_data or use standard
         fee_text = venue_data["entry_fee"] || @standard_fee_text
@@ -369,5 +416,19 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
     # Return the correctly formatted string
     "#{day_name} #{formatted_time}"
+  end
+
+  # Function to schedule Google Place lookup for the venue
+  defp schedule_place_lookup(venue) do
+    # Create a job with the venue ID
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} ->
+        Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
+      {:error, reason} ->
+        Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
+    end
   end
 end
