@@ -13,6 +13,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias HtmlEntities
 
   @impl Oban.Worker
@@ -22,28 +23,28 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
 
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
-      {venue, venue_data_map} ->
-        # Update job metadata with success information
-        result = {:ok, venue}
+      {:ok, %{venue: venue, event: event, final_data: final_data}} ->
+        # Extract only the most relevant fields for metadata
+        metadata = Map.take(final_data, [:name, :address, :day_of_week, :start_time, :performer_id])
+          |> Map.put(:venue_id, venue.id)
+          |> Map.put(:event_id, event.id)
+          |> Map.put(:processed_at, DateTime.utc_now() |> DateTime.to_iso8601())
 
-        # Extract day_of_week and start_time from the processed data
-        metadata = venue_data
-        |> Map.put("day_of_week", Map.get(venue_data_map, :day_of_week))
-        |> Map.put("start_time", Map.get(venue_data_map, :start_time))
-
+        # Convert atom keys to strings if needed
+        result = {:ok, %{venue_id: venue.id, event_id: event.id}}
         JobMetadata.update_detail_job(job_id, metadata, result)
 
         Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, %{venue_id: venue.id}}
+        result
 
-      nil ->
+      {:error, reason} = error ->
         # Update job metadata with error information
-        JobMetadata.update_error(job_id, "Failed to process venue", context: %{
+        JobMetadata.update_error(job_id, reason, context: %{
           "venue_title" => venue_data["title"]
         })
 
-        Logger.error("❌ Failed to process venue: #{venue_data["title"]}")
-        {:error, "Failed to process venue"}
+        Logger.error("❌ Failed to process venue: #{venue_data["title"]} - #{inspect(reason)}")
+        error
     end
   end
 
@@ -109,11 +110,27 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
 
+          # Schedule Google Place lookup as a separate job
+          schedule_place_lookup(venue)
+
           # Parse day and time
           time_text = format_event_time(venue_data_map, additional_details)
 
           # Get performer ID if present
           performer_id = get_performer_id(source.id, additional_details)
+
+          # Process hero image if present
+          hero_image_attrs = if venue_data["logo_url"] && venue_data["logo_url"] != "" do
+            case ImageDownloader.download_event_hero_image(venue_data["logo_url"]) do
+              {:ok, upload} ->
+                %{hero_image: upload, hero_image_url: venue_data["logo_url"]}
+              {:error, reason} ->
+                Logger.warning("⚠️ Failed to download hero image: #{inspect(reason)}")
+                %{hero_image_url: venue_data["logo_url"]}
+            end
+          else
+            %{}
+          end
 
           # Create event data
           event_data = %{
@@ -123,22 +140,30 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
             description: Map.get(merged_data, :description, ""),
             fee_text: "Free", # Explicitly set as free for all GWD events
             source_url: venue_data["source_url"],
-            performer_id: performer_id,
-            hero_image_url: venue_data["logo_url"]
-          }
+            performer_id: performer_id
+          } |> Map.merge(hero_image_attrs)
 
           case EventStore.process_event(venue, event_data, source.id) do
-            {:ok, _event} ->
+            {:ok, event} ->
               Logger.info("✅ Successfully created event for venue: #{venue.name}")
-              {venue, merged_data}
+
+              # Create final_data structure for metadata
+              final_data = merged_data
+                |> Map.put(:venue_id, venue.id)
+                |> Map.put(:venue_name, venue.name)
+                |> Map.put(:event_id, event.id)
+                |> Map.put(:performer_id, performer_id)
+
+              {:ok, %{venue: venue, event: event, final_data: final_data}}
+
             {:error, reason} ->
               Logger.error("❌ Failed to create event: #{inspect(reason)}")
-              nil
+              {:error, reason}
           end
 
         {:error, reason} ->
           Logger.error("❌ Failed to process venue: #{inspect(reason)}")
-          nil
+          {:error, reason}
       end
     rescue
       e ->
@@ -147,7 +172,20 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
         Error: #{Exception.message(e)}
         Venue Data: #{inspect(venue_data)}
         """)
-        nil
+        {:error, "Exception: #{Exception.message(e)}"}
+    end
+  end
+
+  # Schedule a Google Place lookup job
+  defp schedule_place_lookup(venue) do
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} ->
+        Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
+      {:error, reason} ->
+        Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
     end
   end
 
@@ -215,20 +253,44 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       %{name: name, profile_image: image_url} when not is_nil(name) and not is_nil(image_url) ->
         Logger.info("🎭 Found performer: #{name} with image: #{image_url}")
 
-        # Download the profile image
-        profile_image = ImageDownloader.download_performer_image(image_url)
+        # Download the profile image using safe_download_performer_image
+        case ImageDownloader.safe_download_performer_image(image_url) do
+          {:ok, profile_image} when not is_nil(profile_image) ->
+            Logger.info("📸 Successfully downloaded performer image for #{name}")
 
-        # Create or update the performer
-        case Performer.find_or_create(%{
-          name: name,
-          profile_image: profile_image,
-          source_id: source_id
-        }) do
-          {:ok, performer} ->
-            Logger.info("✅ Created/updated performer: #{name}, ID: #{performer.id}")
-            performer.id
-          {:error, changeset} ->
-            Logger.error("❌ Failed to create performer: #{inspect(changeset.errors)}")
+            # Create or update the performer
+            performer_attrs = %{
+              name: name,
+              profile_image: profile_image,
+              source_id: source_id
+            }
+
+            case Performer.find_or_create(performer_attrs) do
+              {:ok, performer} ->
+                Logger.info("✅ Created/updated performer: #{name}, ID: #{performer.id}")
+                performer.id
+              {:error, changeset} ->
+                Logger.error("❌ Failed to create performer: #{inspect(changeset.errors)}")
+                nil
+            end
+
+          {:ok, nil} ->
+            Logger.warning("⚠️ Image download returned nil for performer #{name}, proceeding without image")
+
+            # Try to create performer without image
+            case Performer.find_or_create(%{
+              name: name,
+              source_id: source_id
+            }) do
+              {:ok, performer} ->
+                Logger.info("✅ Created performer #{performer.id} without image")
+                performer.id
+              _ ->
+                nil
+            end
+
+          {:error, reason} ->
+            Logger.error("❌ Failed to download performer image: #{inspect(reason)}")
             nil
         end
 

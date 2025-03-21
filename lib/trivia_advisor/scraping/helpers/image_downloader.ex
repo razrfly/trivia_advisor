@@ -304,4 +304,60 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
       nil -> nil
     end
   end
+
+  @doc """
+  Downloads a performer profile image from a URL with safety checks.
+  Similar to download_performer_image/1 but with improved error handling.
+
+  Advantages over download_performer_image:
+  - Runs in a Task with timeout to prevent hanging
+  - Returns {:ok, image} or {:error, reason} tuples consistently
+  - Ensures filenames have proper extensions
+  - Gracefully handles all error cases
+
+  ## Parameters
+    - url: The URL of the performer image to download
+
+  ## Returns
+    - {:ok, %Plug.Upload{}} if successful
+    - {:ok, nil} if the download fails but processing should continue
+    - {:error, reason} if the URL is invalid
+  """
+  def safe_download_performer_image(url) do
+    # Skip nil URLs early
+    if is_nil(url) or (is_binary(url) and String.trim(url) == "") do
+      {:error, "Invalid image URL"}
+    else
+      task = Task.async(fn ->
+        case download_performer_image(url) do
+          nil -> nil
+          result ->
+            # Ensure the filename has a proper extension
+            extension = case Path.extname(url) do
+              "" -> ".jpg"  # Default to jpg if no extension
+              ext -> ext
+            end
+
+            # If result is a Plug.Upload struct, ensure it has the extension
+            if is_map(result) && Map.has_key?(result, :filename) && !String.contains?(result.filename, ".") do
+              Logger.debug("📸 Adding extension #{extension} to filename: #{result.filename}")
+              %{result | filename: result.filename <> extension}
+            else
+              result
+            end
+        end
+      end)
+
+      # Increase timeout for image downloads
+      case Task.yield(task, 40_000) || Task.shutdown(task) do
+        {:ok, result} ->
+          # Handle any result (including nil)
+          {:ok, result}
+        _ ->
+          Logger.error("Timeout or error downloading performer image from #{url}")
+          # Return nil instead of error to allow processing to continue
+          {:ok, nil}
+      end
+    end
+  end
 end
