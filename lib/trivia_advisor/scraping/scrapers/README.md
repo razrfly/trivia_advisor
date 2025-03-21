@@ -1,5 +1,67 @@
 # TriviaAdvisor Scraper Specification
 
+## IMPORTANT: ScrapeLog Deprecation Notice
+
+**The ScrapeLog system is now deprecated and is being phased out in favor of Oban's native job tracking capabilities.**
+
+When updating existing scrapers or creating new ones:
+- Do NOT use ScrapeLog for tracking scrape status or errors
+- Use Oban's job metadata for tracking and reporting scrape results
+- Remove all references to ScrapeLog from code
+- Use `JobMetadata.update_detail_job` and similar helpers for metadata tracking
+
+**Updated Pattern:**
+```elixir
+# Old approach (deprecated)
+{:ok, log} = ScrapeLog.create_log(source)
+# ...
+ScrapeLog.update_log(log, %{success: true})
+# ...
+ScrapeLog.log_error(log, error)
+
+# New approach (using Oban's native capabilities)
+# In perform function with job_id available
+metadata = %{
+  "total_venues" => venue_count,
+  "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+}
+Repo.update_all(
+  from(j in "oban_jobs", where: j.id == ^job_id),
+  set: [meta: metadata]
+)
+
+# Or using helper
+JobMetadata.update_detail_job(job_id, metadata, result)
+```
+
+## Queue Naming Clarification
+
+**IMPORTANT: Only use the following queues for all scrapers:**
+
+1. `:default` - Used for most scraping operations including detail jobs
+2. `:scraper` - Used for index jobs 
+3. `:google_api` - Reserved for Google API operations only
+
+There is NO `:venue_processor` queue available in the system. Any references to this queue are incorrect and should be updated to use the `:default` queue instead.
+
+```elixir
+# CORRECT queue usage
+use Oban.Worker,
+  queue: :default,  # For detail jobs
+  max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
+  priority: TriviaAdvisor.Scraping.RateLimiter.priority()
+
+# For index jobs
+use Oban.Worker,
+  queue: :scraper,
+  max_attempts: 3
+  
+# For Google API operations only
+use Oban.Worker,
+  queue: :google_api,
+  max_attempts: 3
+```
+
 This document provides a comprehensive specification for implementing scrapers in the TriviaAdvisor application. It covers the architectural patterns, design considerations, and best practices learned from implementing the existing scrapers (Question One, Inquizition, Geeks Who Drink, Speed Quizzing, and Quizmeisters).
 
 ## Table of Contents
@@ -142,7 +204,7 @@ The Detail Job follows this pattern:
 ```elixir
 defmodule TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob do
   use Oban.Worker,
-    queue: :venue_processor,
+    queue: :default,
     max_attempts: 3
 
   require Logger
@@ -473,6 +535,32 @@ event_attrs = %{
 EventStore.process_event(venue, event_attrs, source_id)
 ```
 
+### Image Update and Replacement
+
+Both hero images and performer images are handled with an update-on-change policy:
+
+1. **Automatic Image Replacement**:
+   - When a new image is detected with a different filename, the old image is automatically replaced
+   - This happens both for event hero images and performer profile images
+   - The system compares filenames to determine if the image has changed
+
+2. **File Cleanup**:
+   - Old files are automatically deleted when replaced with new images
+   - The Waffle library (used for file uploads) handles this cleanup during updates
+   - Only one version of an image is kept for each event/performer
+
+3. **Duplicate Prevention**:
+   - The system prevents duplicate files by replacing existing images
+   - When a performer or event is deleted, all associated image files are also removed
+   - Storage directories are organized by venue/performer to maintain clean structure
+
+For performer images, similar rules apply as for hero images:
+- Use `ImageDownloader.download_performer_image` for consistency
+- Ensure proper error handling and logging
+- Let the system handle file replacement and cleanup automatically
+
+This approach ensures that the system maintains a clean file structure without duplicates while also keeping images up to date with the latest versions from source websites.
+
 This standardized approach ensures all hero images are processed consistently across all scrapers.
 
 ## Testing
@@ -513,7 +601,7 @@ Implement these testing strategies:
 5. **Monitoring** through Oban dashboard or database queries:
    ```elixir
    # Query jobs by state
-   Repo.all(from j in Oban.Job, where: j.queue == "venue_processor" and j.state == "executing")
+   Repo.all(from j in Oban.Job, where: j.queue == "default" and j.state == "executing")
    ```
 
 ---

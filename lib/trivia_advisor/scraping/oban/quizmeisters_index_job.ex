@@ -1,6 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   use Oban.Worker,
-    queue: :default,
+    queue: :scraper,
     max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.RateLimiter
   alias TriviaAdvisor.Events.EventSource  # Add this for venue URL checking
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
   # Days threshold for skipping recently updated venues
   @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
@@ -55,20 +56,17 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
 
         # Create metadata for reporting
         metadata = %{
-          "total_venues" => venue_count,
-          "limited_to" => limited_count,
-          "enqueued_jobs" => enqueued_count,
-          "skipped_venues" => skipped_count,
-          "applied_limit" => limit,
-          "source_id" => source.id,
-          "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+          total_venues: venue_count,
+          limited_to: limited_count,
+          enqueued_jobs: enqueued_count,
+          skipped_venues: skipped_count,
+          applied_limit: limit,
+          source_id: source.id,
+          completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: metadata]
-        )
+        # Update job metadata using JobMetadata helper
+        JobMetadata.update_index_job(job_id, metadata)
 
         # Return success with venue count
         {:ok, %{venue_count: venue_count, enqueued_jobs: enqueued_count, skipped_venues: skipped_count, source_id: source.id}}
@@ -77,17 +75,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
         # Log the error
         Logger.error("❌ Failed to fetch Quizmeisters venues: #{inspect(reason)}")
 
-        # Update job metadata with error
-        error_metadata = %{
-          "error" => inspect(reason),
-          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-        }
-
-        # Direct SQL update of the job's meta column
-        Repo.update_all(
-          from(j in "oban_jobs", where: j.id == ^job_id),
-          set: [meta: error_metadata]
-        )
+        # Update job metadata with error using JobMetadata helper
+        JobMetadata.update_error(job_id, reason)
 
         # Return the error
         {:error, reason}

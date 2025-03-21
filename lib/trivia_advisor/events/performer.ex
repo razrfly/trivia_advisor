@@ -62,17 +62,47 @@ defmodule TriviaAdvisor.Events.Performer do
     case TriviaAdvisor.Repo.all(from p in __MODULE__, where: p.name == ^name and p.source_id == ^source_id) do
       [] ->
         # No performer found, create a new one
+        Logger.info("🎭 Creating new performer '#{name}' with image: #{if Map.has_key?(attrs, :profile_image), do: "yes", else: "no"}")
         %__MODULE__{}
-      [performer] ->
-        # Only one performer found, use it
-        performer
-      performers when is_list(performers) ->
-        # Multiple performers found, log the issue and use the first one
-        Logger.warning("⚠️ Found #{length(performers)} duplicate performers for '#{name}' (source_id: #{source_id}). Using the first one.")
-        List.first(performers)
+        |> changeset(attrs)
+        |> TriviaAdvisor.Repo.insert()
+
+      [performer | _rest] = performers ->
+        # Log if we found multiple performers
+        if length(performers) > 1 do
+          Logger.warning("⚠️ Found #{length(performers)} duplicate performers for '#{name}' (source_id: #{source_id}). Using the first one.")
+        end
+
+        # Check if the performer's image needs to be updated
+        if Map.has_key?(attrs, :profile_image) do
+          # If the new attrs contain an image, get the filename
+          case attrs.profile_image do
+            %Plug.Upload{filename: new_filename} ->
+              # Get current filename
+              current_filename = if performer.profile_image, do: get_in(performer.profile_image, [:file_name]), else: nil
+
+              # Check if the filename has changed
+              if current_filename != new_filename do
+                Logger.info("🔄 Updating performer '#{name}' image from '#{current_filename}' to '#{new_filename}'")
+                performer
+                |> changeset(attrs)
+                |> TriviaAdvisor.Repo.update()
+              else
+                Logger.info("✅ Performer '#{name}' image is unchanged (#{current_filename})")
+                {:ok, performer}
+              end
+
+            _ ->
+              # No valid image in attrs, keep the performer as is
+              Logger.info("✅ No new valid image for performer '#{name}', keeping existing data")
+              {:ok, performer}
+          end
+        else
+          # No image in attrs, keep the performer as is
+          Logger.info("✅ Performer '#{name}' exists and no new image provided")
+          {:ok, performer}
+        end
     end
-    |> changeset(attrs)
-    |> TriviaAdvisor.Repo.insert_or_update()
   end
 
   # Handle case where name is nil

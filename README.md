@@ -150,9 +150,75 @@ VenueHelpers.log_venue_details(%{
 4. Event (find or create, linked to venue)
 5. EventSource (find or create, linked to event and source)
 
+## Oban Job Design Pattern
+
+### 🔄 Index and Detail Job Structure
+```
+lib/trivia_advisor/scraping/oban/[source_name]_index_job.ex   # Lists venues and schedules detail jobs
+lib/trivia_advisor/scraping/oban/[source_name]_detail_job.ex  # Processes individual venues/events
+```
+
+### 📊 Metadata Handling
+All scrapers should use the centralized `JobMetadata` module for updating job metadata:
+
+```elixir
+# In detail jobs:
+def perform(%Oban.Job{args: args, id: job_id}) do
+  # Process the venue and event
+  result = process_venue(args["venue_data"], source)
+  
+  # Handle the result and update metadata
+  handle_processing_result(result, job_id, source)
+end
+
+# Handle the processing result uniformly
+defp handle_processing_result(result, job_id, source) do
+  case result do
+    {:ok, %{venue: venue, event: event}} ->
+      # Update metadata with the JobMetadata helper
+      metadata = %{
+        "venue_name" => venue.name,
+        "venue_id" => venue.id,
+        "event_id" => event.id,
+        # Additional fields...
+      }
+      
+      JobMetadata.update_detail_job(job_id, metadata, %{venue_id: venue.id, event_id: event.id})
+      
+      {:ok, %{venue_id: venue.id, event_id: event.id}}
+      
+    {:error, reason} ->
+      # Update error metadata
+      JobMetadata.update_error(job_id, reason)
+      {:error, reason}
+  end
+end
+```
+
+### 🖼️ Image Handling Pattern
+For consistently handling venue/event images:
+
+```elixir
+# Download and attach hero images for events
+hero_image_url = venue_data["image_url"]
+if hero_image_url && hero_image_url != "" do
+  case ImageDownloader.download_event_hero_image(hero_image_url) do
+    {:ok, upload} ->
+      Logger.info("✅ Successfully downloaded hero image")
+      Map.put(event_data, :hero_image, upload)
+    {:error, reason} ->
+      Logger.warning("⚠️ Failed to download hero image: #{inspect(reason)}")
+      event_data
+  end
+else
+  event_data
+end
+```
+
 ### ⚠️ Important Notes
 1. NEVER make DB migrations without asking first
 2. Always follow the existing pattern for consistency
 3. Maintain comprehensive logging
 4. Handle errors gracefully
-5. Use the VenueHelpers module for common functionality.
+5. Use the VenueHelpers module for common functionality
+6. NEVER write repetitive case statements that do the same thing with different data structures - see [Scraping Best Practices](lib/trivia_advisor/scraping/README.md#best-practices) for details
