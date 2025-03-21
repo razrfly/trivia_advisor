@@ -9,7 +9,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor
-  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
+  alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers, JobMetadata}
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer, Event}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
@@ -23,35 +23,89 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   ]
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}}) do
+  def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}, id: job_id}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
     source = Repo.get!(Source, source_id)
 
     # Process the venue and event using existing code patterns
-    case process_venue(venue_data, source) do
-      {:ok, %{venue: venue, event: {:ok, event_struct}}} ->
-        # Handle the case where event is a tuple
-        Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, %{venue_id: venue.id, event_id: event_struct.id}}
+    result = process_venue(venue_data, source)
 
-      {:ok, %{venue: venue, event: event}} when is_map(event) ->
-        # Handle the case where event is already unwrapped
-        Logger.info("✅ Successfully processed venue: #{venue.name}")
-        {:ok, %{venue_id: venue.id, event_id: event.id}}
+    # Handle the result uniformly
+    handle_processing_result(result, job_id, source)
+  end
 
-      # Handle nested structure cases
-      {:ok, %{venue: venue, event: {:ok, %{event: event}}}} ->
-        Logger.info("✅ Successfully processed venue: #{venue.name} with nested event result")
-        {:ok, %{venue_id: venue.id, event_id: event.id}}
+  # Handle the processing result and update metadata
+  defp handle_processing_result(result, job_id, source) do
+    case result do
+      {:ok, %{venue: venue, event: event_result}} ->
+        # Extract the event from any wrapping structure
+        event = extract_event(event_result)
 
-      {:ok, %{venue: venue, event: %{event: event}}} ->
-        Logger.info("✅ Successfully processed venue: #{venue.name} with map-wrapped event")
-        {:ok, %{venue_id: venue.id, event_id: event.id}}
+        if event do
+          Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+          # Update metadata
+          update_success_metadata(job_id, venue, event, source)
+
+          # Return standard result format
+          {:ok, %{venue_id: venue.id, event_id: event.id}}
+        else
+          Logger.error("❌ Failed to extract event from result: #{inspect(event_result)}")
+
+          # Update job metadata with error
+          error_metadata = %{
+            "error" => "Failed to extract event from result",
+            "error_result" => inspect(event_result),
+            "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+
+          JobMetadata.update_detail_job(job_id, error_metadata, nil)
+
+          {:error, "Failed to extract event"}
+        end
 
       {:error, reason} ->
         Logger.error("❌ Failed to process venue: #{inspect(reason)}")
+
+        # Update job metadata with error
+        error_metadata = %{
+          "error" => inspect(reason),
+          "error_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+        }
+
+        JobMetadata.update_detail_job(job_id, error_metadata, nil)
+
         {:error, reason}
     end
+  end
+
+  # Extract the event from various possible result structures
+  defp extract_event(event_result) do
+    case event_result do
+      {:ok, event} when is_map(event) -> event
+      event when is_map(event) -> event
+      {:ok, %{event: event}} -> event
+      %{event: event} -> event
+      _ -> nil
+    end
+  end
+
+  # Helper function to update job metadata on successful venue and event processing
+  defp update_success_metadata(job_id, venue, event, source) do
+    metadata = %{
+      "venue_name" => venue.name,
+      "venue_id" => venue.id,
+      "event_id" => event.id,
+      "address" => venue.address || "",
+      "phone" => venue.phone || "",
+      "source_name" => source.name,
+      "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+    }
+
+    JobMetadata.update_detail_job(job_id, metadata, %{
+      venue_id: venue.id,
+      event_id: event.id
+    })
   end
 
   # Process venue - adapted from Quizmeisters scraper
