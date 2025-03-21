@@ -13,6 +13,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.{EventStore, Performer}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+  alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias HtmlEntities
 
   @impl Oban.Worker
@@ -126,6 +127,9 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       case venue_result do
         {:ok, venue} ->
           Logger.info("✅ Successfully processed venue: #{venue.name}")
+
+          # Schedule a separate job for Google Place lookup
+          schedule_place_lookup(venue)
 
           # Parse day and time
           time_text = format_event_time(venue_data_map, additional_details)
@@ -402,6 +406,20 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       _ ->
         Logger.debug("🔍 No performer data found in additional details")
         nil
+    end
+  end
+
+  # Schedules a separate job for Google Place API lookups
+  defp schedule_place_lookup(venue) do
+    # Create a job with the venue ID
+    %{"venue_id" => venue.id}
+    |> GooglePlaceLookupJob.new()
+    |> Oban.insert()
+    |> case do
+      {:ok, _job} ->
+        Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
+      {:error, reason} ->
+        Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
     end
   end
 end
