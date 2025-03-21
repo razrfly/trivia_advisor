@@ -1,8 +1,7 @@
 defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   use Oban.Worker,
-    queue: :default,
-    max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
-    priority: TriviaAdvisor.Scraping.RateLimiter.priority()
+    queue: :scraper,
+    max_attempts: 3
 
   require Logger
   import Ecto.Query

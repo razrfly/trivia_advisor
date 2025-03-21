@@ -1,25 +1,16 @@
 # TriviaAdvisor Scraper Specification
 
-## IMPORTANT: ScrapeLog Deprecation Notice
+## IMPORTANT: ScrapeLog System Removal Notice
 
-**The ScrapeLog system is now deprecated and is being phased out in favor of Oban's native job tracking capabilities.**
+**The ScrapeLog system has been completely removed from the codebase. All scrape tracking is now done via Oban's native job tracking capabilities.**
 
 When updating existing scrapers or creating new ones:
-- Do NOT use ScrapeLog for tracking scrape status or errors
 - Use Oban's job metadata for tracking and reporting scrape results
-- Remove all references to ScrapeLog from code
 - Use `JobMetadata.update_detail_job` and similar helpers for metadata tracking
+- Ensure no references to ScrapeLog remain in your code
 
-**Updated Pattern:**
+**Current Pattern:**
 ```elixir
-# Old approach (deprecated)
-{:ok, log} = ScrapeLog.create_log(source)
-# ...
-ScrapeLog.update_log(log, %{success: true})
-# ...
-ScrapeLog.log_error(log, error)
-
-# New approach (using JobMetadata helpers)
 # In perform function with job_id available
 metadata = %{
   total_venues: venue_count,
@@ -28,7 +19,7 @@ metadata = %{
 }
 JobMetadata.update_index_job(job_id, metadata)
 
-# Or for detail jobs
+# For detail jobs
 final_data = %{
   venue_id: venue.id,
   venue_name: venue.name,
@@ -54,16 +45,15 @@ When updating job metadata:
 
 **IMPORTANT: Only use the following queues for all scrapers:**
 
-1. `:default` - Used for most scraping operations including detail jobs
-2. `:scraper` - Used for index jobs 
-3. `:google_api` - Reserved for Google API operations only
+1. `:scraper` - Used for all scraping operations (both index and detail jobs)
+2. `:google_api` - Reserved for Google API operations only
 
-There is NO `:venue_processor` queue available in the system. Any references to this queue are incorrect and should be updated to use the `:default` queue instead.
+There is NO `:venue_processor` queue available in the system. Any references to this queue are incorrect and should be updated to use the `:scraper` queue instead.
 
 ```elixir
 # CORRECT queue usage
 use Oban.Worker,
-  queue: :default,  # For detail jobs
+  queue: :scraper,  # For detail jobs
   max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
   priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
@@ -234,7 +224,7 @@ The Detail Job follows this pattern:
 ```elixir
 defmodule TriviaAdvisor.Scraping.Oban.[SourceName]DetailJob do
   use Oban.Worker,
-    queue: :default,
+    queue: :scraper,
     max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 

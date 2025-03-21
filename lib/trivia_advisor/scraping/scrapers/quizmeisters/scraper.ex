@@ -1,9 +1,12 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
   @moduledoc """
   Scraper for Quizmeisters venues and events.
+
+  DEPRECATED: This legacy scraper is deprecated in favor of Oban jobs.
+  Please use TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob instead.
   """
 
-  alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
+  alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers}
   alias TriviaAdvisor.Scraping.Scrapers.Quizmeisters.VenueExtractor
   alias TriviaAdvisor.{Locations, Repo}
@@ -18,8 +21,11 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
 
   @doc """
   Main entry point for the scraper.
+
+  DEPRECATED: Please use TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob instead.
   """
   def run do
+    Logger.warning("⚠️ DEPRECATED: This legacy scraper is deprecated. Please use TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob instead.")
     Logger.info("Starting Quizmeisters scraper")
 
     # Check for .env file and load if present
@@ -44,57 +50,54 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
     source = Repo.get_by!(Source, website_url: @base_url)
     start_time = DateTime.utc_now()
 
-    case ScrapeLog.create_log(source) do
-      {:ok, log} ->
-        Logger.info("Created scrape log")
-        try do
-          case fetch_venues() do
-            {:ok, venues} ->
-              venue_count = length(venues)
-              Logger.info("Found #{venue_count} venues")
+    Logger.info("Starting scrape at #{DateTime.to_iso8601(start_time)}")
+    try do
+      case fetch_venues() do
+        {:ok, venues} ->
+          venue_count = length(venues)
+          Logger.info("Found #{venue_count} venues")
 
-              detailed_venues = venues
-              |> Enum.map(&parse_venue/1)
-              |> Enum.reject(&is_nil/1)
-              |> Enum.map(&fetch_venue_details(&1, source))
-              |> Enum.reject(&is_nil/1)
+          detailed_venues = venues
+          |> Enum.map(&parse_venue/1)
+          |> Enum.reject(&is_nil/1)
+          |> Enum.map(&fetch_venue_details(&1, source))
+          |> Enum.reject(&is_nil/1)
 
-              successful_venues = length(detailed_venues)
-              failed_venues = venue_count - successful_venues
+          successful_venues = length(detailed_venues)
+          failed_venues = venue_count - successful_venues
 
-              metadata = %{
-                "venues" => detailed_venues,
-                "started_at" => DateTime.to_iso8601(start_time),
-                "completed_at" => DateTime.to_iso8601(DateTime.utc_now()),
-                "total_venues" => venue_count,
-                "successful_venues" => successful_venues,
-                "failed_venues" => failed_venues,
-                "scraper_version" => @version
-              }
+          metadata = %{
+            "venues" => detailed_venues,
+            "started_at" => DateTime.to_iso8601(start_time),
+            "completed_at" => DateTime.to_iso8601(DateTime.utc_now()),
+            "total_venues" => venue_count,
+            "successful_venues" => successful_venues,
+            "failed_venues" => failed_venues,
+            "scraper_version" => @version
+          }
 
-              ScrapeLog.update_log(log, %{
-                success: true,
-                total_venues: venue_count,
-                event_count: successful_venues,
-                metadata: metadata
-              })
+          # Log summary of scrape results
+          Logger.info("""
+          📊 Quizmeisters Scrape Summary:
+          - Total venues: #{venue_count}
+          - Successful venues: #{successful_venues}
+          - Failed venues: #{failed_venues}
+          - Started at: #{DateTime.to_iso8601(start_time)}
+          - Completed at: #{DateTime.to_iso8601(DateTime.utc_now())}
+          - Scraper version: #{@version}
+          """)
 
-              {:ok, detailed_venues}
+          Logger.info("✅ Scraping completed successfully")
+          {:ok, detailed_venues}
 
-            {:error, reason} ->
-              Logger.error("Scraping failed: #{reason}")
-              {:error, reason}
-          end
-        rescue
-          e ->
-            ScrapeLog.log_error(log, e)
-            Logger.error("Scraper failed: #{Exception.message(e)}")
-            {:error, e}
-        end
-
-      {:error, reason} ->
-        Logger.error("Failed to create scrape log: #{inspect(reason)}")
-        {:error, reason}
+        {:error, reason} ->
+          Logger.error("Scraping failed: #{reason}")
+          {:error, reason}
+      end
+    rescue
+      e ->
+        Logger.error("Scraper failed: #{Exception.message(e)}")
+        {:error, e}
     end
   end
 

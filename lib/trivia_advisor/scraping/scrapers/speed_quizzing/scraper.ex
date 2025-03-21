@@ -1,11 +1,14 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   @moduledoc """
   Scraper for SpeedQuizzing venues and events.
+
+  DEPRECATED: This legacy scraper is deprecated in favor of Oban jobs.
+  Please use TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob instead.
   """
 
   require Logger
   alias TriviaAdvisor.Repo
-  alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
+  alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.VenueExtractor
   # Enable aliases for venue and event processing
   alias TriviaAdvisor.Locations.VenueStore
@@ -21,100 +24,91 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
 
   @doc """
   Main entry point for the scraper.
+
+  DEPRECATED: Please use TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob instead.
   """
   def run do
+    Logger.warning("⚠️ DEPRECATED: This legacy scraper is deprecated. Please use TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob instead.")
     Logger.info("Starting SpeedQuizzing scraper")
     source = Repo.get_by!(Source, slug: "speed-quizzing")
     start_time = DateTime.utc_now()
 
-    case ScrapeLog.create_log(source) do
-      {:ok, log} ->
-        try do
-          Logger.info("🔍 Fetching SpeedQuizzing events from index page...")
+    try do
+      Logger.info("🔍 Fetching SpeedQuizzing events from index page...")
 
-          case fetch_events_json() do
-            {:ok, events} ->
-              event_count = length(events)
-              Logger.info("✅ Successfully scraped #{event_count} events from index page")
+      case fetch_events_json() do
+        {:ok, events} ->
+          event_count = length(events)
+          Logger.info("✅ Successfully scraped #{event_count} events from index page")
 
-              # Process a limited number of events to avoid overloading
-              events_to_process = Enum.take(events, @max_event_details)
-              processed_count = length(events_to_process)
+          # Process a limited number of events to avoid overloading
+          events_to_process = Enum.take(events, @max_event_details)
+          processed_count = length(events_to_process)
 
-              Logger.info("🔍 Fetching details for #{processed_count} events...")
+          Logger.info("🔍 Fetching details for #{processed_count} events...")
 
-              # Fetch and process venue details for each event
-              venue_details = events_to_process
-              |> Enum.map(fn event ->
-                event_id = Map.get(event, "event_id")
-                case VenueExtractor.extract(event_id) do
-                  {:ok, venue_data} ->
-                    # Add coordinates from the index data
-                    venue_data = Map.merge(venue_data, %{
-                      lat: Map.get(event, "lat"),
-                      lng: Map.get(event, "lon")
-                    })
-                    # Log the venue and event details
-                    log_venue_details(venue_data)
+          # Fetch and process venue details for each event
+          venue_details = events_to_process
+          |> Enum.map(fn event ->
+            event_id = Map.get(event, "event_id")
+            case VenueExtractor.extract(event_id) do
+              {:ok, venue_data} ->
+                # Add coordinates from the index data
+                venue_data = Map.merge(venue_data, %{
+                  lat: Map.get(event, "lat"),
+                  lng: Map.get(event, "lon")
+                })
+                # Log the venue and event details
+                log_venue_details(venue_data)
 
-                    # Process venue and create event
-                    result = process_venue_and_event(venue_data, source)
-                    # Extract the event data for JSON serialization
-                    event_data = case result do
-                      {:ok, %{venue: _venue, event: _event}} ->
-                        # Already in the right format, extract data
-                        extract_event_data(result)
-                      {:ok, event} ->
-                        # Direct event result, wrap it
-                        extract_event_data({:ok, %{venue: nil, event: event}})
-                      other ->
-                        # Handle other cases
-                        extract_event_data(other)
-                    end
-                    event_data
-                  {:error, reason} ->
-                    Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
-                    %{error: inspect(reason)}
+                # Process venue and create event
+                result = process_venue_and_event(venue_data, source)
+                # Extract the event data for JSON serialization
+                event_data = case result do
+                  {:ok, %{venue: _venue, event: _event}} ->
+                    # Already in the right format, extract data
+                    extract_event_data(result)
+                  {:ok, event} ->
+                    # Direct event result, wrap it
+                    extract_event_data({:ok, %{venue: nil, event: event}})
+                  other ->
+                    # Handle other cases
+                    extract_event_data(other)
                 end
-              end)
-              |> Enum.filter(fn result -> !Map.has_key?(result, :error) end)
+                event_data
+              {:error, reason} ->
+                Logger.error("❌ Failed to extract venue details for event ID #{event_id}: #{inspect(reason)}")
+                %{error: inspect(reason)}
+            end
+          end)
+          |> Enum.filter(fn result -> !Map.has_key?(result, :error) end)
 
-              successful_venues_count = length(venue_details)
+          successful_venues_count = length(venue_details)
 
-              Logger.info("✅ Successfully processed #{successful_venues_count} venues out of #{processed_count} attempted")
+          Logger.info("✅ Successfully processed #{successful_venues_count} venues out of #{processed_count} attempted")
 
-              # Update the scrape log with success info
-              ScrapeLog.update_log(log, %{
-                success: true,
-                event_count: event_count,
-                metadata: %{
-                  total_events: event_count,
-                  processed_events: processed_count,
-                  successful_venue_details: successful_venues_count,
-                  venue_details: format_venue_details_for_metadata(venue_details),
-                  started_at: DateTime.to_iso8601(start_time),
-                  completed_at: DateTime.to_iso8601(DateTime.utc_now()),
-                  scraper_version: @version
-                }
-              })
+          # Log scrape summary
+          Logger.info("""
+          📊 SpeedQuizzing Scrape Summary:
+          - Total events found: #{event_count}
+          - Events processed: #{processed_count}
+          - Successful venues: #{successful_venues_count}
+          - Started at: #{DateTime.to_iso8601(start_time)}
+          - Completed at: #{DateTime.to_iso8601(DateTime.utc_now())}
+          - Scraper version: #{@version}
+          """)
 
-              {:ok, events}
+          {:ok, events}
 
-            {:error, reason} ->
-              Logger.error("❌ Failed to fetch events: #{inspect(reason)}")
-              ScrapeLog.log_error(log, reason)
-              {:error, reason}
-          end
-        rescue
-          e ->
-            Logger.error("❌ Scraper failed: #{Exception.message(e)}")
-            ScrapeLog.log_error(log, e)
-            reraise e, __STACKTRACE__
-        end
-
-      {:error, reason} ->
-        Logger.error("Failed to create scrape log: #{inspect(reason)}")
-        {:error, reason}
+        {:error, reason} ->
+          Logger.error("❌ Failed to fetch events: #{inspect(reason)}")
+          {:error, reason}
+      end
+    rescue
+      e ->
+        Logger.error("❌ Scraper failed: #{Exception.message(e)}")
+        Logger.error("❌ Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}")
+        reraise e, __STACKTRACE__
     end
   end
 

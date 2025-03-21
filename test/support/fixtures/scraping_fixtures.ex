@@ -32,23 +32,6 @@ defmodule TriviaAdvisor.ScrapingFixtures do
     source
   end
 
-  @doc """
-  Generate a scrape_log.
-  """
-  def scrape_log_fixture(attrs \\ %{}) do
-    source = source_fixture()
-
-    {:ok, scrape_log} =
-      attrs
-      |> Enum.into(%{
-        success: true,
-        event_count: 42,
-        error: %{},
-        metadata: %{},
-        source_id: source.id
-      })
-      |> TriviaAdvisor.Scraping.create_scrape_log()
-
-    scrape_log
-  end
+  # The ScrapeLog module has been deprecated and removed.
+  # All scrape tracking is now done via Oban job metadata.
 end

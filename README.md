@@ -21,30 +21,28 @@ lib/trivia_advisor/scraping/scrapers/[source_name]/
 
 ### 🔄 Main Scraper Flow
 ```elixir
-# 1. Initialize Scrape Log
-source = Repo.get_by!(Source, website_url: @base_url)
-{:ok, log} = ScrapeLog.create_log(source)
+# 1. Index Job to fetch venue list
+def perform(%Oban.Job{id: job_id}) do
+  # Question One: RSS feed pagination
+  # Inquizition: API endpoint
+  venues = fetch_venues()
 
-# 2. Fetch Venue List
-# Question One: RSS feed pagination
-# Inquizition: API endpoint
-venues = fetch_venues()
+  # 2. Process venues by scheduling detail jobs
+  total_venues = length(venues)
+  processed_venues = schedule_detail_jobs(venues)
 
-# 3. Process Each Venue
-detailed_venues = venues
-|> Enum.map(&fetch_venue_details/1)
-|> Enum.reject(&is_nil/1)
-
-# 4. Update Scrape Log
-ScrapeLog.update_log(log, %{
-  success: true,
-  total_venues: venue_count,
-  metadata: %{
-    venues: venues,
-    started_at: start_time,
-    completed_at: DateTime.utc_now()
-  }
-})
+  # 3. Update Job Metadata
+  JobMetadata.update_index_job(job_id, %{
+    total_venues: total_venues,
+    enqueued_jobs: processed_venues,
+    metadata: %{
+      started_at: start_time,
+      completed_at: DateTime.utc_now()
+    }
+  })
+  
+  :ok
+end
 ```
 
 ### 🏢 Venue Processing Steps
@@ -81,14 +79,17 @@ event_data = %{
 
 ### ⚠️ Error Handling Pattern
 ```elixir
-# 1. Top-level rescue
-try do
-  # Main scraping logic
-rescue
-  e ->
-    ScrapeLog.log_error(log, e)
-    Logger.error("Scraper failed: #{Exception.message(e)}")
-    {:error, e}
+# 1. Top-level Job error handling
+def perform(%Oban.Job{id: job_id}) do
+  try do
+    # Main scraping logic
+    :ok
+  rescue
+    e ->
+      JobMetadata.update_error(job_id, Exception.format(:error, e, __STACKTRACE__))
+      Logger.error("Scraper failed: #{Exception.message(e)}")
+      {:error, e}
+  end
 end
 
 # 2. Individual venue rescue

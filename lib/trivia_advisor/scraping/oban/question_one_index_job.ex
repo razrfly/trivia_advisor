@@ -1,5 +1,5 @@
 defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
-  use Oban.Worker, queue: :default
+  use Oban.Worker, queue: :scraper
 
   require Logger
   import Ecto.Query
