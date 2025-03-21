@@ -4,7 +4,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
     max_attempts: 3
 
   require Logger
-  import Ecto.Query
+
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Scrapers.Pubquiz.Extractor
@@ -12,6 +12,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
   alias TriviaAdvisor.Events.EventStore
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
+  alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
   # Polish to numeric day mapping (0-6, where 0 is Sunday)
   @polish_days %{
@@ -177,9 +178,8 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizDetailJob do
                     "entry_fee_cents" => entry_fee_cents
                   }
 
-                  # Update job metadata
-                  query = from(job in "oban_jobs", where: job.id == type(^job_id, :integer))
-                  Repo.update_all(query, set: [meta: metadata])
+                  # Update job metadata using JobMetadata helper
+                  JobMetadata.update_detail_job(job_id, metadata, {:ok, event})
 
                   # Log success
                   Logger.info("✅ Successfully processed venue and event for #{venue.name}")
