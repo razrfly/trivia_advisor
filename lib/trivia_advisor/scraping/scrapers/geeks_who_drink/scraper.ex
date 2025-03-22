@@ -41,7 +41,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
   def run do
     Logger.warning("⚠️ DEPRECATED: This legacy scraper is deprecated. Please use TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob instead.")
     Logger.info("Starting Geeks Who Drink scraper...")
-    source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
+    _source = Repo.get_by!(Source, website_url: "https://www.geekswhodrink.com")
     start_time = DateTime.utc_now()
 
     try do
