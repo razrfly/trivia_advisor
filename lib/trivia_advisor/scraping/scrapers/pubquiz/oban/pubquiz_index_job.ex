@@ -22,10 +22,19 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting Pubquiz Index Job...")
 
+    # Store args in process dictionary for access in other functions
+    Process.put(:job_args, args)
+
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
     Logger.info("🔍 Job args: #{inspect(args)}")
     Logger.info("🔍 Limit parameter: #{inspect(limit)}")
+
+    # Check if we should force update all venues
+    force_update = RateLimiter.force_update?(args)
+    if force_update do
+      Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
 
     # Get the Pubquiz source
     source = Repo.get_by!(Source, name: "pubquiz")
@@ -64,6 +73,9 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
         # Schedule detail jobs using RateLimiter
         Logger.info("🔄 Calling RateLimiter.schedule_hourly_capped_jobs with #{length(filtered_venues)} venues")
 
+        # Get force_update flag to pass to detail jobs
+        force_update = RateLimiter.force_update?(args)
+
         enqueued_count = RateLimiter.schedule_hourly_capped_jobs(
           filtered_venues,
           PubquizDetailJob,
@@ -71,7 +83,8 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
             Logger.debug("🔄 Creating job for venue: #{inspect(venue["name"])}")
             %{
               venue_data: venue,
-              source_id: source.id
+              source_id: source.id,
+              force_update: force_update  # Pass force_update flag to detail jobs
             }
           end
         )
@@ -111,9 +124,22 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
 
   # Filter out venues that were recently updated
   defp filter_recently_updated_venues(venues, source_id) do
-    Enum.split_with(venues, fn venue ->
-      should_process_venue?(venue, source_id)
-    end)
+    # Check if force update is enabled from the current job
+    force_update = case Process.get(:job_args) do
+      %{} = args -> RateLimiter.force_update?(args)
+      _ -> false
+    end
+
+    if force_update do
+      # If force_update is true, process all venues
+      Logger.info("🔄 Force update enabled - processing ALL venues")
+      {venues, []}
+    else
+      # Otherwise, filter based on last update time
+      Enum.split_with(venues, fn venue ->
+        should_process_venue?(venue, source_id)
+      end)
+    end
   end
 
   # Check if a venue should be processed based on its URL and last update time

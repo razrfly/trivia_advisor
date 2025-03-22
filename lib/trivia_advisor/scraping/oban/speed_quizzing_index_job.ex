@@ -22,8 +22,17 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   def perform(%Oban.Job{args: args, id: job_id} = _job) do
     Logger.info("🔄 Starting SpeedQuizzing Index Job...")
 
+    # Store args in process dictionary for access in other functions
+    Process.put(:job_args, args)
+
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
+
+    # Check if we should force update all venues
+    force_update = RateLimiter.force_update?(args)
+    if force_update do
+      Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
 
     # Get the SpeedQuizzing source
     source = Repo.get_by!(Source, slug: "speed-quizzing")
@@ -84,11 +93,24 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
   defp enqueue_detail_jobs(events, source_id) do
     Logger.info("🔄 Checking and enqueueing detail jobs for #{length(events)} events...")
 
-    # Filter out events that were recently updated
-    {events_to_process, skipped_events} = Enum.split_with(events, fn event ->
-      # Check if this event (by coordinates) needs to be processed
-      should_process_event?(event, source_id)
-    end)
+    # Check if force update is enabled from the current job
+    force_update = case Process.get(:job_args) do
+      %{} = args -> RateLimiter.force_update?(args)
+      _ -> false
+    end
+
+    # Filter out events that were recently updated (unless force_update is true)
+    {events_to_process, skipped_events} = if force_update do
+      # If force_update is true, process all events
+      Logger.info("🔄 Force update enabled - processing ALL events")
+      {events, []}
+    else
+      # Otherwise, filter based on last update time
+      Enum.split_with(events, fn event ->
+        # Check if this event (by coordinates) needs to be processed
+        should_process_event?(event, source_id)
+      end)
+    end
 
     skipped_count = length(skipped_events)
 
@@ -105,7 +127,8 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
           event_id: Map.get(event, "event_id") || Map.get(event, "id"),
           source_id: source_id,
           lat: Map.get(event, "lat"),
-          lng: Map.get(event, "lon")
+          lng: Map.get(event, "lon"),
+          force_update: force_update  # Pass force_update flag to detail jobs
         }
       end
     )

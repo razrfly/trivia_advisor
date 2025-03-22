@@ -20,8 +20,17 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting Question One Index Job...")
 
+    # Store args in process dictionary for access in other functions
+    Process.put(:job_args, args)
+
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
+
+    # Check if we should force update all venues
+    force_update = RateLimiter.force_update?(args)
+    if force_update do
+      Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
 
     # Get the Question One source
     source = Repo.get_by!(Source, website_url: @base_url)
@@ -110,11 +119,24 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
   defp enqueue_detail_jobs(venues, source_id) do
     Logger.info("🔄 Checking and enqueueing detail jobs for #{length(venues)} venues...")
 
-    # Filter out venues that were recently updated
-    {venues_to_process, skipped_venues} = Enum.split_with(venues, fn venue ->
-      # Check if this venue (by URL) needs to be processed
-      should_process_venue?(venue, source_id)
-    end)
+    # Check if force update is enabled from the current job
+    force_update = case Process.get(:job_args) do
+      %{} = args -> RateLimiter.force_update?(args)
+      _ -> false
+    end
+
+    # Filter out venues that were recently updated (unless force_update is true)
+    {venues_to_process, skipped_venues} = if force_update do
+      # If force_update is true, process all venues
+      Logger.info("🔄 Force update enabled - processing ALL venues")
+      {venues, []}
+    else
+      # Otherwise, filter based on last update time
+      Enum.split_with(venues, fn venue ->
+        # Check if this venue (by URL) needs to be processed
+        should_process_venue?(venue, source_id)
+      end)
+    end
 
     skipped_count = length(skipped_venues)
 
@@ -130,7 +152,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
         %{
           url: Map.get(venue, :url),
           title: Map.get(venue, :title),
-          source_id: source_id
+          source_id: source_id,
+          force_update: force_update  # Pass force_update flag to detail jobs
         }
       end
     )

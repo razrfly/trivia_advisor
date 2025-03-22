@@ -50,6 +50,21 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
   def max_jobs_per_hour, do: @defaults.max_jobs_per_hour
 
   @doc """
+  Checks if a job should force update all venues regardless of when they were last updated.
+
+  ## Parameters
+
+  * `args` - The job arguments map
+
+  ## Returns
+
+  * Boolean indicating whether to force update all venues
+  """
+  def force_update?(args) when is_map(args) do
+    Map.get(args, "force_update", false) || Map.get(args, :force_update, false)
+  end
+
+  @doc """
   Schedules a batch of jobs with incremental delays.
 
   Takes a list of items and a function that creates and schedules a job for each item.
