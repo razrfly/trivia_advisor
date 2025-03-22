@@ -1,9 +1,12 @@
 defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   @moduledoc """
   Scraper for QuestionOne venues and events.
+
+  DEPRECATED: This legacy scraper is deprecated in favor of Oban jobs.
+  Please use TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob instead.
   """
 
-  alias TriviaAdvisor.Scraping.{ScrapeLog, Source}
+  alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Repo
   require Logger
   alias TriviaAdvisor.Scraping.Scrapers.QuestionOne.VenueExtractor
@@ -22,56 +25,50 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
 
   @doc """
   Main entry point for the scraper.
+
+  DEPRECATED: Please use TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob instead.
   """
   def run do
-    source = Repo.get_by!(Source, website_url: @base_url)
+    Logger.warning("⚠️ DEPRECATED: This legacy scraper is deprecated. Please use TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob instead.")
+    _source = Repo.get_by!(Source, website_url: @base_url)
+    start_time = DateTime.utc_now()
 
-    case ScrapeLog.create_log(source) do
-      {:ok, log} ->
-        try do
-          Logger.info("Starting RSS feed scrape")
-          venues = scrape_feed(1, [])
+    try do
+      Logger.info("Starting RSS feed scrape")
+      venues = scrape_feed(1, [])
 
-          detailed_venues = venues
-          |> Enum.map(&fetch_venue_details/1)
-          |> Enum.reject(&is_nil/1)
+      detailed_venues = venues
+      |> Enum.map(&fetch_venue_details/1)
+      |> Enum.reject(&is_nil/1)
 
-          venue_count = length(detailed_venues)
-          Logger.info("Completed scraping #{venue_count} total venues")
+      venue_count = length(detailed_venues)
+      Logger.info("Completed scraping #{venue_count} total venues")
 
-          # Convert venues to simple maps for JSON encoding
-          venue_maps = Enum.map(detailed_venues, fn venue ->
-            %{
-              id: venue.id,
-              name: venue.name,
-              address: venue.address,
-              postcode: venue.postcode,
-              phone: venue.phone,
-              website: venue.website
-            }
-          end)
+      # Convert venues to simple maps for JSON encoding
+      _venue_maps = Enum.map(detailed_venues, fn venue ->
+        %{
+          id: venue.id,
+          name: venue.name,
+          address: venue.address,
+          postcode: venue.postcode,
+          phone: venue.phone,
+          website: venue.website
+        }
+      end)
 
-          ScrapeLog.update_log(log, %{
-            success: true,
-            event_count: venue_count,
-            metadata: %{
-              total_venues: venue_count,
-              venues: venue_maps,
-              completed_at: DateTime.utc_now()
-            }
-          })
+      # Log summary of scrape results
+      Logger.info("""
+      📊 QuestionOne Scrape Summary:
+      - Total venues: #{venue_count}
+      - Started at: #{DateTime.to_iso8601(start_time)}
+      - Completed at: #{DateTime.to_iso8601(DateTime.utc_now())}
+      """)
 
-          {:ok, detailed_venues}
-        rescue
-          e ->
-            ScrapeLog.log_error(log, e)
-            Logger.error("Scraper failed: #{Exception.message(e)}")
-            {:error, e}
-        end
-
-      {:error, reason} ->
-        Logger.error("Failed to create scrape log: #{inspect(reason)}")
-        {:error, reason}
+      {:ok, detailed_venues}
+    rescue
+      e ->
+        Logger.error("Scraper failed: #{Exception.message(e)}")
+        {:error, e}
     end
   end
 

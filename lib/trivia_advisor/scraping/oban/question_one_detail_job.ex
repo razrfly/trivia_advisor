@@ -1,6 +1,6 @@
 defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   use Oban.Worker,
-    queue: :default,
+    queue: :scraper,
     max_attempts: TriviaAdvisor.Scraping.RateLimiter.max_attempts(),
     priority: TriviaAdvisor.Scraping.RateLimiter.priority()
 
