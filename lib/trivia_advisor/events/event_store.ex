@@ -238,6 +238,7 @@ defmodule TriviaAdvisor.Events.EventStore do
 
   defp upsert_event_source(event_id, source_id, source_url, data) do
     now = DateTime.utc_now()
+    Logger.info("🕒 Updating event_source last_seen_at to #{DateTime.to_string(now)}")
 
     # Build metadata from event data
     metadata = %{
@@ -257,6 +258,7 @@ defmodule TriviaAdvisor.Events.EventStore do
 
     case Repo.get_by(EventSource, event_id: event_id, source_id: source_id) do
       nil ->
+        Logger.info("🆕 Creating new event_source for event_id #{event_id}, source_id #{source_id}")
         %EventSource{}
         |> EventSource.changeset(%{
           event_id: event_id,
@@ -268,6 +270,7 @@ defmodule TriviaAdvisor.Events.EventStore do
         |> Repo.insert()
 
       source ->
+        Logger.info("🔄 Updating existing event_source #{source.id} with last_seen_at: #{DateTime.to_string(now)}")
         source
         |> EventSource.changeset(%{
           source_url: source_url,
