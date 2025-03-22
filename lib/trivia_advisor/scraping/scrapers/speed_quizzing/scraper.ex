@@ -432,21 +432,4 @@ defmodule TriviaAdvisor.Scraping.Scrapers.SpeedQuizzing.Scraper do
   end
   defp format_start_time(nil), do: "20:00" # Default time
   defp format_start_time(time), do: time # Handle any other type
-
-  # Format venue details for metadata storage - ensure JSON serializable
-  defp format_venue_details_for_metadata(venue_details) do
-    # Return just basic info for each venue to avoid serialization issues
-    Enum.map(venue_details, fn details ->
-      # Extract only basic fields that are guaranteed to be serializable
-      case details do
-        %{venue_name: _name} = details ->
-          # Keep only the key fields we need for reporting
-          Map.take(details, [:venue_id, :venue_name, :event_id, :event_name])
-
-        other ->
-          # For any other format, convert to a simple map with limited info
-          %{summary: "Event processed successfully", data: inspect(other)}
-      end
-    end)
-  end
 end

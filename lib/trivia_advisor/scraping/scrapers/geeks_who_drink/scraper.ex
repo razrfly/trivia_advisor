@@ -59,7 +59,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.Scraper do
         Logger.info("✅ Successfully scraped #{venue_count} venues")
 
         # Convert venues to simple maps for JSON encoding
-        venue_maps = Enum.map(detailed_venues, fn {venue, _} ->
+        _venue_maps = Enum.map(detailed_venues, fn {venue, _} ->
           %{
             id: venue.id,
             name: venue.name,

@@ -30,7 +30,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
   """
   def run do
     Logger.warning("⚠️ DEPRECATED: This legacy scraper is deprecated. Please use TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob instead.")
-    source = Repo.get_by!(Source, website_url: @base_url)
+    _source = Repo.get_by!(Source, website_url: @base_url)
     start_time = DateTime.utc_now()
 
     try do
@@ -45,7 +45,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.QuestionOne do
       Logger.info("Completed scraping #{venue_count} total venues")
 
       # Convert venues to simple maps for JSON encoding
-      venue_maps = Enum.map(detailed_venues, fn venue ->
+      _venue_maps = Enum.map(detailed_venues, fn venue ->
         %{
           id: venue.id,
           name: venue.name,

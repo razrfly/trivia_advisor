@@ -66,7 +66,7 @@ defmodule TriviaAdvisor.Scraping.Scrapers.Quizmeisters do
           successful_venues = length(detailed_venues)
           failed_venues = venue_count - successful_venues
 
-          metadata = %{
+          _metadata = %{
             "venues" => detailed_venues,
             "started_at" => DateTime.to_iso8601(start_time),
             "completed_at" => DateTime.to_iso8601(DateTime.utc_now()),
