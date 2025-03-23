@@ -2,6 +2,11 @@
 
 TriviaAdvisor helps you find and track pub quiz nights and trivia events in your area. Think of it as a "Yelp for pub quizzes" - helping trivia enthusiasts discover new venues and keep track of their favorite quiz nights.
 
+## Repository Information
+
+- **GitHub Repository**: [holden/trivia_advisor](https://github.com/holden/trivia_advisor)
+- **Note**: This project uses an underscore in its name (`trivia_advisor`), not a hyphen.
+
 ## Features
 
 - 🎯 Find trivia nights near you
