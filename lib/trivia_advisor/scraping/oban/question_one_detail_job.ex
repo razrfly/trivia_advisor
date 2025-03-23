@@ -119,6 +119,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
                   "venue_id" => venue.id,
                   "venue_url" => url,
                   "event_id" => event.id,
+                  "source_id" => source.id,
                   "address" => venue.address,
                   "phone" => venue.phone || "",
                   "description" => extracted_data.description || "",
@@ -129,10 +130,10 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
                 }
 
                 # Update job metadata
-                JobMetadata.update_detail_job(job_id, metadata, %{
+                JobMetadata.update_detail_job(job_id, metadata, {:ok, %{
                   venue_id: venue.id,
                   event_id: event.id
-                })
+                }}, source_id: source.id)
 
                 {:ok, venue}
               {:error, reason} ->

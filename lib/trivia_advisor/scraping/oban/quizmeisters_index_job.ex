@@ -29,8 +29,17 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting Quizmeisters Index Job...")
 
+    # Store args in process dictionary for access in other functions
+    Process.put(:job_args, args)
+
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
+
+    # Check if we should force update all venues
+    force_update = RateLimiter.force_update?(args)
+    if force_update do
+      Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
 
     # Get the Quizmeisters source
     source = Repo.get_by!(Source, website_url: "https://quizmeisters.com")
@@ -87,11 +96,24 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
   defp enqueue_detail_jobs_with_rate_limiting(venues, source_id) do
     Logger.info("🔄 Checking and enqueueing detail jobs for #{length(venues)} venues...")
 
-    # Filter out venues that were recently updated
-    {venues_to_process, skipped_venues} = Enum.split_with(venues, fn venue ->
-      # Check if this venue (by URL) needs to be processed
-      should_process_venue?(venue, source_id)
-    end)
+    # Check if force update is enabled from the current job
+    force_update = case Process.get(:job_args) do
+      %{} = args -> RateLimiter.force_update?(args)
+      _ -> false
+    end
+
+    # Filter out venues that were recently updated (unless force_update is true)
+    {venues_to_process, skipped_venues} = if force_update do
+      # If force_update is true, process all venues
+      Logger.info("🔄 Force update enabled - processing ALL venues")
+      {venues, []}
+    else
+      # Otherwise, filter based on last update time
+      Enum.split_with(venues, fn venue ->
+        # Check if this venue (by URL) needs to be processed
+        should_process_venue?(venue, source_id)
+      end)
+    end
 
     skipped_count = length(skipped_venues)
 
@@ -99,14 +121,18 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
       Logger.info("⏩ Skipping #{skipped_count} venues updated within the last #{@skip_if_updated_within_days} days")
     end
 
-    # Use the RateLimiter to schedule jobs with a delay
-    enqueued_count = RateLimiter.schedule_detail_jobs(
+    # Log the number of venues to process with hourly rate limiting
+    Logger.info("🔄 Scheduling #{length(venues_to_process)} venues with hourly rate limiting (max #{RateLimiter.max_jobs_per_hour()}/hour)")
+
+    # Use the RateLimiter to schedule jobs with hourly rate limiting
+    enqueued_count = RateLimiter.schedule_hourly_capped_jobs(
       venues_to_process,
       TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob,
       fn venue ->
         %{
           venue: venue,
-          source_id: source_id
+          source_id: source_id,
+          force_update: force_update  # Pass force_update flag to detail jobs
         }
       end
     )

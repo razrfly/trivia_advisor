@@ -15,6 +15,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
+  alias TriviaAdvisor.Events.EventSource
 
   # Increased timeout values to prevent hanging requests
   @http_options [
@@ -42,6 +43,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
           |> Map.take([:name, :address, :phone, :day_of_week, :start_time, :frequency, :url, :description])
           |> Map.put(:venue_id, venue.id)
           |> Map.put(:event_id, event_id)
+          |> Map.put(:source_id, source_id)
           |> Map.put(:processed_at, DateTime.utc_now() |> DateTime.to_iso8601())
 
         # Convert to string keys for consistency
@@ -50,7 +52,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
         end
 
         result_data = {:ok, %{venue_id: venue.id, event_id: event_id}}
-        JobMetadata.update_detail_job(job_id, string_metadata, result_data)
+        JobMetadata.update_detail_job(job_id, string_metadata, result_data, source_id: source_id)
         result_data
 
       {:ok, %{venue: venue} = result} ->
@@ -64,11 +66,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
           "venue_name" => venue.name,
           "venue_id" => venue.id,
           "event_id" => event_id,
+          "source_id" => source_id,
           "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
         result_data = {:ok, %{venue_id: venue.id, event_id: event_id}}
-        JobMetadata.update_detail_job(job_id, metadata, result_data)
+        JobMetadata.update_detail_job(job_id, metadata, result_data, source_id: source_id)
         result_data
 
       {:error, reason} ->
@@ -356,7 +359,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                   "description" => final_data.description,
                   "fee_text" => "Free", # All Quizmeisters events are free
                   "hero_image_url" => final_data.hero_image_url,
-                  "source_url" => venue_data.url,
+                  "source_url" => normalize_quizmeisters_url(venue_data.url),
                   "performer_id" => performer_id
                 }
 
@@ -379,6 +382,51 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                        |> Repo.update() do
                     {:ok, updated_event} ->
                       Logger.info("✅ Successfully updated existing event #{updated_event.id} with performer_id #{updated_event.performer_id}")
+
+                      # Update the event source's last_seen_at timestamp
+                      Logger.info("🔄 Updating event source's last_seen_at timestamp")
+                      now = DateTime.utc_now()
+
+                      case Repo.get_by(EventSource, event_id: updated_event.id, source_id: source.id) do
+                        nil ->
+                          Logger.error("❌ No event source found for event #{updated_event.id} and source #{source.id}")
+                        event_source ->
+                          Logger.info("🔄 Updating existing event_source #{event_source.id} with last_seen_at: #{DateTime.to_string(now)}")
+
+                          # Build metadata similar to what EventStore.upsert_event_source would do
+                          metadata = %{
+                            raw_title: event_data["raw_title"],
+                            clean_title: event_data["name"],
+                            address: venue.address,
+                            time_text: event_data["time_text"],
+                            day_of_week: final_data.day_of_week,
+                            start_time: final_data.start_time,
+                            frequency: final_data.frequency,
+                            fee_text: event_data["fee_text"],
+                            phone: venue.phone,
+                            website: venue.website,
+                            description: event_data["description"],
+                            hero_image_url: event_data["hero_image_url"]
+                          }
+
+                          # Normalize the source URL consistently
+                          source_url = normalize_quizmeisters_url(venue_data.url)
+
+                          event_source
+                          |> EventSource.changeset(%{
+                            source_url: source_url,
+                            metadata: metadata,
+                            last_seen_at: now
+                          })
+                          |> Repo.update()
+                          |> case do
+                            {:ok, updated_source} ->
+                              Logger.info("✅ Successfully updated event_source last_seen_at to #{DateTime.to_string(updated_source.last_seen_at)}")
+                            {:error, error} ->
+                              Logger.error("❌ Failed to update event_source: #{inspect(error)}")
+                          end
+                      end
+
                       # Include final_data in the return value
                       {:ok, %{venue: venue, event: updated_event, final_data: final_data}}
                     {:error, changeset} ->
@@ -471,68 +519,62 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
         {:error, "EventStore.process_event timeout"}
     end
 
-    Logger.debug("🎭 EventStore.process_event result: #{inspect(result)}")
+    Logger.info("🎭 EventStore.process_event result: #{inspect(result)}")
 
     case result do
-      {:ok, event} when is_map(event) ->
-        # Pattern match succeeded, event is a map as expected
-        event_performer_id = Map.get(event, :performer_id)
+      # Handle nested OK tuple: {:ok, {:ok, event}}
+      {:ok, {:ok, event}} ->
+        Logger.info("✅ Successfully processed event #{event.id} for venue #{venue.name}")
 
-        # Verify the performer_id was set on the event
-        if event_performer_id == performer_id do
-          Logger.info("✅ Successfully set performer_id #{performer_id} on event #{event.id}")
-          {:ok, %{venue: venue, event: event}}
-        else
-          Logger.warning("⚠️ Event #{event.id} has performer_id #{event_performer_id} but expected #{performer_id}")
+        # Check if performer_id needs to be updated
+        if not is_nil(performer_id) and (is_nil(event.performer_id) or event.performer_id != performer_id) do
+          Logger.info("🔄 Adding performer_id #{performer_id} to event #{event.id}")
 
-          # Try to update the event directly if performer_id wasn't set
-          if not is_nil(performer_id) and (is_nil(event_performer_id) or event_performer_id != performer_id) do
-            Logger.info("🔄 Attempting to update event #{event.id} with performer_id #{performer_id}")
-
-            # Direct update to ensure performer_id is set
-            case Repo.get(Event, event.id) do
-              nil ->
-                Logger.error("❌ Could not find event with ID #{event.id}")
-                {:ok, %{venue: venue, event: event}}
-              event_to_update ->
-                event_to_update
-                |> Ecto.Changeset.change(%{performer_id: performer_id})
-                |> Repo.update()
-                |> case do
-                  {:ok, updated_event} ->
-                    Logger.info("✅ Successfully updated event #{updated_event.id} with performer_id #{updated_event.performer_id}")
-                    # Return the updated event instead of the original one
-                    {:ok, %{venue: venue, event: updated_event}}
-                  {:error, changeset} ->
-                    Logger.error("❌ Failed to update event with performer_id: #{inspect(changeset.errors)}")
-                    {:ok, %{venue: venue, event: event}}
-                end
-            end
-          else
-            Logger.info("✅ Successfully processed event for venue: #{venue.name}")
-            {:ok, %{venue: venue, event: event}}
+          case event
+               |> Ecto.Changeset.change(%{performer_id: performer_id})
+               |> Repo.update() do
+            {:ok, updated_event} ->
+              Logger.info("✅ Successfully updated event with performer_id #{performer_id}")
+              {:ok, %{venue: venue, event: updated_event}}
+            {:error, changeset} ->
+              Logger.error("❌ Failed to update event with performer_id: #{inspect(changeset.errors)}")
+              {:ok, %{venue: venue, event: event}}
           end
+        else
+          {:ok, %{venue: venue, event: event}}
         end
 
-      # Handle unexpected tuple structure (this is the fix for the badkey error)
-      {:ok, {:ok, event}} when is_map(event) ->
-        Logger.warning("⚠️ Received nested OK tuple, unwrapping event")
-        {:ok, %{venue: venue, event: event}}
+      # Handle direct OK event return: {:ok, event}
+      {:ok, event} when is_map(event) ->
+        Logger.info("✅ Successfully processed event #{event.id} for venue #{venue.name}")
 
-      # Any other variation of success result
-      {:ok, unexpected} ->
-        Logger.warning("⚠️ Unexpected event format from EventStore.process_event: #{inspect(unexpected)}")
-        # Try to safely proceed
-        {:ok, %{venue: venue, event: unexpected}}
+        # Check if performer_id needs to be updated
+        if not is_nil(performer_id) and (is_nil(event.performer_id) or event.performer_id != performer_id) do
+          Logger.info("🔄 Adding performer_id #{performer_id} to event #{event.id}")
 
+          case event
+               |> Ecto.Changeset.change(%{performer_id: performer_id})
+               |> Repo.update() do
+            {:ok, updated_event} ->
+              Logger.info("✅ Successfully updated event with performer_id #{performer_id}")
+              {:ok, %{venue: venue, event: updated_event}}
+            {:error, changeset} ->
+              Logger.error("❌ Failed to update event with performer_id: #{inspect(changeset.errors)}")
+              {:ok, %{venue: venue, event: event}}
+          end
+        else
+          {:ok, %{venue: venue, event: event}}
+        end
+
+      # Handle error cases
       {:error, reason} ->
         Logger.error("❌ Failed to process event: #{inspect(reason)}")
         {:error, reason}
 
-      # Handle completely unexpected result
+      # Handle unexpected results
       unexpected ->
-        Logger.error("❌ Completely unexpected result from EventStore.process_event: #{inspect(unexpected)}")
-        {:error, "Unexpected result format from EventStore.process_event"}
+        Logger.error("❌ Unexpected result from EventStore.process_event: #{inspect(unexpected)}")
+        {:error, "Unexpected result from EventStore.process_event"}
     end
   end
 
@@ -597,5 +639,71 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     %{"venue_id" => venue.id}
     |> GooglePlaceLookupJob.new()
     |> Oban.insert()
+  end
+
+  # Normalize Quizmeisters URLs to a consistent format
+  # This helps match URLs across different formats (with/without www, .com vs .com.au, etc.)
+  defp normalize_quizmeisters_url(url) when is_binary(url) do
+    Logger.info("🔗 Normalizing URL: #{url}")
+
+    # Extract the venue slug from the URL for better matching
+    venue_slug = case Regex.run(~r{/venues/([^/]+)/?$}, url) do
+      [_, slug] -> slug
+      _ -> nil
+    end
+
+    # Standardize the URL format
+    normalized_url = url
+      |> String.replace("http://", "https://")
+      |> ensure_www_prefix()
+
+    # If we found a venue slug, use it to lookup existing event sources with similar URLs
+    if venue_slug do
+      # Check if we have any existing event sources with URLs containing the venue slug
+      # This helps handle cases where the URL format has changed (e.g., prefix changes)
+      venue_key = venue_slug |> String.replace(~r{^(act|nsw|qld|vic|sa|wa|tas|nt)-}, "")
+
+      # Try to find an existing event source with a URL containing this venue key
+      existing_source_url = find_event_source_with_venue_key(venue_key)
+
+      if existing_source_url do
+        Logger.info("🔗 Found existing event source with URL: #{existing_source_url}")
+        existing_source_url
+      else
+        Logger.info("🔗 Normalized URL: #{normalized_url}")
+        normalized_url
+      end
+    else
+      Logger.info("🔗 Normalized URL: #{normalized_url}")
+      normalized_url
+    end
+  end
+
+  defp normalize_quizmeisters_url(nil), do: nil
+
+  # Ensure URL has www. prefix for consistency
+  defp ensure_www_prefix(url) do
+    if String.contains?(url, "://www.") do
+      url
+    else
+      url |> String.replace("://", "://www.")
+    end
+  end
+
+  # Find an event source with a URL containing the given venue key
+  defp find_event_source_with_venue_key(venue_key) do
+    import Ecto.Query
+
+    # Use ILIKE for case-insensitive matching
+    query = from es in EventSource,
+            where: like(es.source_url, "%quizmeisters%") and like(es.source_url, ^"%#{venue_key}%"),
+            order_by: [desc: es.last_seen_at],
+            limit: 1,
+            select: es.source_url
+
+    case Repo.one(query) do
+      nil -> nil
+      url -> url
+    end
   end
 end

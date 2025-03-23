@@ -18,8 +18,17 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting Inquizition Index Job...")
 
+    # Store args in process dictionary for access in other functions
+    Process.put(:job_args, args)
+
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
+
+    # Check if we should force update all venues
+    force_update = RateLimiter.force_update?(args)
+    if force_update do
+      Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
 
     # Get the Inquizition source
     source = Repo.get_by!(Source, name: "inquizition")
@@ -47,11 +56,21 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         end
 
         # Pre-filter venues that should be skipped based on last_seen_at
-        # This is the key improvement - we filter BEFORE expensive operations
-        {to_process, to_skip} = venues_to_process
-                                |> Enum.split_with(fn venue_data ->
-                                  should_process_venue?(venue_data, existing_sources_by_venue)
-                                end)
+        # Check if force update is enabled
+        force_update = RateLimiter.force_update?(args)
+
+        # Filter based on force_update flag
+        {to_process, to_skip} = if force_update do
+          # If force_update is true, process all venues
+          Logger.info("🔄 Force update enabled - processing ALL venues")
+          {venues_to_process, []}
+        else
+          # This is the key improvement - we filter BEFORE expensive operations
+          venues_to_process
+          |> Enum.split_with(fn venue_data ->
+            should_process_venue?(venue_data, existing_sources_by_venue)
+          end)
+        end
 
         processed_count = length(to_process)
         skipped_count = length(to_skip)
@@ -135,10 +154,16 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
               "source_url" => generate_source_url(venue)
         }
 
-            Logger.debug("🔄 Created venue_data for job: #{inspect(venue_data)}")
+            Logger.debug("📦 Created venue_data for job: #{inspect(venue_data)}")
+
+        # Get force_update flag to pass to detail jobs
+        force_update = RateLimiter.force_update?(args)
 
         # Create the job with the scheduled_in parameter
-            job = %{venue_data: venue_data}
+            job = %{
+              venue_data: venue_data,
+              force_update: force_update  # Pass force_update flag to detail jobs
+            }
         |> InquizitionDetailJob.new(schedule_in: scheduled_in)
 
             Logger.debug("🔄 Created job for venue #{venue.name} to run in #{scheduled_in} seconds")

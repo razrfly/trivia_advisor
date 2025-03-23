@@ -21,8 +21,17 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting GeeksWhoDrink Index Job...")
 
+    # Store args in process dictionary for access in other functions
+    Process.put(:job_args, args)
+
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit") || Map.get(args, :limit)
+
+    # Check if we should force update all venues
+    force_update = RateLimiter.force_update?(args)
+    if force_update do
+      Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
 
     if limit do
       Logger.info("🧪 Testing mode: Limited to #{limit} venues")
@@ -49,21 +58,31 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
             Logger.info("📊 Found #{total_venues} venues to process from GeeksWhoDrink")
 
             # Count venues to process and skip
-            # Use the improved filtering logic
-            {to_process, skipped_venues} = Enum.split_with(venues_to_process, fn venue ->
-              # Ensure venue is a map with string keys
-              venue_map = if is_map(venue) do
-                # Convert all keys to strings if they're not already
-                Enum.reduce(venue, %{}, fn {k, v}, acc ->
-                  key = if is_atom(k), do: Atom.to_string(k), else: k
-                  Map.put(acc, key, v)
-                end)
-              else
-                venue
-              end
+            # Check if force update is enabled
+            force_update = RateLimiter.force_update?(args)
 
-              should_process_venue?(venue_map, source.id)
-            end)
+            # Use the improved filtering logic
+            {to_process, skipped_venues} = if force_update do
+              # If force_update is true, process all venues
+              Logger.info("🔄 Force update enabled - processing ALL venues")
+              {venues_to_process, []}
+            else
+              # Otherwise filter based on last update time
+              Enum.split_with(venues_to_process, fn venue ->
+                # Ensure venue is a map with string keys
+                venue_map = if is_map(venue) do
+                  # Convert all keys to strings if they're not already
+                  Enum.reduce(venue, %{}, fn {k, v}, acc ->
+                    key = if is_atom(k), do: Atom.to_string(k), else: k
+                    Map.put(acc, key, v)
+                  end)
+                else
+                  venue
+                end
+
+                should_process_venue?(venue_map, source.id)
+              end)
+            end
 
             processed_count = length(to_process)
             skipped_count = length(skipped_venues)
@@ -88,7 +107,11 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
                   venue_data
                 end
 
-                %{venue: venue_map, source_id: source.id}
+                %{
+                  venue: venue_map,
+                  source_id: source.id,
+                  force_update: force_update  # Pass force_update flag to detail jobs
+                }
               end
             )
 

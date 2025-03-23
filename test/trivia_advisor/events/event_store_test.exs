@@ -129,4 +129,76 @@ defmodule TriviaAdvisor.Events.EventStoreTest do
       assert event_after.description == event_before.description
     end
   end
+
+  describe "when processing events" do
+    test "updates last_seen_at timestamp when creating a new event source" do
+      # Get or create a test source
+      source = Repo.get_by(TriviaAdvisor.Scraping.Source, name: "test_source") ||
+               Repo.insert!(%TriviaAdvisor.Scraping.Source{
+                 name: "test_source",
+                 slug: "test-source",
+                 website_url: "https://test-source.com"
+               })
+
+      # Get or create a test country
+      country = Repo.get_by(TriviaAdvisor.Locations.Country, name: "Test Country") ||
+                Repo.insert!(%TriviaAdvisor.Locations.Country{
+                  name: "Test Country",
+                  code: "TC",
+                  slug: "test-country"
+                })
+
+      # Get or create a test city
+      city = Repo.get_by(TriviaAdvisor.Locations.City, name: "Test City") ||
+             Repo.insert!(%TriviaAdvisor.Locations.City{
+               name: "Test City",
+               slug: "test-city",
+               latitude: 0,
+               longitude: 0,
+               country_id: country.id
+             })
+
+      # Create a test venue
+      venue = Repo.insert!(%TriviaAdvisor.Locations.Venue{
+        name: "Test Venue #{System.unique_integer([:positive])}",
+        slug: "test-venue-#{System.unique_integer([:positive])}",
+        address: "123 Test Street",
+        latitude: 0,
+        longitude: 0,
+        city_id: city.id
+      })
+
+      # Record timestamp before running the operation
+      before_timestamp = DateTime.utc_now()
+      Process.sleep(1000) # Sleep 1 second to ensure timestamps will be different
+
+      # Prepare event data with a properly formatted time
+      time_text = "Monday 19:00"
+      event_data = %{
+        "raw_title" => "Test Trivia Night",
+        "name" => venue.name,
+        "time_text" => time_text,
+        "day_of_week" => 1, # Monday
+        "start_time" => "19:00",
+        "description" => "Test description for trivia night",
+        "fee_text" => "Free",
+        "source_url" => "https://test-source.com/test-venue-source-url",
+        "hero_image_url" => nil,
+      }
+
+      # Call EventStore.process_event
+      {:ok, {:ok, event}} = TriviaAdvisor.Events.EventStore.process_event(venue, event_data, source.id)
+
+      # Check if last_seen_at was updated
+      event_source = Repo.one(from es in TriviaAdvisor.Events.EventSource,
+        where: es.event_id == ^event.id and es.source_id == ^source.id,
+        limit: 1
+      )
+
+      assert event_source != nil, "Expected an event source to be created"
+      assert event_source.last_seen_at != nil, "Expected last_seen_at to be set"
+      assert DateTime.compare(event_source.last_seen_at, before_timestamp) == :gt,
+        "Expected last_seen_at to be newer than the before timestamp"
+    end
+  end
 end

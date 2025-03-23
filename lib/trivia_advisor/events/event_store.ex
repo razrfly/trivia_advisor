@@ -238,6 +238,8 @@ defmodule TriviaAdvisor.Events.EventStore do
 
   defp upsert_event_source(event_id, source_id, source_url, data) do
     now = DateTime.utc_now()
+    Logger.info("🕒 Updating event_source last_seen_at to #{DateTime.to_string(now)}")
+    Logger.info("🔗 Event ID: #{event_id}, Source ID: #{source_id}, Source URL: #{source_url}")
 
     # Build metadata from event data
     metadata = %{
@@ -257,6 +259,7 @@ defmodule TriviaAdvisor.Events.EventStore do
 
     case Repo.get_by(EventSource, event_id: event_id, source_id: source_id) do
       nil ->
+        Logger.info("🆕 Creating new event_source for event_id #{event_id}, source_id #{source_id}")
         %EventSource{}
         |> EventSource.changeset(%{
           event_id: event_id,
@@ -266,8 +269,20 @@ defmodule TriviaAdvisor.Events.EventStore do
           last_seen_at: now
         })
         |> Repo.insert()
+        |> case do
+          {:ok, event_source} ->
+            Logger.info("✅ Successfully created new event_source #{event_source.id} with last_seen_at: #{DateTime.to_string(event_source.last_seen_at)}")
+            {:ok, event_source}
+          {:error, changeset} ->
+            Logger.error("❌ Failed to create event_source: #{inspect(changeset.errors)}")
+            {:error, changeset}
+        end
 
       source ->
+        Logger.info("🔄 Updating existing event_source #{source.id} with last_seen_at: #{DateTime.to_string(now)}")
+        Logger.info("🔍 Existing source_url: #{source.source_url}")
+        Logger.info("🔍 New source_url: #{source_url}")
+
         source
         |> EventSource.changeset(%{
           source_url: source_url,
@@ -275,6 +290,14 @@ defmodule TriviaAdvisor.Events.EventStore do
           last_seen_at: now
         })
         |> Repo.update()
+        |> case do
+          {:ok, updated_source} ->
+            Logger.info("✅ Successfully updated event_source #{updated_source.id} with last_seen_at: #{DateTime.to_string(updated_source.last_seen_at)}")
+            {:ok, updated_source}
+          {:error, changeset} ->
+            Logger.error("❌ Failed to update event_source: #{inspect(changeset.errors)}")
+            {:error, changeset}
+        end
     end
   end
 
