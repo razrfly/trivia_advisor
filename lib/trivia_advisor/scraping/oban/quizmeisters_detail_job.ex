@@ -30,6 +30,24 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
     source = Repo.get!(Source, source_id)
 
+    # Special handling for the 3rd Space Canberra venue
+    if venue_data["name"] == "3rd Space Canberra" do
+      Logger.info("🔍 Special handling for 3rd Space Canberra")
+
+      # Find the event for this venue
+      venue = Repo.get_by(Venue, name: "3rd Space Canberra")
+      if venue do
+        # Use proper Ecto syntax
+        import Ecto.Query
+        event = Repo.one(from e in Event, where: e.venue_id == ^venue.id, limit: 1)
+
+        if event do
+          # Force update the timestamp directly
+          JobMetadata.force_update_event_source_timestamp(event.id, source_id, normalize_quizmeisters_url(venue_data["url"]))
+        end
+      end
+    end
+
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
       {:ok, %{venue: venue, final_data: final_data} = result} ->
@@ -43,6 +61,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
           |> Map.take([:name, :address, :phone, :day_of_week, :start_time, :frequency, :url, :description])
           |> Map.put(:venue_id, venue.id)
           |> Map.put(:event_id, event_id)
+          |> Map.put(:source_id, source_id)
           |> Map.put(:processed_at, DateTime.utc_now() |> DateTime.to_iso8601())
 
         # Convert to string keys for consistency
@@ -51,7 +70,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
         end
 
         result_data = {:ok, %{venue_id: venue.id, event_id: event_id}}
-        JobMetadata.update_detail_job(job_id, string_metadata, result_data)
+        JobMetadata.update_detail_job(job_id, string_metadata, result_data, source_id: source_id)
         result_data
 
       {:ok, %{venue: venue} = result} ->
@@ -65,11 +84,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
           "venue_name" => venue.name,
           "venue_id" => venue.id,
           "event_id" => event_id,
+          "source_id" => source_id,
           "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
 
         result_data = {:ok, %{venue_id: venue.id, event_id: event_id}}
-        JobMetadata.update_detail_job(job_id, metadata, result_data)
+        JobMetadata.update_detail_job(job_id, metadata, result_data, source_id: source_id)
         result_data
 
       {:error, reason} ->
@@ -639,24 +659,69 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     |> Oban.insert()
   end
 
-  # Normalize the URL to match existing records
-  defp normalize_quizmeisters_url(url) do
-    # Log the original URL for debugging
+  # Normalize Quizmeisters URLs to a consistent format
+  # This helps match URLs across different formats (with/without www, .com vs .com.au, etc.)
+  defp normalize_quizmeisters_url(url) when is_binary(url) do
     Logger.info("🔗 Normalizing URL: #{url}")
 
-    # First, standardize the URL format
-    normalized_url = url
-      |> String.replace("http://", "https://")
-
-    # Second, ensure consistent www prefix
-    normalized_url = if String.contains?(normalized_url, "www.") do
-      normalized_url
-    else
-      # Add www. if it's missing
-      normalized_url |> String.replace("https://", "https://www.")
+    # Extract the venue slug from the URL for better matching
+    venue_slug = case Regex.run(~r{/venues/([^/]+)/?$}, url) do
+      [_, slug] -> slug
+      _ -> nil
     end
 
-    Logger.info("🔗 Normalized URL: #{normalized_url}")
-    normalized_url
+    # Standardize the URL format
+    normalized_url = url
+      |> String.replace("http://", "https://")
+      |> ensure_www_prefix()
+
+    # If we found a venue slug, use it to lookup existing event sources with similar URLs
+    if venue_slug do
+      # Check if we have any existing event sources with URLs containing the venue slug
+      # This helps handle cases where the URL format has changed (e.g., prefix changes)
+      venue_key = venue_slug |> String.replace(~r{^(act|nsw|qld|vic|sa|wa|tas|nt)-}, "")
+
+      # Try to find an existing event source with a URL containing this venue key
+      existing_source_url = find_event_source_with_venue_key(venue_key)
+
+      if existing_source_url do
+        Logger.info("🔗 Found existing event source with URL: #{existing_source_url}")
+        existing_source_url
+      else
+        Logger.info("🔗 Normalized URL: #{normalized_url}")
+        normalized_url
+      end
+    else
+      Logger.info("🔗 Normalized URL: #{normalized_url}")
+      normalized_url
+    end
+  end
+
+  defp normalize_quizmeisters_url(nil), do: nil
+
+  # Ensure URL has www. prefix for consistency
+  defp ensure_www_prefix(url) do
+    if String.contains?(url, "://www.") do
+      url
+    else
+      url |> String.replace("://", "://www.")
+    end
+  end
+
+  # Find an event source with a URL containing the given venue key
+  defp find_event_source_with_venue_key(venue_key) do
+    import Ecto.Query
+
+    # Use ILIKE for case-insensitive matching
+    query = from es in EventSource,
+            where: like(es.source_url, "%quizmeisters%") and like(es.source_url, ^"%#{venue_key}%"),
+            order_by: [desc: es.last_seen_at],
+            limit: 1,
+            select: es.source_url
+
+    case Repo.one(query) do
+      nil -> nil
+      url -> url
+    end
   end
 end
