@@ -26,8 +26,18 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   ]
 
   @impl Oban.Worker
-  def perform(%Oban.Job{id: job_id, args: %{"venue" => venue_data, "source_id" => source_id}}) do
+  def perform(%Oban.Job{id: job_id, args: %{"venue" => venue_data, "source_id" => source_id} = args}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
+
+    # Extract force_refresh_images flag
+    force_refresh_images = Map.get(args, "force_refresh_images", false)
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+    end
+
+    # Store in process dictionary for access in other functions
+    Process.put(:force_refresh_images, force_refresh_images)
+
     source = Repo.get!(Source, source_id)
 
     # Process the venue and event using existing code patterns
@@ -352,16 +362,22 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
                 # Process the event using EventStore like QuestionOne
                 # IMPORTANT: Use string keys for the event_data map to ensure compatibility with EventStore.process_event
+                # Process the hero image first
+                hero_image_attrs = process_hero_image(final_data.hero_image_url)
+
+                # Create the base event data
                 event_data = %{
                   "raw_title" => final_data.raw_title,
                   "name" => venue.name,
                   "time_text" => format_time_text(final_data.day_of_week, final_data.start_time),
                   "description" => final_data.description,
                   "fee_text" => "Free", # All Quizmeisters events are free
-                  "hero_image_url" => final_data.hero_image_url,
                   "source_url" => normalize_quizmeisters_url(venue_data.url),
                   "performer_id" => performer_id
                 }
+
+                # Add hero image attributes
+                event_data = Map.merge(event_data, hero_image_attrs)
 
                 # Log whether we have a performer_id
                 if performer_id do
@@ -506,9 +522,13 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     Logger.debug("🎭 Processing event with performer_id: #{inspect(performer_id)}")
     Logger.debug("🎭 Event data: #{inspect(Map.take(event_data, ["raw_title", "name", "performer_id"]))}")
 
+    # Get force_refresh_images from process dictionary
+    force_refresh_images = Process.get(:force_refresh_images, false)
+    Logger.debug("🖼️ Force refresh images: #{inspect(force_refresh_images)}")
+
     # Process the event with timeout protection
     event_task = Task.async(fn ->
-      EventStore.process_event(venue, event_data, source_id)
+      EventStore.process_event(venue, event_data, source_id, force_refresh_images: force_refresh_images)
     end)
 
     # Use a generous timeout for event processing
@@ -580,12 +600,15 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
   # Safe wrapper around ImageDownloader.download_performer_image with timeout
   defp safe_download_performer_image(url) do
+    # Get force_refresh_images from process dictionary
+    force_refresh_images = Process.get(:force_refresh_images, false)
+
     # Skip nil URLs early
     if is_nil(url) or String.trim(url) == "" do
       {:error, "Invalid image URL"}
     else
       task = Task.async(fn ->
-        case ImageDownloader.download_performer_image(url) do
+        case ImageDownloader.download_performer_image(url, force_refresh_images) do
           nil -> nil
           result ->
             # Ensure the filename has a proper extension
@@ -704,6 +727,33 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     case Repo.one(query) do
       nil -> nil
       url -> url
+    end
+  end
+
+  # Process the hero image from URL
+  defp process_hero_image(hero_image_url) do
+    # Skip if URL is nil or empty
+    if is_nil(hero_image_url) or hero_image_url == "" do
+      Logger.debug("ℹ️ No hero image URL provided")
+      %{}
+    else
+      # Get force_refresh_images from process dictionary
+      force_refresh_images = Process.get(:force_refresh_images, false)
+
+      Logger.info("🖼️ Processing hero image: #{hero_image_url}" <> if force_refresh_images, do: " (with force refresh)", else: "")
+
+      # Use centralized helper to download and process the image
+      case ImageDownloader.download_event_hero_image(hero_image_url, force_refresh_images) do
+        {:ok, upload} ->
+          Logger.info("✅ Successfully downloaded hero image")
+          # Return both the hero_image and the original URL for reference
+          %{hero_image: upload, hero_image_url: hero_image_url}
+
+        {:error, reason} ->
+          Logger.warning("⚠️ Failed to download hero image: #{inspect(reason)}")
+          # Return just the URL if we couldn't download the image
+          %{hero_image_url: hero_image_url}
+      end
     end
   end
 end

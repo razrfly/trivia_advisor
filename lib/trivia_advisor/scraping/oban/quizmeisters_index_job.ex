@@ -41,6 +41,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
       Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
     end
 
+    # Check if we should force refresh all images
+    force_refresh_images = RateLimiter.force_refresh_images?(args)
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+    end
+
     # Get the Quizmeisters source
     source = Repo.get_by!(Source, website_url: "https://quizmeisters.com")
 
@@ -102,6 +108,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
       _ -> false
     end
 
+    # Check if force refresh images is enabled from the current job
+    force_refresh_images = case Process.get(:job_args) do
+      %{} = args -> RateLimiter.force_refresh_images?(args)
+      _ -> false
+    end
+
     # Filter out venues that were recently updated (unless force_update is true)
     {venues_to_process, skipped_venues} = if force_update do
       # If force_update is true, process all venues
@@ -132,7 +144,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
         %{
           venue: venue,
           source_id: source_id,
-          force_update: force_update  # Pass force_update flag to detail jobs
+          force_update: force_update,
+          force_refresh_images: force_refresh_images
         }
       end
     )

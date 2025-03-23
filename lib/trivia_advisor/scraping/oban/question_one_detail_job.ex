@@ -21,6 +21,15 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
     title = Map.get(args, "title")
     source_id = Map.get(args, "source_id")
 
+    # Extract force_refresh_images flag
+    force_refresh_images = Map.get(args, "force_refresh_images", false)
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+    end
+
+    # Store in process dictionary for access in other functions
+    Process.put(:force_refresh_images, force_refresh_images)
+
     Logger.info("🔄 Processing Question One venue: #{title}")
 
     # Get the Question One source
@@ -86,7 +95,10 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
 
             # Process the hero image using the centralized ImageDownloader
             hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
-              case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url) do
+              # Get force_refresh_images from process dictionary
+              force_refresh_images = Process.get(:force_refresh_images, false)
+
+              case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url, force_refresh_images) do
                 {:ok, upload} ->
                   Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
                   %{hero_image: upload, hero_image_url: extracted_data.hero_image_url}
@@ -109,7 +121,10 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
               source_url: url
             } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
 
-            case EventStore.process_event(venue, event_data, source.id) do
+            # Get force_refresh_images from process dictionary
+            force_refresh_images = Process.get(:force_refresh_images, false)
+
+            case EventStore.process_event(venue, event_data, source.id, force_refresh_images: force_refresh_images) do
               {:ok, {:ok, event}} ->
                 Logger.info("✅ Successfully processed event for venue: #{venue.name}")
 

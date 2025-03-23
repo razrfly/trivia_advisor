@@ -14,10 +14,22 @@ defmodule TriviaAdvisor.Events.EventStore do
   @doc """
   Process event data from a scraper, creating or updating the event and its source.
   If day_of_week changes, creates a new event instead of updating.
+
+  Parameters:
+  - venue: The venue struct associated with the event
+  - event_data: Map containing event attributes
+  - source_id: The ID of the source platform
+  - opts: Optional keyword list containing:
+    - force_refresh_images: true/false (default false) - When true, will force re-download of images
   """
-  def process_event(venue, event_data, source_id) do
+  def process_event(venue, event_data, source_id, opts \\ []) do
     # Ensure upload directory exists
     ensure_upload_dir()
+
+    # Set force_refresh_images in process dictionary if passed in opts
+    if Keyword.get(opts, :force_refresh_images, false) do
+      Process.put(:force_refresh_images, true)
+    end
 
     # Convert string keys to atoms for consistent access
     # This allows the function to work with both string and atom keys
@@ -354,7 +366,15 @@ defmodule TriviaAdvisor.Events.EventStore do
   defp download_hero_image(url) do
     # Use the centralized ImageDownloader to ensure consistent filename handling
     alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
-    ImageDownloader.download_event_hero_image(url)
+
+    # Check if we need to force refresh images
+    force_refresh_images = case Process.get(:force_refresh_images) do
+      nil -> false  # Default to false if not set
+      value -> value
+    end
+
+    # Pass the force_refresh_images flag
+    ImageDownloader.download_event_hero_image(url, force_refresh_images)
   end
 
   # Ensure the upload directory exists
