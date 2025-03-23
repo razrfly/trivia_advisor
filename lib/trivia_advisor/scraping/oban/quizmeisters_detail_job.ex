@@ -30,24 +30,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
     source = Repo.get!(Source, source_id)
 
-    # Special handling for the 3rd Space Canberra venue
-    if venue_data["name"] == "3rd Space Canberra" do
-      Logger.info("🔍 Special handling for 3rd Space Canberra")
-
-      # Find the event for this venue
-      venue = Repo.get_by(Venue, name: "3rd Space Canberra")
-      if venue do
-        # Use proper Ecto syntax
-        import Ecto.Query
-        event = Repo.one(from e in Event, where: e.venue_id == ^venue.id, limit: 1)
-
-        if event do
-          # Force update the timestamp directly
-          JobMetadata.force_update_event_source_timestamp(event.id, source_id, normalize_quizmeisters_url(venue_data["url"]))
-        end
-      end
-    end
-
     # Process the venue and event using existing code patterns
     case process_venue(venue_data, source) do
       {:ok, %{venue: venue, final_data: final_data} = result} ->
