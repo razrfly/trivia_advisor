@@ -19,6 +19,7 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
   ## Parameters
     - url: The URL of the image to download
     - prefix: Optional prefix for the temporary filename (default: "image")
+    - force_refresh: When true, will download the image regardless of whether it exists already
 
   ## Returns
     - A file struct with `filename` and `path` keys if successful
@@ -28,7 +29,7 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
       ImageDownloader.download_image("https://example.com/image.jpg", "performer")
       # => %{filename: "performer_123456.jpg", path: "/tmp/performer_123456.jpg"}
   """
-  def download_image(url, prefix \\ "image") when is_binary(url) do
+  def download_image(url, prefix \\ "image", force_refresh \\ false) when is_binary(url) do
     Logger.debug("📥 Downloading image from URL: #{url}")
 
     # Get temporary directory for file
@@ -82,15 +83,21 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
     Logger.debug("📄 Will save image to: #{path}")
 
-    # Do the actual download
-    case download_file(url, path) do
-      {:ok, _} ->
-        Logger.debug("✅ Successfully downloaded image to #{path}")
-        %{filename: filename, path: path}
+    # Check if image already exists and we're not forcing a refresh
+    if File.exists?(path) and not force_refresh do
+      Logger.debug("✅ Image already exists at #{path} (skipping download)")
+      %{filename: filename, path: path}
+    else
+      # Do the actual download
+      case download_file(url, path) do
+        {:ok, _} ->
+          Logger.debug("✅ Successfully downloaded image to #{path}")
+          %{filename: filename, path: path}
 
-      {:error, reason} ->
-        Logger.error("❌ Failed to download image: #{inspect(reason)}")
-        nil
+        {:error, reason} ->
+          Logger.error("❌ Failed to download image: #{inspect(reason)}")
+          nil
+      end
     end
   end
 
@@ -187,16 +194,20 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
   @doc """
   Downloads an event hero image from a URL.
-  Returns a result tuple with a Plug.Upload struct or error.
+  Convenience wrapper around download_image/2 with event-specific setup.
+  Processes extensions and content types to ensure Waffle compatibility.
 
   ## Parameters
     - url: The URL of the hero image to download
+    - force_refresh: When true, will download the image regardless of whether it exists already
 
   ## Returns
-    - {:ok, %Plug.Upload{}} if successful
+    - {:ok, %Plug.Upload{}} if successful, compatible with Waffle's cast_attachments
     - {:error, reason} if download fails
   """
-  def download_event_hero_image(url) when is_binary(url) and url != "" do
+  def download_event_hero_image(url, force_refresh \\ false)
+
+  def download_event_hero_image(url, force_refresh) when is_binary(url) and url != "" do
     Logger.info("📸 Processing event hero image URL: #{url}")
 
     # Get the base filename from the URL and normalize it
@@ -209,7 +220,7 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     # Just use the original filename with no modification
     # Let download_image use it directly
     try do
-      case download_image(url, basename) do
+      case download_image(url, basename, force_refresh) do
         %{filename: filename, path: path} when not is_nil(path) ->
           # Get file extension - needed for content type and proper file handling
           ext = Path.extname(filename) |> String.downcase()
@@ -249,9 +260,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     end
   end
 
-  def download_event_hero_image(""), do: {:error, :empty_url}
-  def download_event_hero_image(nil), do: {:error, :nil_url}
-  def download_event_hero_image(_), do: {:error, :invalid_url}
+  def download_event_hero_image("", _force_refresh), do: {:error, :empty_url}
+  def download_event_hero_image(nil, _force_refresh), do: {:error, :nil_url}
+  def download_event_hero_image(_, _force_refresh), do: {:error, :invalid_url}
 
   @doc """
   Downloads a performer profile image from a URL.
@@ -259,12 +270,13 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
   ## Parameters
     - url: The URL of the performer image to download
+    - force_refresh: When true, will download the image regardless of whether it exists already
 
   ## Returns
     - A Plug.Upload struct if successful, compatible with Waffle's cast_attachments
     - `nil` if the download fails
   """
-  def download_performer_image(url) when is_binary(url) do
+  def download_performer_image(url, force_refresh \\ false) when is_binary(url) do
     # Get the base filename from the URL and normalize it
     basename = url
     |> URI.parse()
@@ -274,7 +286,7 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
     # Use the original filename without modification - just like hero images
     # Let download_image use it directly
-    case download_image(url, basename) do
+    case download_image(url, basename, force_refresh) do
       %{filename: filename, path: path} when not is_nil(path) ->
         # Create a Plug.Upload struct compatible with Waffle's cast_attachments
         content_type = case Path.extname(filename) |> String.downcase() do
@@ -308,19 +320,20 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
   ## Parameters
     - url: The URL of the performer image to download
+    - force_refresh: When true, will download the image regardless of whether it exists already
 
   ## Returns
     - {:ok, %Plug.Upload{}} if successful
     - {:ok, nil} if the download fails but processing should continue
     - {:error, reason} if the URL is invalid
   """
-  def safe_download_performer_image(url) do
+  def safe_download_performer_image(url, force_refresh \\ false) do
     # Skip nil URLs early
     if is_nil(url) or (is_binary(url) and String.trim(url) == "") do
       {:error, "Invalid image URL"}
     else
       task = Task.async(fn ->
-        case download_performer_image(url) do
+        case download_performer_image(url, force_refresh) do
           nil -> nil
           result ->
             # Ensure the filename has a proper extension

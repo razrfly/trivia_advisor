@@ -65,6 +65,21 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
   end
 
   @doc """
+  Checks if a job should force refresh all images regardless of whether they already exist.
+
+  ## Parameters
+
+  * `args` - The job arguments map
+
+  ## Returns
+
+  * Boolean indicating whether to force refresh all images
+  """
+  def force_refresh_images?(args) when is_map(args) do
+    Map.get(args, "force_refresh_images", false) || Map.get(args, :force_refresh_images, false)
+  end
+
+  @doc """
   Schedules a batch of jobs with incremental delays.
 
   Takes a list of items and a function that creates and schedules a job for each item.
