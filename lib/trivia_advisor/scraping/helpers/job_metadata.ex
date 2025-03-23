@@ -254,7 +254,7 @@ defmodule TriviaAdvisor.Scraping.Helpers.JobMetadata do
   end
 
   # Helper function to handle transaction results with retry logic
-  defp handle_transaction_result(result, event_id, source_id, source_url, now, retries, force) do
+  defp handle_transaction_result(result, event_id, source_id, source_url, _now, retries, force) do
     case result do
       {:ok, updated_sources} ->
         {:ok, List.first(updated_sources)}
