@@ -30,7 +30,8 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
       # => %{filename: "performer_123456.jpg", path: "/tmp/performer_123456.jpg"}
   """
   def download_image(url, prefix \\ "image", force_refresh \\ false) when is_binary(url) do
-    Logger.debug("📥 Downloading image from URL: #{url}")
+    # Log force_refresh parameter for debugging
+    Logger.info("📥 Downloading image from URL: #{url}, force_refresh: #{inspect(force_refresh)}")
 
     # Get temporary directory for file
     tmp_dir = System.tmp_dir!()
@@ -83,11 +84,25 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
     Logger.debug("📄 Will save image to: #{path}")
 
-    # Check if image already exists and we're not forcing a refresh
+    # IMPORTANT: Delete the file first if force_refresh is true, then continue with normal logic
+    # This ensures we actually get a fresh copy when force_refresh=true
+    if force_refresh and File.exists?(path) do
+      Logger.info("🔄 Force refreshing existing image at #{path} because force_refresh=#{inspect(force_refresh)}")
+      # Delete the existing file to ensure we download a fresh copy
+      File.rm!(path)
+      Logger.info("🗑️ Deleted existing image to force refresh")
+    end
+      
+    # Now proceed with normal logic (which is correct since we've already deleted the file if needed)
     if File.exists?(path) and not force_refresh do
-      Logger.debug("✅ Image already exists at #{path} (skipping download)")
+      Logger.info("✅ Image already exists at #{path} (skipping download)")
       %{filename: filename, path: path}
     else
+      # Log why we're downloading
+      if not File.exists?(path) do
+        Logger.info("🔄 Downloading new image because file doesn't exist")
+      end
+      
       # Do the actual download
       case download_file(url, path) do
         {:ok, _} ->
@@ -208,7 +223,8 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
   def download_event_hero_image(url, force_refresh \\ false)
 
   def download_event_hero_image(url, force_refresh) when is_binary(url) and url != "" do
-    Logger.info("📸 Processing event hero image URL: #{url}")
+    # Log force_refresh parameter for debugging
+    Logger.info("📸 Processing event hero image URL: #{url}, force_refresh: #{inspect(force_refresh)}")
 
     # Get the base filename from the URL and normalize it
     basename = url

@@ -33,6 +33,12 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
     if force_update do
       Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
     end
+    
+    # Check if we should force refresh all images
+    force_refresh_images = RateLimiter.force_refresh_images?(args)
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+    end
 
     # Get the SpeedQuizzing source
     source = Repo.get_by!(Source, slug: "speed-quizzing")
@@ -98,6 +104,12 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
       %{} = args -> RateLimiter.force_update?(args)
       _ -> false
     end
+    
+    # Check if force refresh images is enabled from the current job
+    force_refresh_images = case Process.get(:job_args) do
+      %{} = args -> RateLimiter.force_refresh_images?(args)
+      _ -> false
+    end
 
     # Filter out events that were recently updated (unless force_update is true)
     {events_to_process, skipped_events} = if force_update do
@@ -123,12 +135,15 @@ defmodule TriviaAdvisor.Scraping.Oban.SpeedQuizzingIndexJob do
       events_to_process,
       TriviaAdvisor.Scraping.Oban.SpeedQuizzingDetailJob,
       fn event ->
+        # IMPORTANT: Use string keys for Oban job args to ensure they're preserved
+        # Atom keys get lost during JSON serialization in Oban
         %{
-          event_id: Map.get(event, "event_id") || Map.get(event, "id"),
-          source_id: source_id,
-          lat: Map.get(event, "lat"),
-          lng: Map.get(event, "lon"),
-          force_update: force_update  # Pass force_update flag to detail jobs
+          "event_id" => Map.get(event, "event_id") || Map.get(event, "id"),
+          "source_id" => source_id,
+          "lat" => Map.get(event, "lat"),
+          "lng" => Map.get(event, "lon"),
+          "force_update" => force_update,  # Pass force_update flag to detail jobs
+          "force_refresh_images" => force_refresh_images  # Pass force_refresh_images flag to detail jobs
         }
       end
     )
