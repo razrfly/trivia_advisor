@@ -30,7 +30,7 @@ defmodule TriviaAdvisor.Events.EventStore do
     force_refresh_images = Keyword.get(opts, :force_refresh_images, false)
     # Log the force_refresh_images flag value for debugging
     Logger.info("🔄 Force refresh flag: #{inspect(force_refresh_images)}")
-    
+
     if force_refresh_images do
       Process.put(:force_refresh_images, true)
       Logger.info("⚠️ Force image refresh enabled in EventStore")
@@ -376,16 +376,13 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Use the centralized ImageDownloader to ensure consistent filename handling
     alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
-    # CRITICAL FIX: ALWAYS use true for force_refresh_images flag to ensure it works
-    # This ensures that when this function is called with the intent to force refresh,
-    # it will always work, regardless of process context or dictionary
-    force_refresh_images = true
-    
-    # Log for debugging
-    Logger.info("🔄 EventStore.download_hero_image FORCING force_refresh_images: #{inspect(force_refresh_images)}")
-    Logger.info("🔄 This ensures images are always refreshed when requested via the job flag")
+    # Get force_refresh_images from process dictionary instead of hardcoding to true
+    force_refresh_images = Process.get(:force_refresh_images, false)
 
-    # Pass the force_refresh_images flag explicitly as true
+    # Log for debugging
+    Logger.info("🔄 EventStore.download_hero_image using force_refresh_images: #{inspect(force_refresh_images)}")
+
+    # Pass the force_refresh_images flag from process dictionary
     ImageDownloader.download_event_hero_image(url, force_refresh_images)
   end
 

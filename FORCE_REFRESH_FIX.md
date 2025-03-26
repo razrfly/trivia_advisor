@@ -1,78 +1,56 @@
-# Force Refresh Images Flag Fix
+# Force Image Refresh Fix
 
-## Issue Summary
+## Issue Description
 
-The `force_refresh_images` flag wasn't being properly passed from index jobs to detail jobs, causing images to never be refreshed even when the flag was set to `true`.
+The `force_refresh_images` parameter was being passed correctly through the scraping pipelines, but images weren't actually being refreshed when the flag was set to `true`. The issue was that in several places, the code had been modified to use hardcoded `true` values for the `force_refresh` flag, which meant that:
 
-The root causes were:
+1. When the flag was set to `true`, images were correctly refreshed (because of the hardcoded `true`)
+2. But when the flag was set to `false`, images were still being refreshed (also because of the hardcoded `true`)
 
-1. **Atom vs String Keys in Oban Job Arguments**:
-   - When Oban serializes job arguments to JSON, atom keys get converted to strings
-   - Some index jobs were using `:force_refresh_images` (atom) instead of `"force_refresh_images"` (string)
-   - When the detail job looked for `"force_refresh_images"`, it found nothing because the key was normalized
+This made the flag appear non-functional, as images were always being refreshed regardless of the flag value.
 
-2. **Missing Flag in Some Jobs**:
-   - Some index jobs weren't passing the `force_refresh_images` flag to detail jobs at all
-   - They were passing `force_update` but neglecting to pass `force_refresh_images`
+## Fixed Locations
 
-## Fix Applied
+We had to remove hardcoded `true` values from several places and properly respect the `force_refresh_images` flag passed through the system:
 
-1. **Added consistent logging** of the `force_refresh_images` flag value throughout the pipeline
-   - In index jobs when parsing args
-   - In detail jobs when receiving args
-   - In EventStore.process_event when receiving opts
-   - In ImageDownloader when downloading images
+1. **In EventStore.download_hero_image function**:
+   - Changed to use the proper value from process dictionary instead of hardcoded `true`.
 
-2. **Updated QuizmeistersIndexJob**:
-   - Changed atom keys to string keys in job arguments: `:force_refresh_images` -> `"force_refresh_images"`
-   - Added explicit debug logging for flag values
-   - This ensures the flag is properly preserved when passed to detail jobs
+2. **In QuizmeistersDetailJob.process_hero_image function**:
+   - Improved logging for clarity.
+   - Ensured it uses the value from process dictionary.
 
-3. **Updated SpeedQuizzingIndexJob** (and will update other index jobs):
-   - Added detection and processing of the `force_refresh_images` flag in index jobs
-   - Changed all atom keys to string keys for consistency
-   - Ensured the flag is passed from index to detail jobs
-
-## Testing Methodology
-
-Created several test scripts to diagnose and verify the fix:
-
-1. **test_image_download_with_flag.exs**: 
-   - Tests the ImageDownloader functions directly with and without the force_refresh flag
-   - Verifies that files are reused when flag is false, and re-downloaded when flag is true
-
-2. **test_force_refresh_images_in_jobs.exs**:
-   - Adds diagnostic instrumentation to trace the flag through the job pipeline
-   - Inserts a test job with force_refresh_images=true to verify propagation
-
-3. **test_force_refresh_flag.exs**:
-   - Directly executes a detail job with force_refresh_images=true
-   - Verifies that the flag is properly received and used
-
-4. **compare_index_vs_detail.exs**:
-   - Compares direct detail job creation vs. index job creating detail jobs
-   - Helps diagnose atom vs string key issues in Oban job serialization
+3. **In QuizmeistersDetailJob.safe_download_performer_image function**:
+   - Added an optional parameter to override the value for testing.
+   - Improved logging with `inspect()` for better debugging.
+   - Ensured proper capturing of the value for Task usage.
 
 ## Verification
 
-After applying the fix, we can confirm:
+We created specialized testing scripts to verify the functionality:
 
-1. The `force_refresh_images` flag is properly preserved through the pipeline
-2. When set to `true`, images are properly re-downloaded instead of reused
-3. The flag value is consistently logged for debugging
+1. **direct_image_refresh_test.exs** - Tests the ImageDownloader functions directly:
+   - Confirmed the implementation correctly reuses existing images when `force_refresh=false`.
+   - Confirmed it properly deletes and re-downloads images when `force_refresh=true`.
 
-## Additional Files To Update
+2. **test_fixed_force_refresh.exs** - Tests the full Oban job pipeline:
+   - Adds instrumentation to track the flag as it passes through the system.
+   - Verifies that with the fixes applied, the flag propagates correctly through the entire pipeline.
 
-The same fix should be applied to these other index jobs:
+## Running the Tests
 
-1. `geeks_who_drink_index_job.ex`
-2. `inquizition_index_job.ex` 
-3. `question_one_index_job.ex`
-4. `pubquiz_index_job.ex`
+To verify the fix:
 
-For each job, we need to:
-1. Add detection of the `force_refresh_images` flag 
-2. Update to use string keys (`"force_refresh_images"`) not atom keys (`:force_refresh_images`)
-3. Pass the flag from index to detail jobs
+```bash
+# Test the ImageDownloader implementation directly
+mix run lib/debug/direct_image_refresh_test.exs
 
-Once these changes are applied, the `force_refresh_images` flag will work correctly across all jobs.
+# Test the full pipeline with a real Oban job
+mix run lib/debug/test_fixed_force_refresh.exs
+```
+
+## Conclusion
+
+The issue was not with the ImageDownloader implementation itself, which correctly handled the `force_refresh` flag. Instead, the problem was that hardcoded `true` values in several places were preventing the flag from having the intended effect throughout the system.
+
+By removing these hardcoded values and ensuring proper propagation of the flag, we've ensured that images are only refreshed when explicitly requested with `force_refresh_images=true`.

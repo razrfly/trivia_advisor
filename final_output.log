@@ -1,0 +1,44 @@
+[info] Starting GooglePlacesService
+[info] Starting GooglePlaceImageStore
+
+
+========= TESTING IMAGE DOWNLOADER WITH FORCE_REFRESH =========
+
+
+======= First download with force_refresh=false =======
+[info] 📸 Processing event hero image URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg, force_refresh: false
+[info] 📥 Downloading image from URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg, force_refresh: false
+[info] ✅ Image already exists at /var/folders/3v/xqslsy4j1nzgq31xwj0b_zk80000gn/T/655aadddaced22f21dc76fca_qld-10-toes.jpg (skipping download)
+[info] ✅ Successfully processed event hero image from https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg
+File path: /var/folders/3v/xqslsy4j1nzgq31xwj0b_zk80000gn/T/655aadddaced22f21dc76fca_qld-10-toes.jpg
+Created at: {{2025, 3, 26}, {9, 41, 51}}
+Size: 611428 bytes
+
+======= Second download with force_refresh=true =======
+[info] 📸 Processing event hero image URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg, force_refresh: true
+[info] 📥 Downloading image from URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg, force_refresh: true
+[info] 🔄 Force refreshing existing image at /var/folders/3v/xqslsy4j1nzgq31xwj0b_zk80000gn/T/655aadddaced22f21dc76fca_qld-10-toes.jpg because force_refresh=true
+[info] 🗑️ Deleted existing image to force refresh
+[info] 🔄 Downloading new image because file doesn't exist
+[info] {"message":"peer is not leader","node":"MacBookPro","source":"oban","event":"peer:election","leader":false,"was_leader":false}
+[info] ✅ Successfully processed event hero image from https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg
+File path: /var/folders/3v/xqslsy4j1nzgq31xwj0b_zk80000gn/T/655aadddaced22f21dc76fca_qld-10-toes.jpg
+Created at: {{2025, 3, 26}, {9, 42, 44}}
+Size: 611428 bytes
+
+✅ SUCCESS: force_refresh=true caused the file to be re-downloaded (timestamps differ)
+
+Now let's check what happens in the Oban job context...
+
+======= Inserting QuizmeistersIndexJob with force_refresh_images=true =======
+Job inserted with ID: 27658
+Check the logs for force_refresh values in the job output.
+You should see:
+1. Process dictionary force_refresh_images set to: true
+2. Process dictionary force_refresh_images value: true
+3. TASK is using force_refresh=true from captured variable
+4. force_refresh: true in the image download logs
+5. HERO IMAGE TASK using force_refresh=true
+
+========= TEST COMPLETED =========
+The job is running in the background. Check the console output for the values mentioned above.

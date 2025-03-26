@@ -29,18 +29,22 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   def perform(%Oban.Job{id: job_id, args: %{"venue" => venue_data, "source_id" => source_id} = args}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
 
-    # Extract force_refresh_images flag - check both string and atom keys
-    force_refresh_images = Map.get(args, "force_refresh_images", false) || Map.get(args, :force_refresh_images, false)
-    
-    # Explicitly log the flag value for debugging
-    Logger.info("🔄 Force refresh flag: #{inspect(force_refresh_images)}")
-    
+    # Extract force_refresh_images flag
+    force_refresh_images = Map.get(args, "force_refresh_images", false)
+
+    # CRITICAL FIX: We need to set the flag explicitly to true if it's true in the args
+    # And this needs to be accessible throughout the job
     if force_refresh_images do
       Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+      # Store in process dictionary for access in other functions
+      Process.put(:force_refresh_images, true)
+    else
+      # Explicitly set to false to ensure it's not using a stale value
+      Process.put(:force_refresh_images, false)
     end
 
-    # Store in process dictionary for access in other functions
-    Process.put(:force_refresh_images, force_refresh_images)
+    # Now we can see the process dictionary value for debugging
+    Logger.info("📝 Process dictionary force_refresh_images set to: #{inspect(Process.get(:force_refresh_images))}")
 
     source = Repo.get!(Source, source_id)
 
@@ -240,11 +244,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                   %{name: name, profile_image: image_url} when not is_nil(name) and is_binary(image_url) and image_url != "" ->
                     Logger.info("🎭 Found complete performer data for #{venue.name}: Name: #{name}, Image URL: #{String.slice(image_url, 0, 50)}...")
 
-                    # CRITICAL FIX: Always force refresh images when requested
-                    # Hard-code true here to guarantee the refresh works
-                    force_refresh = true
-                    Logger.info("🔄 FORCING performer image refresh with force_refresh=true")
-                    case safe_download_performer_image(image_url, true) do
+                    # Use a timeout for image downloads too
+                    case safe_download_performer_image(image_url) do
                       {:ok, profile_image} when not is_nil(profile_image) ->
                         Logger.info("📸 Successfully downloaded performer image for #{name}")
 
@@ -327,13 +328,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                     # Use a generated name based on venue
                     generated_name = "#{venue.name} Host"
 
-                    # CRITICAL FIX: Always force refresh images when requested
-                    # Hard-code true here to guarantee the refresh works
-                    force_refresh = true
-                    Logger.info("🔄 FORCING performer image refresh with force_refresh=true")
-                    
-                    # Download image and create performer with generated name - pass TRUE explicitly
-                    case safe_download_performer_image(image_url, true) do
+                    # Download image and create performer with generated name
+                    case safe_download_performer_image(image_url) do
                       {:ok, profile_image} when not is_nil(profile_image) ->
                         Logger.info("📸 Successfully downloaded performer image for #{generated_name}")
 
@@ -538,20 +534,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     force_refresh_images = Process.get(:force_refresh_images, false)
     Logger.debug("🖼️ Force refresh images: #{inspect(force_refresh_images)}")
 
-    # CRITICAL FIX: Process dictionary doesn't propagate to tasks
-    # Log before we launch the task
-    Logger.info("🚨 DEBUG (CRITICAL): Before Task.async - force_refresh_images: #{inspect(force_refresh_images)}")
-    
     # Process the event with timeout protection
-    # IMPORTANT: We must explicitly pass force_refresh_images because Task.async runs in a different process!
+    # CRITICAL FIX: Explicitly capture force_refresh_images for the Task
+    # Process dictionary values don't transfer to Task processes
     event_task = Task.async(fn ->
-      # Explicitly set force_refresh_images in the task's process dictionary
-      if force_refresh_images do
-        Process.put(:force_refresh_images, true)
-        Logger.info("🚨 DEBUG (CRITICAL): Inside Task - Set force_refresh_images=true in process dictionary")
-      end
-      
-      # Pass it explicitly in the function call too
+      # Log inside task to verify we're using the captured variable
+      Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)} from captured variable")
       EventStore.process_event(venue, event_data, source_id, force_refresh_images: force_refresh_images)
     end)
 
@@ -623,22 +611,32 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   end
 
   # Safe wrapper around ImageDownloader.download_performer_image with timeout
-  defp safe_download_performer_image(url, force_refresh \\ false) do
-    # CRITICAL FIX: Always force refresh by hardcoding true
-    # This ensures images are always refreshed when requested regardless of calling context
-    force_refresh = true
-    
-    # Log that we're forcing refresh
-    Logger.info("🔍 DEBUG: safe_download_performer_image FORCING force_refresh=true")
+  # Made public for testing
+  def safe_download_performer_image(url, force_refresh_override \\ nil) do
+    # CRITICAL FIX: Get force_refresh_images from process dictionary or use override if provided
+    # We need to ensure we're getting the correct value from the dictionary
+    force_refresh_images = if is_nil(force_refresh_override) do
+      # Get value from process dictionary
+      value = Process.get(:force_refresh_images, false)
+      Logger.info("⚠️ Process dictionary force_refresh_images value: #{inspect(value)}")
+      value
+    else
+      # Use the override value if provided
+      force_refresh_override
+    end
+
+    Logger.info("⚠️ Using force_refresh=#{inspect(force_refresh_images)} for performer image")
 
     # Skip nil URLs early
     if is_nil(url) or String.trim(url) == "" do
       {:error, "Invalid image URL"}
     else
+      # CRITICAL FIX: Explicitly capture force_refresh_images for the Task
+      # Process dictionary values don't transfer to Task processes
       task = Task.async(fn ->
-        # Explicitly pass true to ensure it works
-        Logger.info("🔍 DEBUG: Calling ImageDownloader.download_performer_image with force_refresh=true")
-        case ImageDownloader.download_performer_image(url, true) do
+        # Explicitly log that we're using the captured variable
+        Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)} from captured variable")
+        case ImageDownloader.download_performer_image(url, force_refresh_images) do
           nil -> nil
           result ->
             # Ensure the filename has a proper extension
@@ -767,25 +765,46 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       Logger.debug("ℹ️ No hero image URL provided")
       %{}
     else
-      # CRITICAL FIX: Always force refresh images when force_refresh_images is set in job args
-      # This is the root cause of the issue - we need to HARD CODE true here to make it work
-      force_refresh_images = true
-      
-      # Log that we're forcing it true
-      Logger.info("🖼️ Processing hero image: #{hero_image_url}")
-      Logger.info("🔍 DEBUG: FORCING Hero image download with force_refresh_images=true")
+      # CRITICAL FIX: Get force_refresh_images from process dictionary
+      force_refresh_images = Process.get(:force_refresh_images, false)
 
-      # Use centralized helper to download and process the image
-      # Pass true directly to ensure it works
-      case ImageDownloader.download_event_hero_image(hero_image_url, true) do
-        {:ok, upload} ->
+      # Log the value for debugging
+      Logger.info("⚠️ Process dictionary force_refresh_images for hero image: #{inspect(force_refresh_images)}")
+
+      # Log clearly if force refresh is being used
+      if force_refresh_images do
+        Logger.info("🖼️ Processing hero image with FORCE REFRESH ENABLED: #{hero_image_url}")
+      else
+        Logger.info("🖼️ Processing hero image (normal mode): #{hero_image_url}")
+      end
+
+      # Log the actual value for debugging
+      Logger.info("🔍 Hero image force_refresh_images = #{inspect(force_refresh_images)}")
+
+      # CRITICAL FIX: Create a task that explicitly captures the force_refresh_images value
+      # to avoid issues with process dictionary not being available in the Task
+      task = Task.async(fn ->
+        # Log that we're using the captured variable
+        Logger.info("⚠️ HERO IMAGE TASK using force_refresh=#{inspect(force_refresh_images)}")
+
+        # Use centralized helper to download and process the image - pass the captured variable
+        ImageDownloader.download_event_hero_image(hero_image_url, force_refresh_images)
+      end)
+
+      # Wait for the task with a reasonable timeout
+      case Task.yield(task, 30_000) || Task.shutdown(task) do
+        {:ok, {:ok, upload}} ->
           Logger.info("✅ Successfully downloaded hero image")
           # Return both the hero_image and the original URL for reference
           %{hero_image: upload, hero_image_url: hero_image_url}
 
-        {:error, reason} ->
+        {:ok, {:error, reason}} ->
           Logger.warning("⚠️ Failed to download hero image: #{inspect(reason)}")
           # Return just the URL if we couldn't download the image
+          %{hero_image_url: hero_image_url}
+
+        _ ->
+          Logger.error("⏱️ Timeout downloading hero image from #{hero_image_url}")
           %{hero_image_url: hero_image_url}
       end
     end
