@@ -29,8 +29,8 @@ config :swoosh, :api_client, false
 
 # Print only warnings and errors during test
 config :logger,
-  # Only show warnings and errors
-  level: :warning,
+  # Allow info logs for testing Oban jobs
+  level: :info,
   handle_otp_reports: false,
   handle_sasl_reports: false
 
@@ -60,3 +60,8 @@ config :trivia_advisor, :http_client, HTTPoison.Mock
 
 # Set environment tag
 config :trivia_advisor, env: :test
+
+config :trivia_advisor, Oban,
+  testing: :inline,
+  queues: false,
+  plugins: false
