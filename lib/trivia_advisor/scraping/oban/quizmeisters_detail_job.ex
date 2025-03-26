@@ -764,7 +764,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   end
 
   # Process the hero image from URL
-  defp process_hero_image(hero_image_url, force_refresh_images \\ nil) do
+  defp process_hero_image(hero_image_url, force_refresh_images) do
     # Skip if URL is nil or empty
     if is_nil(hero_image_url) or hero_image_url == "" do
       Logger.debug("ℹ️ No hero image URL provided")
@@ -788,7 +788,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       if force_refresh_images do
         Logger.info("🖼️ Processing hero image with FORCE REFRESH ENABLED")
       else
-        Logger.info("🖼️ Processing hero image (normal mode): #{hero_image_url}")
+        Logger.info("🖼️ Processing hero image (normal mode)")
       end
 
       # Log the actual value for debugging
