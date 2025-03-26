@@ -1,5 +1,5 @@
 import Config
-config :trivia_advisor, Oban, testing: :manual
+# config :trivia_advisor, Oban, testing: :manual
 
 # Configure your database
 #
