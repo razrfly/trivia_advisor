@@ -1,8 +1,11 @@
 defmodule TriviaAdvisor.ScrapingFixtures do
   @moduledoc """
   This module defines test helpers for creating
-  entities via the `TriviaAdvisor.Scraping` context.
+  scraping-related fixtures.
   """
+
+  alias TriviaAdvisor.Repo
+  alias TriviaAdvisor.Scraping.Source
 
   @doc """
   Generate a unique source slug.
@@ -15,21 +18,18 @@ defmodule TriviaAdvisor.ScrapingFixtures do
   def unique_source_website_url, do: "some website_url#{System.unique_integer([:positive])}"
 
   @doc """
-  Generate a source.
+  Creates a source.
   """
   def source_fixture(attrs \\ %{}) do
-    unique_id = System.unique_integer([:positive])
+    attrs = Enum.into(attrs, %{
+      name: "Quiz Meisters",
+      slug: "quiz-meisters",
+      website_url: "https://quizmeisters.com"
+    })
 
-    {:ok, source} =
-      attrs
-      |> Enum.into(%{
-        name: "some name",
-        website_url: "https://example.com/#{unique_id}",
-        slug: "source-#{unique_id}"
-      })
-      |> TriviaAdvisor.Scraping.create_source()
-
-    source
+    %Source{}
+    |> Source.changeset(attrs)
+    |> Repo.insert!()
   end
 
   # The ScrapeLog module has been deprecated and removed.
