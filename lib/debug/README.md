@@ -1,39 +1,42 @@
-# Debug Utilities and Test Scripts
+# Debug Scripts
 
-This folder contains utility scripts and test files used for debugging and testing the Trivia Advisor application. 
-These scripts are not part of the production application but are useful for development, troubleshooting, and 
-verifying functionality.
+This directory contains various debugging scripts for testing and troubleshooting the application.
 
-## Debug Helper Module
+## Script Categories
 
-The `debug_helpers.ex` file contains a helper module with utility functions for testing and debugging, 
-particularly for the venue processing logic in the Inquizition job.
+### System Tests
+- `test_full_job.exs` - Tests running a full scraping job
+- `test_insert.exs` - Tests database insertions
+- `test_cascade_deletion.exs` - Tests cascading deletions
+- `test_performer_deletion.exs` - Tests performer deletion
+- `test_problematic_venues.exs` - Tests handling of problematic venues
 
-## Test Scripts
+### Image Processing Tests
+- `refresh_images.exs` - Tests image refreshing
+- `test_image_refresher.exs` - Tests the image refresher
+- `populate_image_galleries.exs` - Tests populating image galleries
+- `force_refresh_direct_test.exs` - Tests the force refresh feature directly (demonstrates the fix)
+- `direct_test.exs` - Simple test demonstrating the process dictionary isolation issue
 
-This folder contains various test scripts for different aspects of the application:
+### Time and Venue Tests
+- `test_time_conversion.exs` - Tests time conversion
+- `test_time_extraction.exs` - Tests extracting times from text
+- `test_venue_extraction.exs` - Tests venue extraction
+- `test_postcode_lookup.exs` - Tests postcode lookup
 
-- **test_cascade_deletion.exs**: Tests cascade deletion behavior.
-- **test_full_job.exs**: Runs a complete Inquizition index job and verifies the results.
-- **test_inquizition_job.exs**: Tests the basic functionality of the Inquizition index job.
-- **test_insert.exs**: Tests insert operations.
-- **test_performer_deletion.exs**: Tests performer deletion functionality.
-- **test_postcode_lookup.exs**: Tests postcode lookup for venues.
-- **test_problematic_venues.exs**: Tests venue processing for specific venues that had issues.
-- **test_time_conversion.exs**: Tests time conversion functionality.
-- **test_time_extraction.exs**: Tests extraction of time data from event descriptions.
-- **test_venue_extraction.exs**: Tests venue data extraction.
+### Scraper Tests
+- `test_geeks_who_drink.exs` - Tests the Geeks Who Drink scraper
+- `test_inquizition_job.exs` - Tests the Inquizition scraper job
+- `test_rate_limiting.exs` - Tests rate limiting
 
-## Usage
+### Helpers
+- `debug_helpers.ex` - Contains helper functions for debugging
 
-To run any of these test scripts, use the `mix run` command, for example:
+## Force Refresh Images Issue
 
-```bash
-mix run lib/debug/test_full_job.exs
-```
+The following files specifically test and demonstrate the fix for the force_refresh_images flag not propagating through Tasks:
 
-## Note
+- `direct_test.exs` - A minimal script that demonstrates the process isolation issue with Task processes
+- `force_refresh_direct_test.exs` - A comprehensive test that verifies our fix works correctly
 
-These scripts are primarily for development and debugging purposes. They are not covered by automatic tests and may 
-require updates to work with changes to the application structure. Use them as a reference and for troubleshooting 
-rather than as part of the standard workflow. 
+For more information on the force refresh issue and fix, see `docs/ELIXIR_PROCESS_ISOLATION_FORCE_REFRESH_FIX.md` 

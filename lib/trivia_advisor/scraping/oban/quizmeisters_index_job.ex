@@ -110,9 +110,18 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
 
     # Check if force refresh images is enabled from the current job
     force_refresh_images = case Process.get(:job_args) do
-      %{} = args -> RateLimiter.force_refresh_images?(args)
+      %{} = args ->
+        # CRITICAL FIX: Ensure we get the right value and don't override it
+        # Get the flag value directly from args rather than using a helper
+        flag_value = Map.get(args, "force_refresh_images", false) || Map.get(args, :force_refresh_images, false)
+        # Log it explicitly for debugging
+        Logger.info("🔍 DEBUG: Force refresh images flag extracted from index job args: #{inspect(flag_value)}")
+        flag_value
       _ -> false
     end
+
+    # Log it again for debugging
+    Logger.info("🔍 DEBUG: Will pass force_refresh_images=#{inspect(force_refresh_images)} to detail jobs")
 
     # Filter out venues that were recently updated (unless force_update is true)
     {venues_to_process, skipped_venues} = if force_update do
@@ -141,12 +150,22 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob do
       venues_to_process,
       TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob,
       fn venue ->
-        %{
-          venue: venue,
-          source_id: source_id,
-          force_update: force_update,
-          force_refresh_images: force_refresh_images
+        # IMPORTANT: Use string keys for Oban job args to ensure they're preserved
+        # Atom keys get lost during JSON serialization in Oban
+        detail_args = %{
+          "venue" => venue,
+          "source_id" => source_id,
+          "force_update" => force_update,
+          "force_refresh_images" => force_refresh_images
         }
+
+        # Log the first detail job args for debugging
+        if venue == List.first(venues_to_process) do
+          Logger.info("🔍 DEBUG: First detail job args: #{inspect(detail_args)}")
+          Logger.info("🔍 DEBUG: force_refresh_images value in detail job: #{inspect(detail_args["force_refresh_images"])}")
+        end
+
+        detail_args
       end
     )
 

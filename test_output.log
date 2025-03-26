@@ -1,0 +1,104 @@
+[info] Starting GooglePlacesService
+[info] Starting GooglePlaceImageStore
+
+===== TESTING REAL JOB WITH FORCE_REFRESH_IMAGES=TRUE =====
+
+➡️ Running QuizmeistersDetailJob with force_refresh_images=true
+⏱️  This will take about 20-30 seconds...
+
+[info] 🔄 Processing venue: 10 Toes Buderim
+[info] ⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state
+[info] 📝 Process dictionary force_refresh_images set to: true
+[warning] ⚠️ No trivia day/time found for venue: 10 Toes Buderim. Attempting to proceed with defaults.
+[info] 📍 Extracted Venue Details:
+  Title (Raw)   : "10 Toes Buderim"
+  Title (Clean) : "10 Toes Buderim"
+  Address       : 15/3 Pittards Rd, Buderim, Queensland, 4556, AU
+  Time Text     : Thursday 7:00 PM
+  Day of Week   : 4
+  Start Time    : 19:00
+  Frequency     : weekly
+  Fee          : Free
+  Phone        : 07 5373 5003
+  Website      : 
+  Description  : ...
+  Hero Image   : 
+  Source URL   : https://www.quizmeisters.com/venues/qld-10-toes
+  Facebook     : 
+  Instagram    : 
+
+[info] Processing venue: 10 Toes Buderim
+[info] ✅ Found complete performer data: name='KatieKatie', has_image=true, image_url='https://cdn.prod.website-files.com/61ea3abbe6d146b...'
+[info] ✅ Using stored coordinates for venue: 10 Toes Buderim
+[info] 🔄 Scheduling Google Place lookup job for venue: 10 Toes Buderim
+[info] 📍 Extracted Venue Details:
+  Title (Raw)   : "10 Toes Buderim"
+  Title (Clean) : "10 Toes Buderim"
+  Address       : 15/3 Pittards Rd, Buderim, Queensland, 4556, AU
+  Time Text     : Thursday 7:00 PM
+  Day of Week   : 4
+  Start Time    : 19:00
+  Frequency     : weekly
+  Fee          : Free
+  Phone        : 07 5373 5003
+  Website      : https://www.10toes.beer/10-toes-buderim/
+  Description  : Every Quiz Meisters trivia show is a two-hour jam-packed quiz full of cross-generational questions, o...
+  Hero Image   : https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg
+  Source URL   : https://www.quizmeisters.com/venues/qld-10-toes
+  Facebook     : https://www.facebook.com/10ToesBrewery/
+  Instagram    : https://www.instagram.com/10toesbeer/
+  Performer     : KatieKatie
+  Profile Image: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/659b43df589d4584c9fb02cd_Katie%20Davenport%20Klunder%20-%2010%20toes%20buderim.jpg
+
+
+[info] 🎭 Found complete performer data for 10 Toes Buderim: Name: KatieKatie, Image URL: https://cdn.prod.website-files.com/61ea3abbe6d146b...
+[info] ⚠️ Process dictionary force_refresh_images value: false
+[info] ⚠️ Using force_refresh=false for performer image
+[info] ⚠️ TASK is using force_refresh=false from captured variable
+[info] 📥 Downloading image from URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/659b43df589d4584c9fb02cd_Katie%20Davenport%20Klunder%20-%2010%20toes%20buderim.jpg, force_refresh: false
+[info] ✅ Image already exists at /var/folders/3v/xqslsy4j1nzgq31xwj0b_zk80000gn/T/659b43df589d4584c9fb02cd_katie-davenport-klunder-10-toes-buderim.jpg (skipping download)
+[info] 📸 Successfully downloaded performer image for KatieKatie
+[info] ✅ Performer 'KatieKatie' image is unchanged (659b43df589d4584c9fb02cd_katie-davenport-klunder-10-toes-buderim.jpg)
+[info] ✅ Successfully created/updated performer 313 (KatieKatie) for venue 10 Toes Buderim
+[info] ⚠️ Process dictionary force_refresh_images for hero image: false
+[info] 🖼️ Processing hero image (normal mode): https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg
+[info] 🔍 Hero image force_refresh_images = false
+[info] ⚠️ HERO IMAGE TASK using force_refresh=false
+[info] 📸 Processing event hero image URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg, force_refresh: false
+[info] 📥 Downloading image from URL: https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg, force_refresh: false
+[info] ✅ Image already exists at /var/folders/3v/xqslsy4j1nzgq31xwj0b_zk80000gn/T/655aadddaced22f21dc76fca_qld-10-toes.jpg (skipping download)
+[info] ✅ Successfully processed event hero image from https://cdn.prod.website-files.com/61ea3abbe6d146ba89ea13d7/655aadddaced22f21dc76fca_qld%20-%2010%20toes.jpg
+[info] ✅ Successfully downloaded hero image
+[info] 🔗 Normalizing URL: https://www.quizmeisters.com/venues/qld-10-toes
+[info] 🔗 Found existing event source with URL: https://www.quizmeisters.com/venues/qld-10-toes
+[info] 🎭 Adding performer_id 313 to event for venue 10 Toes Buderim
+[info] 🔍 Processing Google Place lookup for venue: 10 Toes Buderim
+[info] ✅ Successfully updated Google Place data for venue 10 Toes Buderim with 5 images
+[info] 🔄 Found existing event 247 for venue 10 Toes Buderim, updating performer_id to 313
+[info] ✅ Successfully updated existing event 247 with performer_id 313
+[info] 🔄 Updating event source's last_seen_at timestamp
+[info] 🔄 Updating existing event_source 247 with last_seen_at: 2025-03-26 10:04:10.328411Z
+[info] 🔗 Normalizing URL: https://www.quizmeisters.com/venues/qld-10-toes
+[info] 🔗 Found existing event source with URL: https://www.quizmeisters.com/venues/qld-10-toes
+[info] ✅ Successfully updated event_source last_seen_at to 2025-03-26 10:04:10Z
+[info] ✅ Successfully processed venue: 10 Toes Buderim
+[info] 🔄 Ensuring event_source last_seen_at is updated for event_id=247, source_id=4
+[info] 🕒 Ensuring event_source last_seen_at is updated to 2025-03-26 10:04:10.336893Z
+[info] 🔧 Options: force=true, retries=1
+[info] 🔄 Found 1 event source(s) to update
+[info] 🔍 Before update - event_source 247:
+[info]    - last_seen_at: 2025-03-26 10:04:10Z
+[info]    - source_url: https://www.quizmeisters.com/venues/qld-10-toes
+[info] ✅ Successfully updated event_source 247 last_seen_at to 2025-03-26 10:04:10Z
+
+===== JOB COMPLETED =====
+Result: {:ok, %{event_id: 247, venue_id: 237}}
+
+Check the logs above for these messages:
+1. 'Process dictionary force_refresh_images set to: true'
+2. 'Process dictionary force_refresh_images value: true'
+3. 'TASK is using force_refresh=true from captured variable'
+4. 'HERO IMAGE TASK using force_refresh=true'
+5. Any logs with 'force_refresh: true' for image downloading
+
+If these show TRUE instead of FALSE, our fix worked.

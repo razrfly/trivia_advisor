@@ -217,6 +217,16 @@ defmodule TriviaAdvisor.Scraping.RateLimiter do
 
       # Create and schedule the job
       args = args_fn.(item)
+      
+      # Debug log for the first few jobs to verify flag propagation
+      if index < 2 do
+        Logger.debug("🔍 Detail job args: #{inspect(args)}")
+        # Specifically check force_refresh_images flag
+        has_force_refresh = Map.has_key?(args, :force_refresh_images) || Map.has_key?(args, "force_refresh_images")
+        force_flag_value = Map.get(args, :force_refresh_images) || Map.get(args, "force_refresh_images", false)
+        Logger.debug("🔍 force_refresh_images present: #{has_force_refresh}, value: #{force_flag_value}")
+      end
+      
       job = job_module.new(args, schedule_in: delay_seconds)
 
       case Oban.insert(job) do

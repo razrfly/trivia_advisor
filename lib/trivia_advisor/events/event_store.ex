@@ -27,9 +27,19 @@ defmodule TriviaAdvisor.Events.EventStore do
     ensure_upload_dir()
 
     # Set force_refresh_images in process dictionary if passed in opts
-    if Keyword.get(opts, :force_refresh_images, false) do
+    force_refresh_images = Keyword.get(opts, :force_refresh_images, false)
+    # Log the force_refresh_images flag value for debugging
+    Logger.info("🔄 Force refresh flag: #{inspect(force_refresh_images)}")
+
+    if force_refresh_images do
+      # CRITICAL FIX: Don't set this to true if not specified in opts
+      # This was replacing any previous value with true
       Process.put(:force_refresh_images, true)
+      Logger.info("⚠️ Force image refresh enabled in EventStore")
     end
+
+    # No else branch - we only set true, never set false
+    # This lets values cascade down from the parent job
 
     # Convert string keys to atoms for consistent access
     # This allows the function to work with both string and atom keys
@@ -371,13 +381,13 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Use the centralized ImageDownloader to ensure consistent filename handling
     alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
-    # Check if we need to force refresh images
-    force_refresh_images = case Process.get(:force_refresh_images) do
-      nil -> false  # Default to false if not set
-      value -> value
-    end
+    # CRITICAL FIX: Get force_refresh_images from process dictionary instead of hardcoding to true
+    force_refresh_images = Process.get(:force_refresh_images, false)
 
-    # Pass the force_refresh_images flag
+    # Log for debugging
+    Logger.info("🔄 EventStore.download_hero_image using force_refresh_images: #{inspect(force_refresh_images)}")
+
+    # Pass the force_refresh_images flag from process dictionary
     ImageDownloader.download_event_hero_image(url, force_refresh_images)
   end
 

@@ -30,7 +30,12 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
       # => %{filename: "performer_123456.jpg", path: "/tmp/performer_123456.jpg"}
   """
   def download_image(url, prefix \\ "image", force_refresh \\ false) when is_binary(url) do
-    Logger.debug("📥 Downloading image from URL: #{url}")
+    # CRITICAL FIX: Handle nil case for force_refresh - if nil, use false as the default
+    # This avoids errors when force_refresh is nil from Process.get
+    force_refresh = if is_nil(force_refresh), do: false, else: force_refresh
+
+    # Log force_refresh parameter for debugging
+    Logger.info("📥 Downloading image from URL: #{url}, force_refresh: #{inspect(force_refresh)}")
 
     # Get temporary directory for file
     tmp_dir = System.tmp_dir!()
@@ -83,11 +88,25 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
 
     Logger.debug("📄 Will save image to: #{path}")
 
-    # Check if image already exists and we're not forcing a refresh
+    # IMPORTANT: Delete the file first if force_refresh is true, then continue with normal logic
+    # This ensures we actually get a fresh copy when force_refresh=true
+    if force_refresh and File.exists?(path) do
+      Logger.info("🔄 Force refreshing existing image at #{path} because force_refresh=#{inspect(force_refresh)}")
+      # Delete the existing file to ensure we download a fresh copy
+      File.rm!(path)
+      Logger.info("🗑️ Deleted existing image to force refresh")
+    end
+
+    # Now proceed with normal logic (which is correct since we've already deleted the file if needed)
     if File.exists?(path) and not force_refresh do
-      Logger.debug("✅ Image already exists at #{path} (skipping download)")
+      Logger.info("✅ Image already exists at #{path} (skipping download)")
       %{filename: filename, path: path}
     else
+      # Log why we're downloading
+      if not File.exists?(path) do
+        Logger.info("🔄 Downloading new image because file doesn't exist")
+      end
+
       # Do the actual download
       case download_file(url, path) do
         {:ok, _} ->
@@ -208,7 +227,13 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
   def download_event_hero_image(url, force_refresh \\ false)
 
   def download_event_hero_image(url, force_refresh) when is_binary(url) and url != "" do
-    Logger.info("📸 Processing event hero image URL: #{url}")
+    # CRITICAL FIX: Handle nil case for force_refresh - if nil, use false as the default
+    # This avoids errors when using Process.get that might return nil
+    force_refresh = if is_nil(force_refresh), do: false, else: force_refresh
+
+    # Log force_refresh as is, without potentially overriding it
+    # We need to be explicit about what force_refresh value we're using
+    Logger.info("📸 Processing event hero image URL: #{url}, force_refresh: #{inspect(force_refresh)}")
 
     # Get the base filename from the URL and normalize it
     basename = url
@@ -218,8 +243,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     |> normalize_filename()
 
     # Just use the original filename with no modification
-    # Let download_image use it directly
+    # Let download_image use it directly with the force_refresh value explicitly
     try do
+      # Be explicit about passing the force_refresh parameter
       case download_image(url, basename, force_refresh) do
         %{filename: filename, path: path} when not is_nil(path) ->
           # Get file extension - needed for content type and proper file handling
@@ -277,6 +303,10 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     - `nil` if the download fails
   """
   def download_performer_image(url, force_refresh \\ false) when is_binary(url) do
+    # CRITICAL FIX: Handle nil case for force_refresh - if nil, use false as the default
+    # This avoids errors when force_refresh is nil from Process.get
+    force_refresh = if is_nil(force_refresh), do: false, else: force_refresh
+
     # Get the base filename from the URL and normalize it
     basename = url
     |> URI.parse()
@@ -328,6 +358,10 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
     - {:error, reason} if the URL is invalid
   """
   def safe_download_performer_image(url, force_refresh \\ false) do
+    # CRITICAL FIX: Handle nil case for force_refresh - if nil, use false as the default
+    # This avoids errors when force_refresh is nil from Process.get
+    force_refresh = if is_nil(force_refresh), do: false, else: force_refresh
+
     # Skip nil URLs early
     if is_nil(url) or (is_binary(url) and String.trim(url) == "") do
       {:error, "Invalid image URL"}
