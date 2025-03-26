@@ -16,7 +16,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args, id: job_id}) do
+  def perform(%Oban.Job{id: job_id, args: args}) do
     url = Map.get(args, "url")
     title = Map.get(args, "title")
     source_id = Map.get(args, "source_id")
@@ -27,16 +27,13 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
       Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
     end
 
-    # Store in process dictionary for access in other functions
-    Process.put(:force_refresh_images, force_refresh_images)
-
     Logger.info("🔄 Processing Question One venue: #{title}")
 
     # Get the Question One source
     source = Repo.get!(Source, source_id)
 
-    # Process the venue using the existing logic
-    result = fetch_venue_details(%{url: url, title: title}, source, job_id)
+    # Process the venue using the existing logic - pass force_refresh_images directly
+    result = fetch_venue_details(%{url: url, title: title}, source, job_id, force_refresh_images)
 
     # Debug log the exact structure we're getting
     Logger.debug("📊 Result structure: #{inspect(result)}")
@@ -70,7 +67,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   # to avoid modifying the original code
 
   # Process a venue and create an event - adapted from QuestionOne.fetch_venue_details
-  defp fetch_venue_details(%{url: url, title: raw_title}, source, job_id) do
+  defp fetch_venue_details(%{url: url, title: raw_title}, source, job_id, force_refresh_images) do
     Logger.info("\n🔍 Processing venue: #{raw_title}")
 
     case HTTPoison.get(url, [], follow_redirect: true) do
@@ -95,9 +92,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
 
             # Process the hero image using the centralized ImageDownloader
             hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
-              # Get force_refresh_images from process dictionary
-              force_refresh_images = Process.get(:force_refresh_images, false)
-
               case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url, force_refresh_images) do
                 {:ok, upload} ->
                   Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
@@ -120,9 +114,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
               fee_text: extracted_data.fee_text,
               source_url: url
             } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
-
-            # Get force_refresh_images from process dictionary
-            force_refresh_images = Process.get(:force_refresh_images, false)
 
             case EventStore.process_event(venue, event_data, source.id, force_refresh_images: force_refresh_images) do
               {:ok, {:ok, event}} ->

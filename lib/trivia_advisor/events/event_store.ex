@@ -26,20 +26,15 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Ensure upload directory exists
     ensure_upload_dir()
 
-    # Set force_refresh_images in process dictionary if passed in opts
+    # Get force_refresh_images from opts
     force_refresh_images = Keyword.get(opts, :force_refresh_images, false)
+
     # Log the force_refresh_images flag value for debugging
     Logger.info("🔄 Force refresh flag: #{inspect(force_refresh_images)}")
 
     if force_refresh_images do
-      # CRITICAL FIX: Don't set this to true if not specified in opts
-      # This was replacing any previous value with true
-      Process.put(:force_refresh_images, true)
       Logger.info("⚠️ Force image refresh enabled in EventStore")
     end
-
-    # No else branch - we only set true, never set false
-    # This lets values cascade down from the parent job
 
     # Convert string keys to atoms for consistent access
     # This allows the function to work with both string and atom keys
@@ -57,7 +52,7 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Download and attach hero image if URL is present
     hero_image_attrs = case event_data.hero_image_url do
       url when is_binary(url) and url != "" ->
-        case download_hero_image(url) do
+        case download_hero_image(url, force_refresh_images) do
           {:ok, upload} ->
             try do
               # Test if Waffle can process the image by checking file validity
@@ -377,17 +372,14 @@ defmodule TriviaAdvisor.Events.EventStore do
   end
 
   # Download hero image from URL
-  defp download_hero_image(url) do
+  defp download_hero_image(url, force_refresh_images) do
     # Use the centralized ImageDownloader to ensure consistent filename handling
     alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
-
-    # CRITICAL FIX: Get force_refresh_images from process dictionary instead of hardcoding to true
-    force_refresh_images = Process.get(:force_refresh_images, false)
 
     # Log for debugging
     Logger.info("🔄 EventStore.download_hero_image using force_refresh_images: #{inspect(force_refresh_images)}")
 
-    # Pass the force_refresh_images flag from process dictionary
+    # Pass the force_refresh_images parameter directly
     ImageDownloader.download_event_hero_image(url, force_refresh_images)
   end
 

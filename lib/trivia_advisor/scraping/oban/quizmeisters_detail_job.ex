@@ -32,24 +32,16 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
     # Extract force_refresh_images flag
     force_refresh_images = Map.get(args, "force_refresh_images", false)
 
-    # CRITICAL FIX: We need to set the flag explicitly to true if it's true in the args
-    # And this needs to be accessible throughout the job
+    # Log if force refresh is enabled (keeping just the useful operational log)
     if force_refresh_images do
       Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
-      # Store in process dictionary for access in other functions
-      Process.put(:force_refresh_images, true)
-    else
-      # Explicitly set to false to ensure it's not using a stale value
-      Process.put(:force_refresh_images, false)
     end
-
-    # Now we can see the process dictionary value for debugging
-    Logger.info("📝 Process dictionary force_refresh_images set to: #{inspect(Process.get(:force_refresh_images))}")
 
     source = Repo.get!(Source, source_id)
 
     # Process the venue and event using existing code patterns
-    case process_venue(venue_data, source) do
+    # Explicitly pass force_refresh_images parameter
+    case process_venue(venue_data, source, force_refresh_images) do
       {:ok, %{venue: venue, final_data: final_data} = result} ->
         # Extract event data from any possible structure formats
         {event_id, _event} = normalize_event_result(result[:event])
@@ -110,7 +102,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   end
 
   # Process venue - adapted from Quizmeisters scraper
-  defp process_venue(location, source) do
+  defp process_venue(location, source, force_refresh_images) do
     # First, parse the venue data (similar to parse_venue in original scraper)
     time_text = get_trivia_time(location)
 
@@ -158,11 +150,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
         # Log venue details
         VenueHelpers.log_venue_details(venue_data)
-
-        # CRITICAL FIX: Get force_refresh_images from process dictionary to pass explicitly
-        # This ensures it gets passed to the Task process
-        force_refresh_images = Process.get(:force_refresh_images, false)
-        Logger.info("🔄 process_venue passing force_refresh_images=#{inspect(force_refresh_images)} to fetch_venue_details")
 
         # Fetch venue details from the venue page, explicitly passing force_refresh_images
         case fetch_venue_details(venue_data, source, force_refresh_images) do
@@ -461,7 +448,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                     {:error, changeset} ->
                       Logger.error("❌ Failed to update existing event with performer_id: #{inspect(changeset.errors)}")
                       # Continue with normal event processing - note that this result is a tuple with event inside
-                      result = process_event_with_performer(venue, event_data, source.id, performer_id)
+                      result = process_event_with_performer(venue, event_data, source.id, performer_id, force_refresh_images)
                       case result do
                         {:ok, result_map} ->
                           # Add final_data to result
@@ -471,7 +458,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                   end
                 else
                   # No existing event or no performer, proceed with normal event processing
-                  result = process_event_with_performer(venue, event_data, source.id, performer_id)
+                  result = process_event_with_performer(venue, event_data, source.id, performer_id, force_refresh_images)
                   case result do
                     {:ok, result_map} ->
                       # Add final_data to result
@@ -530,21 +517,20 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   end
 
   # Process event with performer_id with timeout protection
-  defp process_event_with_performer(venue, event_data, source_id, performer_id) do
+  defp process_event_with_performer(venue, event_data, source_id, performer_id, force_refresh_images) do
     # Log the event data and performer_id before processing
     Logger.debug("🎭 Processing event with performer_id: #{inspect(performer_id)}")
     Logger.debug("🎭 Event data: #{inspect(Map.take(event_data, ["raw_title", "name", "performer_id"]))}")
 
-    # Get force_refresh_images from process dictionary
-    force_refresh_images = Process.get(:force_refresh_images, false)
-    Logger.debug("🖼️ Force refresh images: #{inspect(force_refresh_images)}")
+    # Log if force refresh is enabled
+    if force_refresh_images do
+      Logger.debug("🖼️ Force refresh images enabled for event processing")
+    end
 
     # Process the event with timeout protection
-    # CRITICAL FIX: Explicitly capture force_refresh_images for the Task
-    # Process dictionary values don't transfer to Task processes
+    # Explicitly capture force_refresh_images for the Task
     event_task = Task.async(fn ->
-      # Log inside task to verify we're using the captured variable
-      Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)} from captured variable")
+      # Pass force_refresh_images to EventStore.process_event
       EventStore.process_event(venue, event_data, source_id, force_refresh_images: force_refresh_images)
     end)
 
@@ -617,30 +603,20 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
   # Safe wrapper around ImageDownloader.download_performer_image with timeout
   # Made public for testing
-  def safe_download_performer_image(url, force_refresh_override \\ nil) do
-    # CRITICAL FIX: Get force_refresh_images from process dictionary or use override if provided
-    # We need to ensure we're getting the correct value from the dictionary
-    force_refresh_images = if is_nil(force_refresh_override) do
-      # Get value from process dictionary
-      value = Process.get(:force_refresh_images, false)
-      Logger.info("⚠️ Process dictionary force_refresh_images value: #{inspect(value)}")
-      value
-    else
-      # Use the override value if provided
-      force_refresh_override
+  def safe_download_performer_image(url, force_refresh_images) do
+    # Log if a non-false value is being used for debugging
+    if force_refresh_images do
+      Logger.info("⚠️ Using force_refresh=true for performer image")
     end
-
-    Logger.info("⚠️ Using force_refresh=#{inspect(force_refresh_images)} for performer image")
 
     # Skip nil URLs early
     if is_nil(url) or String.trim(url) == "" do
       {:error, "Invalid image URL"}
     else
-      # CRITICAL FIX: Explicitly capture force_refresh_images for the Task
-      # Process dictionary values don't transfer to Task processes
+      # Explicitly capture force_refresh_images for the Task
+      # since we're not using Process dictionary anymore
       task = Task.async(fn ->
-        # Explicitly log that we're using the captured variable
-        Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)} from captured variable")
+        # Use the explicit passed parameter
         case ImageDownloader.download_performer_image(url, force_refresh_images) do
           nil -> nil
           result ->
@@ -764,43 +740,21 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   end
 
   # Process the hero image from URL
-  defp process_hero_image(hero_image_url, force_refresh_images) do
+  # Made public for testing
+  def process_hero_image(hero_image_url, force_refresh_images) do
     # Skip if URL is nil or empty
     if is_nil(hero_image_url) or hero_image_url == "" do
       Logger.debug("ℹ️ No hero image URL provided")
       %{}
     else
-      # CRITICAL FIX: Use passed parameter first, then fall back to process dictionary
-      # This ensures the value is properly passed from the parent process
-      force_refresh_images =
-        if is_nil(force_refresh_images) do
-          # Fall back to process dictionary
-          Process.get(:force_refresh_images, false)
-        else
-          # Use the explicitly passed value
-          force_refresh_images
-        end
-
-      # Log the value for debugging
-      Logger.info("⚠️ Process dictionary force_refresh_images for hero image: #{inspect(force_refresh_images)}")
-
-      # Log clearly if force refresh is being used
+      # Log if force refresh is enabled
       if force_refresh_images do
-        Logger.info("🖼️ Processing hero image with FORCE REFRESH ENABLED")
-      else
-        Logger.info("🖼️ Processing hero image (normal mode)")
+        Logger.info("🖼️ Processing hero image with force refresh enabled")
       end
 
-      # Log the actual value for debugging
-      Logger.info("🔍 Hero image force_refresh_images = #{inspect(force_refresh_images)}")
-
-      # CRITICAL FIX: Create a task that explicitly captures the force_refresh_images value
-      # to avoid issues with process dictionary not being available in the Task
+      # Create a task that explicitly captures the force_refresh_images value
       task = Task.async(fn ->
-        # Log that we're using the captured variable
-        Logger.info("⚠️ HERO IMAGE TASK using force_refresh=#{inspect(force_refresh_images)}")
-
-        # Use centralized helper to download and process the image - pass the captured variable
+        # Use centralized helper to download and process the image with the captured parameter
         ImageDownloader.download_event_hero_image(hero_image_url, force_refresh_images)
       end)
 
