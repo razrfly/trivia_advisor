@@ -32,9 +32,14 @@ defmodule TriviaAdvisor.Events.EventStore do
     Logger.info("🔄 Force refresh flag: #{inspect(force_refresh_images)}")
 
     if force_refresh_images do
+      # CRITICAL FIX: Don't set this to true if not specified in opts
+      # This was replacing any previous value with true
       Process.put(:force_refresh_images, true)
       Logger.info("⚠️ Force image refresh enabled in EventStore")
     end
+
+    # No else branch - we only set true, never set false
+    # This lets values cascade down from the parent job
 
     # Convert string keys to atoms for consistent access
     # This allows the function to work with both string and atom keys
@@ -376,7 +381,7 @@ defmodule TriviaAdvisor.Events.EventStore do
     # Use the centralized ImageDownloader to ensure consistent filename handling
     alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
 
-    # Get force_refresh_images from process dictionary instead of hardcoding to true
+    # CRITICAL FIX: Get force_refresh_images from process dictionary instead of hardcoding to true
     force_refresh_images = Process.get(:force_refresh_images, false)
 
     # Log for debugging
