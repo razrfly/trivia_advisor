@@ -251,6 +251,9 @@ defmodule TriviaAdvisor.Scraping.Helpers.ImageDownloader do
           # Get file extension - needed for content type and proper file handling
           ext = Path.extname(filename) |> String.downcase()
 
+          # Log where the image will be saved in the final Waffle storage
+          Logger.info("🚀 Image downloaded to temporary storage and will be processed by Waffle")
+
           # Create a Plug.Upload struct compatible with Waffle's cast_attachments
           content_type = case ext do
             ".jpg" -> "image/jpeg"
