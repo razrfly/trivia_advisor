@@ -376,7 +376,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                 # Process the event using EventStore like QuestionOne
                 # IMPORTANT: Use string keys for the event_data map to ensure compatibility with EventStore.process_event
                 # Process the hero image first
-                hero_image_attrs = process_hero_image(final_data.hero_image_url, force_refresh_images)
+                hero_image_attrs = process_hero_image(final_data.hero_image_url, force_refresh_images, venue)
 
                 # Create the base event data
                 event_data = %{
@@ -454,6 +454,35 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                             {:error, error} ->
                               Logger.error("❌ Failed to update event_source: #{inspect(error)}")
                           end
+                      end
+
+                      # Delete hero image if found and force_refresh_images is true
+                      if force_refresh_images && existing_event && existing_event.hero_image && existing_event.hero_image.file_name do
+                        Logger.info("🔄 Processing event hero image with force_refresh=true")
+
+                        # Get filename and venue slug for logging purposes
+                        filename = existing_event.hero_image.file_name
+                        venue_slug = venue.slug
+
+                        # Construct the real path using venue slug
+                        path = Path.join(["/priv/static/uploads/venues", venue_slug, filename])
+
+                        # Log the deletion with the real path
+                        Logger.info("🗑️ Deleted existing hero image at: #{path}")
+
+                        # Use Waffle's delete mechanism
+                        alias TriviaAdvisor.Uploaders.HeroImage
+                        HeroImage.delete({existing_event.hero_image.file_name, existing_event})
+
+                        # Update event to clear hero_image field
+                        {:ok, updated_event} = existing_event
+                          |> Ecto.Changeset.change(%{hero_image: nil})
+                          |> Repo.update()
+
+                        Logger.info("🧼 Cleared hero_image field on event #{existing_event.id}")
+
+                        # Use updated event for the rest of the function
+                        _existing_event = updated_event
                       end
 
                       # Include final_data in the return value
@@ -563,6 +592,15 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       {:ok, {:ok, event}} ->
         Logger.info("✅ Successfully processed event #{event.id} for venue #{venue.name}")
 
+        # Log the saved hero image with real path if it exists
+        if event.hero_image && event.hero_image.file_name do
+          filename = event.hero_image.file_name
+          venue_slug = venue.slug
+          path = Path.join(["priv/static/uploads/venues", venue_slug, filename])
+
+          Logger.info("✅ Saved new hero image to: #{path}")
+        end
+
         # Check if performer_id needs to be updated
         if not is_nil(performer_id) and (is_nil(event.performer_id) or event.performer_id != performer_id) do
           Logger.info("🔄 Adding performer_id #{performer_id} to event #{event.id}")
@@ -584,6 +622,15 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       # Handle direct OK event return: {:ok, event}
       {:ok, event} when is_map(event) ->
         Logger.info("✅ Successfully processed event #{event.id} for venue #{venue.name}")
+
+        # Log the saved hero image with real path if it exists
+        if event.hero_image && event.hero_image.file_name do
+          filename = event.hero_image.file_name
+          venue_slug = venue.slug
+          path = Path.join(["priv/static/uploads/venues", venue_slug, filename])
+
+          Logger.info("✅ Saved new hero image to: #{path}")
+        end
 
         # Check if performer_id needs to be updated
         if not is_nil(performer_id) and (is_nil(event.performer_id) or event.performer_id != performer_id) do
@@ -764,7 +811,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   end
 
   # Process the hero image from URL
-  defp process_hero_image(hero_image_url, force_refresh_images) do
+  defp process_hero_image(hero_image_url, force_refresh_images, venue) do
     # Skip if URL is nil or empty
     if is_nil(hero_image_url) or hero_image_url == "" do
       Logger.debug("ℹ️ No hero image URL provided")
@@ -808,6 +855,14 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
       case Task.yield(task, 30_000) || Task.shutdown(task) do
         {:ok, {:ok, upload}} ->
           Logger.info("✅ Successfully downloaded hero image")
+
+          # Log where the final image will be saved (before Waffle processes it)
+          filename = upload.filename
+          if venue && venue.slug do
+            path = Path.join(["priv/static/uploads/venues", venue.slug, filename])
+            Logger.info("🔄 Image will be saved to final path: #{path}")
+          end
+
           # Return both the hero_image and the original URL for reference
           %{hero_image: upload, hero_image_url: hero_image_url}
 
