@@ -406,6 +406,51 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                 # Directly update an existing event if it exists
                 existing_event = find_existing_event(venue.id, final_data.day_of_week)
 
+                # 🧼 Delete hero image from disk if force_refresh_images is true
+                # This MUST happen before any event processing or updates
+                if force_refresh_images && existing_event && existing_event.hero_image && existing_event.hero_image.file_name do
+                  Logger.info("🧨 Deleting existing hero image before event processing (force_refresh=true)")
+
+                  # Get filename and venue slug for logging purposes
+                  venue_slug = venue.slug
+                  filename = existing_event.hero_image.file_name
+
+                  # CRITICAL FIX: Use direct file deletion to ensure the file is actually removed
+                  # from the filesystem
+                  versions = [:original, :thumb]
+                  versions |> Enum.each(fn version ->
+                    # Construct the path to the file version
+                    version_prefix = if version == :original, do: "", else: "#{version}_"
+                    file_path = Path.join(["priv/static/uploads/venues", venue_slug, "#{version_prefix}#{filename}"])
+
+                    # Log the deletion with the real path
+                    Logger.info("🗑️ Attempting to delete hero image file at: #{file_path}")
+
+                    # Check if file exists before deletion
+                    if File.exists?(file_path) do
+                      # Delete the file directly for guaranteed removal
+                      case File.rm(file_path) do
+                        :ok ->
+                          Logger.info("✅ Successfully deleted hero image file: #{file_path}")
+                        {:error, reason} ->
+                          Logger.error("❌ Failed to delete hero image file: #{inspect(reason)}")
+                      end
+                    else
+                      Logger.info("⚠️ Hero image file not found at: #{file_path}")
+                    end
+                  end)
+
+                  # Clear image in DB
+                  {:ok, updated_event} =
+                    existing_event
+                    |> Ecto.Changeset.change(%{hero_image: nil})
+                    |> Repo.update()
+
+                  # Use updated event for the rest of the function
+                  existing_event = updated_event
+                  Logger.info("🧼 Cleared hero_image field on event #{existing_event.id}")
+                end
+
                 if existing_event && performer_id do
                   # If we have an existing event and a performer, update the performer_id directly
                   Logger.info("🔄 Found existing event #{existing_event.id} for venue #{venue.name}, updating performer_id to #{performer_id}")
@@ -458,35 +503,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                             {:error, error} ->
                               Logger.error("❌ Failed to update event_source: #{inspect(error)}")
                           end
-                      end
-
-                      # Delete hero image if found and force_refresh_images is true
-                      if force_refresh_images && existing_event && existing_event.hero_image && existing_event.hero_image.file_name do
-                        Logger.info("🔄 Processing event hero image with force_refresh=true")
-
-                        # Get filename and venue slug for logging purposes
-                        filename = existing_event.hero_image.file_name
-                        venue_slug = venue.slug
-
-                        # Construct the real path using venue slug
-                        path = Path.join(["/priv/static/uploads/venues", venue_slug, filename])
-
-                        # Log the deletion with the real path
-                        Logger.info("🗑️ Deleted existing hero image at: #{path}")
-
-                        # Use Waffle's delete mechanism
-                        alias TriviaAdvisor.Uploaders.HeroImage
-                        HeroImage.delete({existing_event.hero_image.file_name, existing_event})
-
-                        # Update event to clear hero_image field
-                        {:ok, updated_event} = existing_event
-                          |> Ecto.Changeset.change(%{hero_image: nil})
-                          |> Repo.update()
-
-                        Logger.info("🧼 Cleared hero_image field on event #{existing_event.id}")
-
-                        # Use updated event for the rest of the function
-                        _existing_event = updated_event
                       end
 
                       # Include final_data in the return value
