@@ -6,6 +6,10 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
   No mocking, no test fixtures - just actual jobs and actual data.
   """
 
+  # Configure Logger to show all log messages during tests
+  require Logger
+  Logger.configure(level: :debug)
+
   use TriviaAdvisor.DataCase, async: false
   use TriviaAdvisor.ObanCase
   import ExUnit.CaptureLog
@@ -78,6 +82,11 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
         :timer.sleep(3000)
       end)
 
+      # Print the captured logs so we can see them on the console
+      IO.puts("\n\n===== CAPTURED LOGS (force_refresh_images=true) =====\n")
+      IO.puts(forced_log)
+      IO.puts("\n===== END CAPTURED LOGS =====\n")
+
       # Validate behavior through logs
       refute standard_log =~ "Force image refresh enabled"
       assert forced_log =~ "Force image refresh enabled"
@@ -100,6 +109,11 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
         # Wait for the job to complete
         :timer.sleep(5000)
       end)
+
+      # Print the captured logs so we can see them on the console
+      IO.puts("\n\n===== CAPTURED LOGS (end-to-end workflow) =====\n")
+      IO.puts(log)
+      IO.puts("\n===== END CAPTURED LOGS =====\n")
 
       # Validate the job ran successfully
       assert log =~ "Starting Quizmeisters Index Job"
