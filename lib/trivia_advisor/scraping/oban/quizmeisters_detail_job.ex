@@ -164,6 +164,10 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
         force_refresh_images = Process.get(:force_refresh_images, false)
         Logger.info("🔄 process_venue passing force_refresh_images=#{inspect(force_refresh_images)} to fetch_venue_details")
 
+        # Log expected image paths for testing purposes - this ensures paths are visible even when geocoding fails
+        slug = venue_data.name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+        Logger.info("🔍 TEST INFO: For venue '#{venue_data.name}', images would be stored at: priv/static/uploads/venues/#{slug}/")
+
         # Fetch venue details from the venue page, explicitly passing force_refresh_images
         case fetch_venue_details(venue_data, source, force_refresh_images) do
           {:ok, result} ->
