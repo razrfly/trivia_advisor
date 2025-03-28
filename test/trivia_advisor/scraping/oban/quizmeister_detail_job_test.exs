@@ -127,4 +127,83 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
       assert log =~ "DEBUG: force_refresh_images value in detail job: true"
     end
   end
+
+  describe "hero image deletion" do
+    @tag :expected_failure
+    test "hero image is deleted from file system when force_refresh_images is true", %{source: source} do
+      # First run the index job to get venue data and image paths
+      setup_log = capture_log(fn ->
+        {:ok, _index_job} = Oban.insert(QuizmeistersIndexJob.new(%{
+          "source_id" => source.id,
+          "limit" => 3
+        }))
+
+        # Wait for the job to complete
+        :timer.sleep(3000)
+      end)
+
+      # Extract venue data from logs - looking for the image path info
+      venue_info = Regex.scan(~r/TEST INFO: For venue '(.+?)', images would be stored at: (priv\/static\/uploads\/venues\/[^\/]+\/)/, setup_log)
+
+      # Ensure we found at least one venue
+      assert length(venue_info) > 0, "No venues found in setup logs"
+
+      # Get the first venue's name and path from the regex match
+      [_, venue_name, venue_dir] = List.first(venue_info)
+
+      # Make sure the venue directory exists
+      venue_dir = String.trim_trailing(venue_dir, "/")
+      File.mkdir_p!(venue_dir)
+
+      # Create a test image file if none exists
+      image_filename = "test_hero_image.jpg"
+      image_path = Path.join(venue_dir, image_filename)
+
+      # Create the image file if it doesn't exist
+      unless File.exists?(image_path) do
+        File.write!(image_path, "test image content")
+      end
+
+      # Log the test setup for visibility
+      IO.puts("\n\n===== HERO IMAGE DELETION TEST SETUP =====")
+      IO.puts("Venue name: #{venue_name}")
+      IO.puts("Venue directory: #{venue_dir}")
+      IO.puts("Test image: #{image_path}")
+      IO.puts("===== END SETUP =====\n")
+
+      # Verify the image exists before running the job
+      assert File.exists?(image_path), "Test image file should exist before running the job"
+
+      # Instead of running a real HTTP request, we'll directly test the behavior we care about
+      # Use the TriviaAdvisor.Uploaders.HeroImage.delete/1 function with the appropriate arguments
+
+      # Create a dummy event struct with the hero_image field
+      event = %TriviaAdvisor.Events.Event{
+        id: 123,
+        hero_image: %{file_name: image_filename}
+      }
+
+      # Log before deletion check
+      IO.puts("\n\nImage exists before deletion: #{File.exists?(image_path)}")
+
+      # Delete function would be called inside the event processing
+      # We're manually invoking it here to demonstrate the expected behavior
+      # This line would be moved to QuizmeistersDetailJob.perform to fix the failing test
+      job_log = capture_log(fn ->
+        TriviaAdvisor.Uploaders.HeroImage.delete({image_filename, event})
+        # Let's verify right away if it worked (but we're expecting it to fail)
+        IO.puts("Image exists after HeroImage.delete: #{File.exists?(image_path)}")
+        :timer.sleep(1000)
+      end)
+
+      # Print the logs for debugging
+      IO.puts("\n===== CAPTURED LOGS (hero image deletion) =====\n")
+      IO.puts(job_log)
+      IO.puts("\n===== END CAPTURED LOGS =====\n")
+
+      # Assert that the hero image was deleted
+      # This test is expected to fail until the deletion logic is implemented properly
+      refute File.exists?(image_path), "Hero image should be deleted when force_refresh_images is true"
+    end
+  end
 end
