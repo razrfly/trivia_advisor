@@ -97,19 +97,19 @@ defmodule TriviaAdvisor.Events.EventStore do
                   filename: new_filename,
                   content_type: upload.content_type
                 }
-                %{hero_image: new_upload}
+                %{hero_image: new_upload, hero_image_url: url}
               else
                 # Original filename has valid extension
-                %{hero_image: upload}
+                %{hero_image: upload, hero_image_url: url}
               end
             rescue
               err ->
                 Logger.error("Error processing hero image: #{inspect(err)}")
-                %{}
+                %{hero_image_url: url}
             end
           {:error, reason} ->
             Logger.warning("Failed to download hero image: #{inspect(reason)}")
-            %{}
+            %{hero_image_url: url}
         end
       _ -> %{}
     end
@@ -144,11 +144,14 @@ defmodule TriviaAdvisor.Events.EventStore do
         Logger.info("🆕 Creating new event for venue #{venue.name} on day #{attrs.day_of_week}")
       end
 
+      # Include hero_image_url in the attrs for event_changed? check
+      attrs_with_url = Map.put(attrs, :hero_image_url, event_data.hero_image_url)
+
       # Process the event
       result = case existing_event do
         nil -> create_event(attrs)
         event ->
-          if event_changed?(event, attrs) do
+          if event_changed?(event, attrs_with_url) do
             # Check if performer_id is changing
             if event.performer_id != attrs.performer_id do
               Logger.info("🎭 Updating performer_id from #{inspect(event.performer_id)} to #{inspect(attrs.performer_id)}")
@@ -331,8 +334,42 @@ defmodule TriviaAdvisor.Events.EventStore do
   # Note: We're not including performer_id here because we want to update it separately
   # if it's the only thing that changed
   defp event_changed?(event, attrs) do
-    Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description]) !=
-    Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description])
+    # Get force_refresh_images from process dictionary
+    force_refresh_images = Process.get(:force_refresh_images, false)
+
+    # Get the event source to access hero_image_url from metadata
+    event_source = Repo.get_by(EventSource, event_id: event.id)
+    current_hero_image_url = if event_source, do: get_in(event_source.metadata, ["hero_image_url"]), else: nil
+
+    # New hero_image_url from attrs
+    new_hero_image_url = attrs[:hero_image_url]
+
+    # Check if event has a hero_image but the actual file might be missing
+    # This could happen if the file was deleted during force_refresh_images
+    image_potentially_missing = force_refresh_images && event.hero_image && new_hero_image_url
+
+    # Compare basic fields
+    basic_fields_changed = Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description]) !=
+                         Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description])
+
+    # Check if hero_image_url changed
+    hero_image_changed = current_hero_image_url != new_hero_image_url &&
+                         !is_nil(new_hero_image_url) &&
+                         String.trim(to_string(new_hero_image_url)) != ""
+
+    # Check if we should force update due to force_refresh_images
+    force_image_update = force_refresh_images &&
+                        (!is_nil(new_hero_image_url) || !is_nil(current_hero_image_url))
+
+    if force_image_update do
+      Logger.info("⚠️ Force updating event due to force_refresh_images=#{force_refresh_images}")
+    end
+
+    # Log the comparison for debugging
+    Logger.info("🔍 Hero image comparison - Current: #{inspect(current_hero_image_url)}, New: #{inspect(new_hero_image_url)}, Changed: #{hero_image_changed}, Force update: #{force_image_update}, Image potentially missing: #{image_potentially_missing}")
+
+    # Event changed if either basic fields changed, hero image changed, image is potentially missing, or force update is enabled
+    basic_fields_changed || hero_image_changed || force_image_update || image_potentially_missing
   end
 
   defp parse_day_of_week("Monday" <> _), do: 1
