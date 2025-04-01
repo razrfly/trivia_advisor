@@ -14,6 +14,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
   use TriviaAdvisor.ObanCase
   import ExUnit.CaptureLog
 
+  @moduletag :oban
+
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.QuizmeistersIndexJob
