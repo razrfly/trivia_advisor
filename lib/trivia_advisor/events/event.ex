@@ -37,22 +37,21 @@ defmodule TriviaAdvisor.Events.Event do
 
   @doc false
   def changeset(event, attrs) do
-    # Get the current hero image filename if it exists
+    # Log the hero image information for debugging
     current_image = event.hero_image && event.hero_image.file_name
+    has_hero_image = Map.has_key?(attrs, :hero_image)
+    Logger.info("🖼️ Event changeset - Current hero_image: #{inspect(current_image)}, attrs has hero_image: #{has_hero_image}")
 
-    # Get the new image filename if it exists
-    new_image = attrs[:hero_image] && attrs[:hero_image].filename
-
-    event
+    changeset = event
     |> cast(attrs, [:name, :venue_id, :day_of_week, :start_time, :frequency, :entry_fee_cents, :description, :performer_id])
-    |> maybe_cast_hero_image(attrs, current_image, new_image)
     |> validate_required([:name, :venue_id, :day_of_week, :start_time])
     |> foreign_key_constraint(:venue_id)
     |> foreign_key_constraint(:performer_id)
-  end
 
-  defp maybe_cast_hero_image(changeset, attrs, current_image, new_image) do
-    if current_image != new_image do
+    # Always cast hero_image attachments when they are provided
+    # This ensures Waffle processes them fully each time
+    if has_hero_image do
+      Logger.info("🖼️ Casting hero_image attachment")
       cast_attachments(changeset, attrs, [:hero_image])
     else
       changeset
