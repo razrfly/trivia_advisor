@@ -234,5 +234,110 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
       IO.puts("implemented in QuizmeistersDetailJob.fetch_venue_details successfully deletes all images.")
       IO.puts("This implementation now properly deletes images even when there is no existing event.")
     end
+
+    @tag :failing
+    test "hero image is re-added after being deleted with force_refresh_images", %{source: source} do
+      # First run the index job to get venue data and image paths
+      setup_log = capture_log(fn ->
+        {:ok, _index_job} = Oban.insert(QuizmeistersIndexJob.new(%{
+          "source_id" => source.id,
+          "limit" => 3
+        }))
+
+        # Wait for the job to complete
+        :timer.sleep(3000)
+      end)
+
+      # Extract venue data from logs - looking for the image path info
+      venue_info = Regex.scan(~r/TEST INFO: For venue '(.+?)', images would be stored at: (priv\/static\/uploads\/venues\/[^\/]+\/)/, setup_log)
+
+      # Ensure we found at least one venue
+      assert length(venue_info) > 0, "No venues found in setup logs"
+
+      # Get the first venue's name and path from the regex match
+      [_, venue_name, venue_dir] = List.first(venue_info)
+
+      # Make sure the venue directory exists
+      venue_dir = String.trim_trailing(venue_dir, "/")
+      File.mkdir_p!(venue_dir)
+
+      # Create a test image file if none exists
+      image_filename = "test_hero_image.jpg"
+      image_path = Path.join(venue_dir, image_filename)
+
+      # Create the image file if it doesn't exist
+      unless File.exists?(image_path) do
+        File.write!(image_path, "test image content")
+      end
+
+      # Get the venue slug from the directory
+      venue_slug = Path.basename(venue_dir)
+
+      # Set up the test environment
+      IO.puts("\n\n===== HERO IMAGE RE-ADDITION TEST SETUP =====")
+      IO.puts("Venue name: #{venue_name}")
+      IO.puts("Venue slug: #{venue_slug}")
+      IO.puts("Venue directory: #{venue_dir}")
+      IO.puts("Test image: #{image_path}")
+      IO.puts("===== END SETUP =====\n")
+
+      # Verify the image exists before running the job
+      assert File.exists?(image_path), "Test image file should exist before running the job"
+
+      # First phase: Run the job with force_refresh_images to delete the image
+      force_refresh_log = capture_log(fn ->
+        {:ok, _job} = Oban.insert(QuizmeistersIndexJob.new(%{
+          "source_id" => source.id,
+          "force_refresh_images" => true,
+          "force_update" => true,
+          "limit" => 1
+        }))
+
+        # Wait for the job to complete
+        :timer.sleep(5000)
+      end)
+
+      # Print logs for debugging
+      IO.puts("\n\n===== CAPTURED LOGS (force refresh phase) =====\n")
+      IO.puts(force_refresh_log)
+      IO.puts("\n===== END CAPTURED LOGS =====\n")
+
+      # Verify the image was deleted
+      refute File.exists?(image_path), "Image should be deleted after force refresh"
+
+      # Second phase: Check if the image was re-added during the same job execution
+      # The job should have processed the venue, deleted the image, and then re-added it
+
+      # Check for existence of any image files in the venue directory
+      {:ok, files} = File.ls(venue_dir)
+      image_extensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]
+
+      image_files = Enum.filter(files, fn file ->
+        ext = Path.extname(file) |> String.downcase()
+        Enum.member?(image_extensions, ext)
+      end)
+
+      # Log what we found
+      IO.puts("\n===== IMAGE FILES AFTER JOB COMPLETION =====")
+      IO.puts("Found #{length(image_files)} image files in #{venue_dir}:")
+      Enum.each(image_files, &IO.puts/1)
+      IO.puts("=======================================\n")
+
+      # This assertion should fail because the bug is that images aren't being re-added
+      assert length(image_files) > 0, "Hero image should be re-added after deletion, but no images were found"
+
+      # More detailed checks to help diagnose the issue
+      # Look for specific log messages indicating an attempt to re-add the image
+      has_download_attempt = String.contains?(force_refresh_log, "Processing event hero image URL")
+      has_save_attempt = String.contains?(force_refresh_log, "Saved new hero image to")
+
+      IO.puts("\nDiagnostic information:")
+      IO.puts("- Detected download attempt: #{has_download_attempt}")
+      IO.puts("- Detected save attempt: #{has_save_attempt}")
+
+      # These assertions provide more detailed information about what's happening
+      assert has_download_attempt, "No attempt was made to download a new hero image"
+      assert has_save_attempt, "No attempt was made to save a new hero image after download"
+    end
   end
 end
