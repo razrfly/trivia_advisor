@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(exclude: [:oban])
 Ecto.Adapters.SQL.Sandbox.mode(TriviaAdvisor.Repo, :manual)
 
 # Define mocks
