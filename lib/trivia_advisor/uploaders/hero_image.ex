@@ -35,6 +35,9 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     end
   end
 
+  # Define S3 bucket (required for S3 storage)
+  def bucket(_), do: Application.get_env(:waffle, :bucket)
+
   # Provide a default URL if there hasn't been a file uploaded
   def default_url(_version, _scope) do
     "https://placehold.co/600x400/png"
@@ -61,44 +64,70 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     end
   end
 
-  # Override default delete implementation to ensure files are actually deleted
-  # from the filesystem with proper path resolution
-  def delete({file_name, scope}) do
-    # Ensure scope has venue loaded for slug
-    scope = TriviaAdvisor.Venues.maybe_preload_venue(scope)
+  # Override Waffle's delete to handle both legacy and new filename patterns
+  defoverridable [delete: 1]
 
-    venue_slug = if not is_nil(scope.venue), do: scope.venue.slug, else: "temp"
+  def delete(args) do
+    # Use built-in Waffle delete functionality for current pattern
+    # This works for both local files and S3 automatically based on environment
+    result = super(args)
 
-    # Construct base path
-    priv_dir = Application.app_dir(:trivia_advisor, "priv/static")
-    base_path = Path.join([priv_dir, "uploads", "venues", venue_slug])
-
-    # All file versions that might exist
-    file_paths = @versions
-      |> Enum.map(fn version ->
-        version_prefix = if version == :original, do: "", else: "#{version}_"
-        Path.join(base_path, "#{version_prefix}#{file_name}")
-      end)
-
-    # Delete all files - log success or failure
-    deleted_count = Enum.reduce(file_paths, 0, fn path, count ->
-      if File.exists?(path) do
-        Logger.info("🗑️ Physically deleting hero image at: #{path}")
-        case File.rm(path) do
-          :ok ->
-            Logger.info("✅ Successfully deleted hero image: #{path}")
-            count + 1
-          {:error, reason} ->
-            Logger.error("❌ Failed to delete hero image at #{path}: #{inspect(reason)}")
-            count
-        end
-      else
-        Logger.info("⚠️ Hero image file not found at: #{path}")
-        count
+    # Now also handle deleting legacy "original_" files
+    try do
+      # Extract filename for legacy handling
+      {file_name, scope} = case args do
+        {name, scp} when is_binary(name) -> {name, scp}
+        name when is_binary(name) -> {name, nil}
+        _ -> {nil, nil}
       end
-    end)
 
-    # Return true if at least one file was deleted
-    deleted_count > 0
+      # Only handle original versions (thumbnails always had a prefix)
+      if file_name do
+        # Log our attempt to clean up legacy files
+        Logger.info("🔍 LEGACY CLEANUP: Looking for old naming pattern with 'original_' prefix for #{file_name}")
+
+        # Create a mock file with the legacy filename pattern
+        legacy_file = %{file_name: "original_#{file_name}"}
+
+        # Call original Waffle delete with the legacy file
+        # This will use Waffle's built-in storage mechanisms to delete in both local and S3
+        Logger.info("🧹 LEGACY CLEANUP: Attempting to delete 'original_#{file_name}'")
+        super({legacy_file, scope})
+        Logger.info("✅ LEGACY CLEANUP: Successfully processed legacy deletion")
+      end
+    rescue
+      e ->
+        # Log but don't fail if legacy cleanup fails
+        Logger.error("⚠️ LEGACY CLEANUP: Error cleaning legacy files: #{inspect(e)}")
+    end
+
+    # Return the result of the original delete
+    result
+  end
+
+  # Generate backward-compatible URLs for existing files
+  def backwards_compatible_url(version, {file_name, scope}) do
+    if is_binary(file_name) do
+      try do
+        # Try with the new format first
+        new_format_url = url(version, {%{file_name: file_name}, scope})
+
+        # If that fails, try with the legacy format
+        if version == :original do
+          # For original version, also try with "original_" prefix
+          legacy_file_name = "original_#{file_name}"
+          url(version, {%{file_name: legacy_file_name}, scope})
+        else
+          # For other versions, just return the standard URL
+          new_format_url
+        end
+      rescue
+        # If URL generation fails, return a default URL
+        _ -> default_url(version, scope)
+      end
+    else
+      # If file_name is not a string, return default URL
+      default_url(version, scope)
+    end
   end
 end

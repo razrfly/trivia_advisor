@@ -140,6 +140,24 @@ defmodule TriviaAdvisor.Events.EventStore do
       if existing_event do
         Logger.info("🔄 Found existing event #{existing_event.id} for venue #{venue.name} on day #{attrs.day_of_week}")
         Logger.info("🎭 Existing event has performer_id: #{inspect(existing_event.performer_id)}")
+
+        # CRITICAL FIX: If force_refresh_images is true and event has a hero_image,
+        # explicitly delete both new and legacy files BEFORE creating the new one
+        if force_refresh_images && existing_event.hero_image do
+          Logger.info("🧹 Force refresh: Explicitly deleting ALL hero image files for #{existing_event.name}")
+
+          # Use explicit aliases for clarity
+          alias TriviaAdvisor.Uploaders.HeroImage
+
+          # 1. First use Waffle's standard delete to remove the current naming pattern files
+          hero_image = existing_event.hero_image
+          filename = hero_image.file_name
+
+          # Call the delete function directly to remove both normal and legacy files
+          Logger.info("🧹 Deleting hero image: #{filename} for event #{existing_event.id}")
+          HeroImage.delete({filename, existing_event})
+          Logger.info("✅ Hero image deletion completed")
+        end
       else
         Logger.info("🆕 Creating new event for venue #{venue.name} on day #{attrs.day_of_week}")
       end
@@ -352,10 +370,8 @@ defmodule TriviaAdvisor.Events.EventStore do
     basic_fields_changed = Map.take(event, [:start_time, :frequency, :entry_fee_cents, :description]) !=
                          Map.take(attrs, [:start_time, :frequency, :entry_fee_cents, :description])
 
-    # Check if hero_image_url changed
-    hero_image_changed = current_hero_image_url != new_hero_image_url &&
-                         !is_nil(new_hero_image_url) &&
-                         String.trim(to_string(new_hero_image_url)) != ""
+    # Check if hero_image_url changed (using our safer implementation)
+    hero_image_changed = hero_image_changed?(current_hero_image_url, new_hero_image_url)
 
     # Check if we should force update due to force_refresh_images
     force_image_update = force_refresh_images &&
@@ -432,5 +448,34 @@ defmodule TriviaAdvisor.Events.EventStore do
   defp ensure_upload_dir do
     dir = Path.join(["priv", "static", "uploads", "events"])
     File.mkdir_p!(dir)
+  end
+
+  # Improved hero_image check function that safely handles nil values
+  defp hero_image_changed?(current_hero_image_url, new_hero_image_url) do
+    # Early return for nil checks
+    cond do
+      # If both are nil, no change
+      is_nil(current_hero_image_url) and is_nil(new_hero_image_url) ->
+        false
+
+      # If current is nil but new is not, it's a change
+      is_nil(current_hero_image_url) and not is_nil(new_hero_image_url) ->
+        # Ensure new is not empty
+        new_hero_image_url = to_string(new_hero_image_url)
+        String.trim(new_hero_image_url) != ""
+
+      # If new is nil but current is not, it's a change
+      not is_nil(current_hero_image_url) and is_nil(new_hero_image_url) ->
+        true
+
+      # If both exist, compare them properly
+      true ->
+        # Convert to string and trim
+        current_str = to_string(current_hero_image_url) |> String.trim()
+        new_str = to_string(new_hero_image_url) |> String.trim()
+
+        # Compare the cleaned strings
+        current_str != new_str && new_str != ""
+    end
   end
 end
