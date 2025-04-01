@@ -247,6 +247,68 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                 final_data = Map.put(merged_data, :venue_id, venue.id)
                 VenueHelpers.log_venue_details(final_data)
 
+                # IMPLEMENTATION: Delete any existing hero images for this venue if force_refresh_images is true
+                # This ensures images are deleted even if there's no existing event with a hero_image in the DB
+                if force_refresh_images do
+                  # Get venue slug for directory path
+                  venue_slug = venue.slug
+
+                  # Log the operation
+                  Logger.info("🧨 Force refresh enabled - cleaning venue images directory for #{venue.name}")
+
+                  # Construct the directory path
+                  venue_images_dir = Path.join(["priv/static/uploads/venues", venue_slug])
+
+                  # Check if directory exists before attempting to clean it
+                  if File.exists?(venue_images_dir) do
+                    # Get a list of image files in the directory
+                    case File.ls(venue_images_dir) do
+                      {:ok, files} ->
+                        image_extensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]
+
+                        # Filter to only include image files
+                        image_files = Enum.filter(files, fn file ->
+                          ext = Path.extname(file) |> String.downcase()
+                          Enum.member?(image_extensions, ext)
+                        end)
+
+                        # Delete each image file
+                        Enum.each(image_files, fn image_file ->
+                          file_path = Path.join(venue_images_dir, image_file)
+                          Logger.info("🗑️ Deleting image file: #{file_path}")
+
+                          case File.rm(file_path) do
+                            :ok ->
+                              Logger.info("✅ Successfully deleted image file: #{file_path}")
+                            {:error, reason} ->
+                              Logger.error("❌ Failed to delete image file: #{file_path} - #{inspect(reason)}")
+                          end
+                        end)
+
+                        # Log summary
+                        Logger.info("🧹 Cleaned #{length(image_files)} image files from #{venue_images_dir}")
+
+                      {:error, reason} ->
+                        Logger.error("❌ Could not list files in venue directory: #{venue_images_dir} - #{inspect(reason)}")
+                    end
+                  else
+                    Logger.info("📁 No existing venue images directory found at: #{venue_images_dir}")
+                  end
+
+                  # If there is an existing event, also clear the hero_image field in the database
+                  existing_event = find_existing_event(venue.id, final_data.day_of_week)
+                  if existing_event && existing_event.hero_image do
+                    Logger.info("🗑️ Clearing hero_image field for existing event #{existing_event.id}")
+
+                    {:ok, _updated_event} =
+                      existing_event
+                      |> Ecto.Changeset.change(%{hero_image: nil})
+                      |> Repo.update()
+
+                    Logger.info("🧼 Cleared hero_image field on event #{existing_event.id}")
+                  end
+                end
+
                 # Process performer if present - add detailed logging
                 performer_id = case final_data.performer do
                   # Case 1: Complete performer data with name and image
@@ -441,13 +503,11 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
                   end)
 
                   # Clear image in DB
-                  {:ok, updated_event} =
+                  {:ok, _updated_event} =
                     existing_event
                     |> Ecto.Changeset.change(%{hero_image: nil})
                     |> Repo.update()
 
-                  # Use updated event for the rest of the function
-                  existing_event = updated_event
                   Logger.info("🧼 Cleared hero_image field on event #{existing_event.id}")
                 end
 
