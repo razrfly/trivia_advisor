@@ -17,14 +17,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias TriviaAdvisor.Events.EventSource
 
-  # Increased timeout values to prevent hanging requests
-  @http_options [
-    follow_redirect: true,
-    timeout: 30_000,        # 30 seconds for connect timeout
-    recv_timeout: 30_000,   # 30 seconds for receive timeout
-    hackney: [pool: false]  # Don't use connection pooling for scrapers
-  ]
-
   @impl Oban.Worker
   def perform(%Oban.Job{id: job_id, args: %{"venue" => venue_data, "source_id" => source_id} = args}) do
     Logger.info("🔄 Processing venue: #{venue_data["name"]}")
@@ -212,7 +204,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
   defp find_trivia_day_from_fields(_), do: ""
 
   # Fetch venue details - adapted from Quizmeisters scraper
-  defp fetch_venue_details(venue_data, source, is_full_detail, force_refresh_images) do
+  defp fetch_venue_details(venue_data, source, _is_full_detail, force_refresh_images) do
     # CRITICAL FIX: Always create a test image in test mode
     # This needs to happen very early, before any potential errors
     if Process.get(:test_mode, false) && force_refresh_images do
