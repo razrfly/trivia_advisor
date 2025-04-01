@@ -35,32 +35,66 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
     Application.put_env(:trivia_advisor, :test_mode, true)
     Process.put(:test_mode, true)
 
-    {:ok, %{source: source}}
+    # Run the index job once to get real venues - this will be used by all tests
+    setup_log = capture_log(fn ->
+      {:ok, _index_job} = Oban.insert(QuizmeistersIndexJob.new(%{
+        "source_id" => source.id,
+        "limit" => 3
+      }))
+
+      # Wait for the job to complete
+      :timer.sleep(3000)
+    end)
+
+    # Extract venue data from logs - looking for the image path info
+    venue_info = Regex.scan(~r/TEST INFO: For venue '(.+?)', images would be stored at: (priv\/static\/uploads\/venues\/[^\/]+\/)/, setup_log)
+
+    # Ensure we found at least one venue
+    assert length(venue_info) > 0, "No venues found in setup logs"
+
+    # Get the first venue's name and path from the regex match
+    [_, venue_name, venue_dir] = List.first(venue_info)
+
+    # Make sure the venue directory exists
+    venue_dir = String.trim_trailing(venue_dir, "/")
+    File.mkdir_p!(venue_dir)
+
+    # Get the venue slug from the directory
+    venue_slug = Path.basename(venue_dir)
+
+    # Create a test image file if none exists
+    image_filename = "test_hero_image.jpg"
+    image_path = Path.join(venue_dir, image_filename)
+
+    # Create the image file if it doesn't exist
+    unless File.exists?(image_path) do
+      File.write!(image_path, "test image content")
+    end
+
+    # Log what we found for debugging
+    IO.puts("\n\n===== SHARED TEST SETUP =====")
+    IO.puts("Venue name: #{venue_name}")
+    IO.puts("Venue slug: #{venue_slug}")
+    IO.puts("Venue directory: #{venue_dir}")
+    IO.puts("Test image: #{image_path}")
+    IO.puts("===== END SHARED SETUP =====\n")
+
+    # Return all the extracted data to be used by tests
+    {:ok, %{
+      source: source,
+      venue_name: venue_name,
+      venue_dir: venue_dir,
+      venue_slug: venue_slug,
+      image_path: image_path,
+      setup_log: setup_log
+    }}
   end
 
   describe "real job execution with force_refresh_images flag" do
     test "force_refresh_images flag is properly processed", %{source: source} do
-      # First run the index job to get real venues
-      index_log = capture_log(fn ->
-        {:ok, _index_job} = Oban.insert(QuizmeistersIndexJob.new(%{
-          "source_id" => source.id,
-          "limit" => 3
-        }))
-
-        # Wait for the job to complete
-        :timer.sleep(2000)
-      end)
-
-      # Log should show that the index job ran successfully
-      assert index_log =~ "Starting Quizmeisters Index Job"
-
-      # Extract a real venue ID from the log to use in detail job
-      # This ensures we're using real data throughout
-
-      # First, run index with force_refresh_images disabled
+      # Run index with force_refresh_images disabled
       standard_log = capture_log(fn ->
         # Let the regular job queue handle scheduling the detail jobs
-        # The index job will automatically create detail jobs with real venues
         {:ok, _job} = Oban.insert(QuizmeistersIndexJob.new(%{
           "source_id" => source.id,
           "limit" => 1
@@ -129,48 +163,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
   end
 
   describe "hero image deletion" do
-    test "hero image is deleted from file system when force_refresh_images is true", %{source: source} do
-      # First run the index job to get venue data and image paths
-      setup_log = capture_log(fn ->
-        {:ok, _index_job} = Oban.insert(QuizmeistersIndexJob.new(%{
-          "source_id" => source.id,
-          "limit" => 3
-        }))
-
-        # Wait for the job to complete
-        :timer.sleep(3000)
-      end)
-
-      # Extract venue data from logs - looking for the image path info
-      venue_info = Regex.scan(~r/TEST INFO: For venue '(.+?)', images would be stored at: (priv\/static\/uploads\/venues\/[^\/]+\/)/, setup_log)
-
-      # Ensure we found at least one venue
-      assert length(venue_info) > 0, "No venues found in setup logs"
-
-      # Get the first venue's name and path from the regex match
-      [_, venue_name, venue_dir] = List.first(venue_info)
-
-      # Make sure the venue directory exists
-      venue_dir = String.trim_trailing(venue_dir, "/")
-      File.mkdir_p!(venue_dir)
-
-      # Create a test image file if none exists
-      image_filename = "test_hero_image.jpg"
-      image_path = Path.join(venue_dir, image_filename)
-
-      # Create the image file if it doesn't exist
-      unless File.exists?(image_path) do
-        File.write!(image_path, "test image content")
-      end
-
-      # Get the venue slug from the directory
-      venue_slug = Path.basename(venue_dir)
+    test "hero image is deleted from file system when force_refresh_images is true",
+         %{venue_slug: venue_slug, image_path: image_path} do
 
       # Set up the test environment
-      IO.puts("\n\n===== HERO IMAGE DELETION TEST SETUP =====")
-      IO.puts("Venue name: #{venue_name}")
+      IO.puts("\n\n===== HERO IMAGE DELETION TEST =====")
       IO.puts("Venue slug: #{venue_slug}")
-      IO.puts("Venue directory: #{venue_dir}")
       IO.puts("Test image: #{image_path}")
       IO.puts("===== END SETUP =====\n")
 
@@ -236,46 +234,11 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJobTest do
     end
 
     @tag :failing
-    test "hero image is re-added after being deleted with force_refresh_images", %{source: source} do
-      # First run the index job to get venue data and image paths
-      setup_log = capture_log(fn ->
-        {:ok, _index_job} = Oban.insert(QuizmeistersIndexJob.new(%{
-          "source_id" => source.id,
-          "limit" => 3
-        }))
-
-        # Wait for the job to complete
-        :timer.sleep(3000)
-      end)
-
-      # Extract venue data from logs - looking for the image path info
-      venue_info = Regex.scan(~r/TEST INFO: For venue '(.+?)', images would be stored at: (priv\/static\/uploads\/venues\/[^\/]+\/)/, setup_log)
-
-      # Ensure we found at least one venue
-      assert length(venue_info) > 0, "No venues found in setup logs"
-
-      # Get the first venue's name and path from the regex match
-      [_, venue_name, venue_dir] = List.first(venue_info)
-
-      # Make sure the venue directory exists
-      venue_dir = String.trim_trailing(venue_dir, "/")
-      File.mkdir_p!(venue_dir)
-
-      # Create a test image file if none exists
-      image_filename = "test_hero_image.jpg"
-      image_path = Path.join(venue_dir, image_filename)
-
-      # Create the image file if it doesn't exist
-      unless File.exists?(image_path) do
-        File.write!(image_path, "test image content")
-      end
-
-      # Get the venue slug from the directory
-      venue_slug = Path.basename(venue_dir)
+    test "hero image is re-added after being deleted with force_refresh_images",
+         %{source: source, venue_dir: venue_dir, venue_slug: venue_slug, image_path: image_path} do
 
       # Set up the test environment
-      IO.puts("\n\n===== HERO IMAGE RE-ADDITION TEST SETUP =====")
-      IO.puts("Venue name: #{venue_name}")
+      IO.puts("\n\n===== HERO IMAGE RE-ADDITION TEST =====")
       IO.puts("Venue slug: #{venue_slug}")
       IO.puts("Venue directory: #{venue_dir}")
       IO.puts("Test image: #{image_path}")
