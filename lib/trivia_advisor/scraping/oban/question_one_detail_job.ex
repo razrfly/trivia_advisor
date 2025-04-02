@@ -11,32 +11,55 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   alias TriviaAdvisor.Scraping.Scrapers.QuestionOne.VenueExtractor
   alias TriviaAdvisor.Locations.VenueStore
   alias TriviaAdvisor.Events.EventStore
+  alias TriviaAdvisor.Events.Event
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do
+    # Log exactly what args we received - to help with debugging
+    Logger.info("📦 Received job args: #{inspect(args)}")
+
     url = Map.get(args, "url")
     title = Map.get(args, "title")
     source_id = Map.get(args, "source_id")
 
-    # Extract force_refresh_images flag
+    # Extract force_refresh_images flag - log the exact args key/value
+    Logger.info("🔍 Looking for force_refresh_images in args: #{inspect(Map.get(args, "force_refresh_images"))}")
     force_refresh_images = Map.get(args, "force_refresh_images", false)
+
+    # CRITICAL: Set the flag explicitly to true if it's true in the args
+    # And this needs to be accessible throughout the job
     if force_refresh_images do
       Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+      # Store in process dictionary for access in other functions
+      Process.put(:force_refresh_images, true)
+    else
+      # Explicitly set to false to ensure it's not using a stale value
+      Process.put(:force_refresh_images, false)
     end
 
-    # Store in process dictionary for access in other functions
-    Process.put(:force_refresh_images, force_refresh_images)
+    # Now we can see the process dictionary value for debugging
+    Logger.info("📝 Process dictionary force_refresh_images set to: #{inspect(Process.get(:force_refresh_images))}")
 
     Logger.info("🔄 Processing Question One venue: #{title}")
 
     # Get the Question One source
     source = Repo.get!(Source, source_id)
 
-    # Process the venue using the existing logic
-    result = fetch_venue_details(%{url: url, title: title}, source, job_id)
+    # Store force_refresh_images in args to pass to fetch_venue_details - explicit passing
+    fetch_args = %{
+      url: url,
+      title: title,
+      force_refresh_images: Process.get(:force_refresh_images, false)
+    }
+
+    # Log the args being passed
+    Logger.info("🔍 Passing to fetch_venue_details: #{inspect(fetch_args)}")
+
+    # Process the venue using the existing logic - pass flag explicitly
+    result = fetch_venue_details(fetch_args, source, job_id)
 
     # Debug log the exact structure we're getting
     Logger.debug("📊 Result structure: #{inspect(result)}")
@@ -70,8 +93,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   # to avoid modifying the original code
 
   # Process a venue and create an event - adapted from QuestionOne.fetch_venue_details
-  defp fetch_venue_details(%{url: url, title: raw_title}, source, job_id) do
-    Logger.info("\n🔍 Processing venue: #{raw_title}")
+  defp fetch_venue_details(%{url: url, title: raw_title, force_refresh_images: passed_force_refresh}, source, job_id) do
+    Logger.info("\n🔍 Processing venue: #{raw_title} with force_refresh_images=#{inspect(passed_force_refresh)}")
 
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
@@ -93,14 +116,88 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
             Logger.info("🔄 Scheduling Google Place lookup job for venue: #{venue.name}")
             schedule_place_lookup(venue)
 
+            # CRITICAL FIX: Use the explicitly passed parameter instead of Process dictionary
+            # This ensures we're being consistent with the passed value
+            force_refresh_images = passed_force_refresh
+            Logger.info("🔄 Using explicitly passed force_refresh_images=#{inspect(force_refresh_images)} for venue: #{venue.name}")
+
+            # IMPLEMENTATION: Delete any existing hero images for this venue if force_refresh_images is true
+            # This ensures images are deleted even if there's no existing event with a hero_image in the DB
+            if force_refresh_images do
+              # Get venue slug for directory path
+              venue_slug = venue.slug
+
+              # Log the operation
+              Logger.info("🧨 Force refresh enabled - cleaning venue images directory for #{venue.name}")
+
+              # Construct the directory path
+              venue_images_dir = Path.join(["priv/static/uploads/venues", venue_slug])
+
+              # Check if directory exists before attempting to clean it
+              if File.exists?(venue_images_dir) do
+                # Get a list of image files in the directory
+                case File.ls(venue_images_dir) do
+                  {:ok, files} ->
+                    image_extensions = [".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]
+
+                    # Filter to only include image files
+                    image_files = Enum.filter(files, fn file ->
+                      ext = Path.extname(file) |> String.downcase()
+                      Enum.member?(image_extensions, ext)
+                    end)
+
+                    # Delete each image file
+                    Enum.each(image_files, fn image_file ->
+                      file_path = Path.join(venue_images_dir, image_file)
+                      Logger.info("🗑️ Deleting image file: #{file_path}")
+
+                      case File.rm(file_path) do
+                        :ok ->
+                          Logger.info("✅ Successfully deleted image file: #{file_path}")
+                        {:error, reason} ->
+                          Logger.error("❌ Failed to delete image file: #{file_path} - #{inspect(reason)}")
+                      end
+                    end)
+
+                    # Log summary
+                    Logger.info("🧹 Cleaned #{length(image_files)} image files from #{venue_images_dir}")
+
+                    # If there is an existing event, also clear the hero_image field in the database
+                    existing_event = find_existing_event(venue.id, extracted_data.day_of_week)
+                    if existing_event && existing_event.hero_image do
+                      Logger.info("🗑️ Clearing hero_image field for existing event #{existing_event.id}")
+
+                      {:ok, _updated_event} =
+                        existing_event
+                        |> Ecto.Changeset.change(%{hero_image: nil})
+                        |> Repo.update()
+
+                      Logger.info("🧼 Cleared hero_image field on event #{existing_event.id}")
+                    end
+                  {:error, reason} ->
+                    Logger.error("❌ Failed to list files in directory #{venue_images_dir}: #{inspect(reason)}")
+                end
+              else
+                Logger.info("⚠️ No existing venue images directory found at #{venue_images_dir}")
+              end
+            end
+
             # Process the hero image using the centralized ImageDownloader
             hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
-              # Get force_refresh_images from process dictionary
-              force_refresh_images = Process.get(:force_refresh_images, false)
+              # CRITICAL FIX: Use the explicitly passed parameter instead of Process dictionary
+              Logger.info("⚠️ Processing hero image with force_refresh=#{inspect(force_refresh_images)}")
 
               case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url, force_refresh_images) do
                 {:ok, upload} ->
                   Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
+
+                  # Log where the final image will be saved (before Waffle processes it)
+                  filename = upload.filename
+                  if venue && venue.slug do
+                    path = Path.join(["priv/static/uploads/venues", venue.slug, filename])
+                    Logger.info("🔄 Image will be saved to final path: #{path}")
+                  end
+
                   %{hero_image: upload, hero_image_url: extracted_data.hero_image_url}
                 {:error, reason} ->
                   Logger.warning("⚠️ Failed to download hero image for #{venue.name}: #{inspect(reason)}")
@@ -121,12 +218,33 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
               source_url: url
             } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
 
-            # Get force_refresh_images from process dictionary
-            force_refresh_images = Process.get(:force_refresh_images, false)
+            # CRITICAL FIX: Use the explicitly passed parameter, not process dictionary
+            # Log for debugging at this exact point
+            Logger.info("⚠️ Before Task.async force_refresh_images=#{inspect(force_refresh_images)}")
 
-            case EventStore.process_event(venue, event_data, source.id, force_refresh_images: force_refresh_images) do
-              {:ok, {:ok, event}} ->
+            # Create a task that explicitly captures force_refresh_images for the Task
+            # Process dictionary values don't transfer to Task processes - MUST NOT use process dictionary inside Task
+            event_task = Task.async(fn ->
+              # Log inside task to verify we're using the captured variable
+              Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)} from captured variable")
+
+              # Pass force_refresh_images explicitly as a keyword argument
+              EventStore.process_event(venue, event_data, source.id, force_refresh_images: force_refresh_images)
+            end)
+
+            # Use a generous timeout for event processing
+            case Task.yield(event_task, 45_000) || Task.shutdown(event_task) do
+              {:ok, {:ok, {:ok, event}}} ->
                 Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+
+                # Log the saved hero image with real path if it exists
+                if event.hero_image && event.hero_image.file_name do
+                  filename = event.hero_image.file_name
+                  venue_slug = venue.slug
+                  path = Path.join(["priv/static/uploads/venues", venue_slug, filename])
+
+                  Logger.info("✅ Saved new hero image to: #{path}")
+                end
 
                 # Create metadata for reporting
                 metadata = %{
@@ -151,9 +269,43 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
                 }}, source_id: source.id)
 
                 {:ok, venue}
-              {:error, reason} ->
+
+              {:ok, {:ok, event}} when is_map(event) ->
+                Logger.info("✅ Successfully processed event for venue: #{venue.name}")
+
+                # Log the saved hero image with real path if it exists
+                if event.hero_image && event.hero_image.file_name do
+                  filename = event.hero_image.file_name
+                  venue_slug = venue.slug
+                  path = Path.join(["priv/static/uploads/venues", venue_slug, filename])
+
+                  Logger.info("✅ Saved new hero image to: #{path}")
+                end
+
+                # Create metadata
+                metadata = %{
+                  "venue_name" => venue.name,
+                  "venue_id" => venue.id,
+                  "venue_url" => url,
+                  "event_id" => event.id,
+                  "source_id" => source.id,
+                  "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+                }
+
+                JobMetadata.update_detail_job(job_id, metadata, {:ok, %{
+                  venue_id: venue.id,
+                  event_id: event.id
+                }}, source_id: source.id)
+
+                {:ok, venue}
+
+              {:ok, {:error, reason}} ->
                 Logger.error("❌ Failed to process event: #{inspect(reason)}")
                 {:error, reason}
+
+              nil ->
+                Logger.error("⏱️ Timeout in EventStore.process_event for venue #{venue.name}")
+                {:error, "EventStore.process_event timeout"}
             end
           else
             {:error, reason} ->
@@ -187,6 +339,18 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
         Logger.error("❌ Error fetching venue #{url}: #{inspect(error)}")
         {:error, error}
     end
+  end
+
+  # Find an existing event by venue_id and day_of_week
+  defp find_existing_event(venue_id, day_of_week) do
+    import Ecto.Query
+
+    Repo.one(
+      from e in Event,
+      where: e.venue_id == ^venue_id and
+             e.day_of_week == ^day_of_week,
+      limit: 1
+    )
   end
 
   # Schedules a separate job for Google Place API lookups

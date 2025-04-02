@@ -243,7 +243,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuizmeistersDetailJob do
 
         # Use a descriptive request ID for tracking in logs
         request_id = "venue_#{venue_data.name}_#{DateTime.utc_now() |> DateTime.to_unix()}"
-        HTTPoison.get(url, headers, recv_timeout: 15_000, hackney: [pool: :default], request_id: request_id)
+        HTTPoison.get(url, headers, [recv_timeout: 15_000, hackney: [pool: :default], follow_redirect: true, request_id: request_id])
       catch
         error ->
           Logger.error("Error fetching venue details: #{inspect(error)}")
