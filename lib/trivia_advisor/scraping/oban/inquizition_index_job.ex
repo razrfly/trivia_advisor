@@ -555,40 +555,4 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
       time -> time
     end
   end
-
-  @doc """
-  Create a test run for a single venue to verify processing works.
-  Used for testing only.
-  """
-  def test_single_venue(venue_name, venue_address) do
-    # Find the venue in the database first, to make sure it exists
-    venue_data = %{
-      "name" => venue_name,
-      "address" => venue_address,
-      "time_text" => "",
-      "phone" => nil,
-      "website" => nil
-    }
-
-    # Get the Inquizition source
-    source = Repo.get_by!(Source, name: "inquizition")
-
-    Logger.info("🧪 Testing single venue processing for: #{venue_name}, #{venue_address}")
-
-    # Process the single venue
-    result = Scraper.process_single_venue(venue_data, source.id)
-
-    # Return the result
-    case result do
-      [ok: venue] ->
-        Logger.info("✅ Successfully processed test venue: #{venue.name}")
-        {:ok, venue}
-      nil ->
-        Logger.error("❌ Failed to process test venue: #{venue_name}")
-        {:error, :processing_failed}
-      other ->
-        Logger.error("❌ Unexpected result: #{inspect(other)}")
-        {:error, :unexpected_result}
-    end
-  end
 end

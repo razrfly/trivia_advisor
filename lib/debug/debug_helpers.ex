@@ -9,6 +9,8 @@ defmodule TriviaAdvisor.Debug.Helpers do
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionIndexJob
+  alias TriviaAdvisor.Locations.Venue
+  import Ecto.Query
 
   @doc """
   Test function for InquizitionIndexJob to process a single venue.
@@ -28,7 +30,8 @@ defmodule TriviaAdvisor.Debug.Helpers do
 
     Logger.info("🧪 Testing single venue processing for: #{venue_name}, #{venue_address}")
 
-    # Process the single venue
+    # Process the single venue directly
+    # This replaces the call to removed test_single_venue function
     result = Scraper.process_single_venue(venue_data, source.id)
 
     # Return the result
@@ -46,32 +49,60 @@ defmodule TriviaAdvisor.Debug.Helpers do
   end
 
   @doc """
-  Test function to find a venue by name and address using InquizitionIndexJob's venue lookup logic.
+  Find a venue by name and address - implementation reimplemented from the removed test function.
   """
   def find_inquizition_venue(name, address) do
-    InquizitionIndexJob.test_find_venue(name, address)
+    # Find venue by name and address directly
+    if is_binary(name) and is_binary(address) do
+      venue = Repo.one(from v in Venue,
+        where: v.name == ^name and v.address == ^address,
+        limit: 1)
+
+      if venue, do: {:ok, venue}, else: {:error, :not_found}
+    else
+      {:error, :invalid_arguments}
+    end
   end
 
   @doc """
-  Test function to load existing sources using InquizitionIndexJob's logic.
-  """
-  def load_inquizition_sources(source_id) do
-    InquizitionIndexJob.test_load_existing_sources(source_id)
-  end
-
-  @doc """
-  Test function to check if a venue should be processed using InquizitionIndexJob's logic.
-  """
-  def should_process_inquizition_venue?(venue, existing_sources_by_venue) do
-    InquizitionIndexJob.test_should_process_venue?(venue, existing_sources_by_venue)
-  end
-
-  @doc """
-  Test function to generate a venue key using InquizitionIndexJob's logic.
+  Generate a venue key from name and address - reimplemented from the removed test function.
   """
   def generate_inquizition_venue_key(name, address) do
-    InquizitionIndexJob.test_venue_key(name, address)
+    # Normalize name (remove parenthetical suffixes)
+    name_without_suffix = name
+                      |> String.replace(~r/\s*\([^)]+\)\s*$/, "")
+                      |> String.trim()
+
+    normalized_name = name_without_suffix
+                  |> String.downcase()
+                  |> String.trim()
+
+    normalized_address = address
+                       |> String.downcase()
+                       |> String.replace(~r/\s+/, " ")
+                       |> String.trim()
+
+    "#{normalized_name}|#{normalized_address}"
   end
+
+  # The following functions are commented out as they would need more complex reimplementation
+  # and might not be worth the effort since they're only used for debugging
+
+  # @doc """
+  # Load existing sources - commented out as it would need complex reimplementation.
+  # """
+  # def load_inquizition_sources(_source_id) do
+  #   Logger.warning("load_inquizition_sources is no longer available")
+  #   %{}
+  # end
+
+  # @doc """
+  # Check if a venue should be processed - commented out as it would need complex reimplementation.
+  # """
+  # def should_process_inquizition_venue?(_venue, _existing_sources_by_venue) do
+  #   Logger.warning("should_process_inquizition_venue? is no longer available")
+  #   true
+  # end
 
   @doc """
   Run the full InquizitionIndexJob with optional arguments.
