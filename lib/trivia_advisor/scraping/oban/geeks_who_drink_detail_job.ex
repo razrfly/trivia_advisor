@@ -11,24 +11,46 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   alias TriviaAdvisor.Scraping.Scrapers.GeeksWhoDrink.VenueDetailsExtractor
   alias TriviaAdvisor.Scraping.Helpers.{TimeParser, VenueHelpers, JobMetadata}
   alias TriviaAdvisor.Locations.VenueStore
-  alias TriviaAdvisor.Events.{EventStore, Performer}
+  alias TriviaAdvisor.Events.{EventStore, Performer, Event}
   alias TriviaAdvisor.Scraping.Helpers.ImageDownloader
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
   alias HtmlEntities
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"venue" => venue_data, "source_id" => source_id}, id: job_id}) do
-    Logger.info("🔄 Processing venue: #{venue_data["title"]}")
+  def perform(%Oban.Job{args: args, id: job_id}) do
+    # Extract essential data from args
+    venue_data = Map.get(args, "venue")
+    source_id = Map.get(args, "source_id")
+
+    # Log relevant job arguments for debugging
+    Logger.info("📦 Processing venue: #{venue_data["title"]} (url: #{venue_data["source_url"]}, force_refresh_images: #{Map.get(args, "force_refresh_images", false)})")
+
+    # Extract force_refresh_images with explicit default
+    force_refresh_images = Map.get(args, "force_refresh_images", false)
+
+    # CRITICAL: Set the flag explicitly in process dictionary
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images for venue: #{venue_data["title"]}")
+      Process.put(:force_refresh_images, true)
+    else
+      # Explicitly set to false to ensure it's not using a stale value
+      Process.put(:force_refresh_images, false)
+    end
+
+    # Log the value for verification
+    Logger.info("📝 Process dictionary force_refresh_images set to: #{inspect(Process.get(:force_refresh_images))}")
+
     source = Repo.get!(Source, source_id)
 
-    # Process the venue and event using existing code patterns
-    case process_venue(venue_data, source) do
+    # Process the venue and event using existing code patterns with explicit flag passing
+    case process_venue(venue_data, source, force_refresh_images) do
       {:ok, %{venue: venue, event: event, final_data: final_data}} ->
         # Simply add timestamp and essential IDs to the final_data
         metadata = Map.merge(final_data, %{
           "processed_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
           "venue_id" => venue.id,
-          "event_id" => event.id
+          "event_id" => event.id,
+          "force_refresh_images" => force_refresh_images  # Include the flag in metadata
         })
 
         # Create simple result for return value
@@ -43,7 +65,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
       {:error, reason} = error ->
         # Update job metadata with error information
         JobMetadata.update_error(job_id, reason, context: %{
-          "venue_title" => venue_data["title"]
+          "venue_title" => venue_data["title"],
+          "force_refresh_images" => force_refresh_images  # Include the flag in error context
         })
 
         Logger.error("❌ Failed to process venue: #{venue_data["title"]} - #{inspect(reason)}")
@@ -52,7 +75,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
   end
 
   # Process venue - adapted from GeeksWhoDrink scraper
-  def process_venue(venue_data, source) do
+  # Add force_refresh_images parameter for explicit passing
+  def process_venue(venue_data, source, force_refresh_images) do
     try do
       # Get additional details from venue page
       additional_details =
@@ -137,9 +161,15 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
           # Get performer ID if present
           performer_id = get_performer_id(source.id, additional_details)
 
-          # Process hero image if present
+          # If force_refresh_images is true, clean existing images
+          if force_refresh_images do
+            clean_venue_hero_image(venue, day_of_week)
+          end
+
+          # Process hero image if present with force_refresh flag
           hero_image_attrs = if venue_data["logo_url"] && venue_data["logo_url"] != "" do
-            case ImageDownloader.download_event_hero_image(venue_data["logo_url"]) do
+            # Explicitly pass the force_refresh flag to the downloader
+            case ImageDownloader.download_event_hero_image(venue_data["logo_url"], force_refresh_images) do
               {:ok, upload} ->
                 Logger.debug("🖼️ Downloaded hero image: #{inspect(upload, pretty: true)}")
                 %{hero_image: upload, hero_image_url: venue_data["logo_url"]}
@@ -162,10 +192,21 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
             performer_id: performer_id
           } |> Map.merge(hero_image_attrs)
 
-          # Process the event and unwrap the result safely
-          event_result = EventStore.process_event(venue, event_data, source.id)
+          # Log inside this context to verify force_refresh_images value
+          Logger.info("⚠️ Before creating event task, force_refresh=#{inspect(force_refresh_images)}")
+
+          # CRITICAL: Use Task with explicit variable capture for force_refresh_images
+          event_task = Task.async(fn ->
+            # Log inside task to verify value was captured
+            Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)}")
+
+            # Process the event and unwrap the result safely
+            # Pass force_refresh_images explicitly to EventStore.process_event
+            EventStore.process_event(venue, event_data, source.id, force_refresh_images: force_refresh_images)
+          end)
 
           # Debug log to see exactly what the event_result contains
+          event_result = Task.await(event_task)
           Logger.debug("🎭 EventStore.process_event result: #{inspect(event_result, pretty: true)}")
 
           # Double pattern match to handle nested tuples - THIS IS THE KEY FIX!
@@ -187,7 +228,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
                 "frequency" => event.frequency && to_string(event.frequency),
                 "fee_text" => "Free",
                 "time_text" => time_text,
-                "source_name" => source.name
+                "source_name" => source.name,
+                "force_refresh_images" => force_refresh_images  # Include the flag in the final data
               }
 
               # Add performer ID if available
@@ -272,7 +314,8 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
               "venue_id" => venue_id,
               "venue_name" => venue_name,
               "event_id" => event_id,
-              "error_recovered" => true
+              "error_recovered" => true,
+              "force_refresh_images" => force_refresh_images  # Include the flag in recovered data
             }
 
             # Add performer ID if available
@@ -296,6 +339,42 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkDetailJob do
           {:error, error_message}
         end
     end
+  end
+
+  # Clean existing hero image when force_refresh_images is true
+  defp clean_venue_hero_image(venue, day_of_week) do
+    # Find existing event for this venue and day
+    existing_event = find_existing_event(venue.id, day_of_week)
+
+    if existing_event && existing_event.hero_image do
+      Logger.info("🧨 Force refresh enabled - clearing hero image for event at venue: #{venue.name}")
+
+      # Clear hero_image field in database
+      try do
+        existing_event
+        |> Ecto.Changeset.change(%{hero_image: nil})
+        |> Repo.update()
+        |> case do
+          {:ok, _updated} ->
+            Logger.info("✅ Successfully cleared hero_image field for event ID: #{existing_event.id}")
+          {:error, reason} ->
+            Logger.error("❌ Failed to clear hero_image field: #{inspect(reason)}")
+        end
+      rescue
+        e -> Logger.error("❌ Exception clearing hero_image: #{Exception.message(e)}")
+      end
+    else
+      if existing_event do
+        Logger.info("ℹ️ No existing hero image to clear for event ID: #{existing_event.id}")
+      else
+        Logger.info("ℹ️ No existing event found for venue: #{venue.name} on day #{day_of_week}")
+      end
+    end
+  end
+
+  # Find an existing event for a venue on a specific day
+  defp find_existing_event(venue_id, day_of_week) do
+    Repo.get_by(Event, venue_id: venue_id, day_of_week: day_of_week)
   end
 
   # Format event time - adapted from GeeksWhoDrink scraper
