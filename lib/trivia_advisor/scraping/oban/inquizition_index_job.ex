@@ -7,7 +7,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.Venue
-  alias TriviaAdvisor.Events.{Event, EventSource}
+  alias TriviaAdvisor.Events.EventSource
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionDetailJob
@@ -21,36 +21,34 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting Inquizition Index Job...")
 
-    # Store args in process dictionary for access in other functions
-    Process.put(:job_args, args)
-
     # Check if a limit is specified (for testing)
     limit = Map.get(args, "limit")
 
     # Check if we should force update all venues
     force_update = RateLimiter.force_update?(args)
+    force_refresh_images = Map.get(args, "force_refresh_images", false)
+
     if force_update do
       Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
+    end
+
+    if force_refresh_images do
+      Logger.info("⚠️ Force refresh images enabled - will refresh all venue images")
     end
 
     # Get the Inquizition source
     source = Repo.get_by!(Source, name: "inquizition")
     Logger.debug("📊 Found source: #{inspect(source)}")
 
-    # First, pre-fetch all existing event sources for comparison
-    # This lets us determine which venues to skip before any expensive processing
-    existing_sources_by_venue = load_existing_sources(source.id)
-    Logger.debug("📊 Loaded #{map_size(existing_sources_by_venue)} existing sources")
-
     # Call the scraper to get all raw venue data (without processing)
     case try_fetch_venues() do
       {:ok, raw_venues} ->
-    # Count total venues found
+        # Count total venues found
         total_venues = length(raw_venues)
         Logger.info("📊 Found #{total_venues} total raw venues")
         Logger.debug("📊 Raw venues: #{inspect(raw_venues)}")
 
-    # Limit venues if needed (for testing)
+        # Limit venues if needed (for testing)
         venues_to_process = if limit, do: Enum.take(raw_venues, limit), else: raw_venues
         limited_count = length(venues_to_process)
 
@@ -58,20 +56,18 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           Logger.info("🧪 Testing mode: Limited to #{limited_count} venues (out of #{total_venues} total)")
         end
 
-        # Pre-filter venues that should be skipped based on last_seen_at
-        # Check if force update is enabled
-        force_update = RateLimiter.force_update?(args)
-
-        # Filter based on force_update flag
+        # Filter venues that should be processed based on last_seen_at
         {to_process, to_skip} = if force_update do
           # If force_update is true, process all venues
           Logger.info("🔄 Force update enabled - processing ALL venues")
           {venues_to_process, []}
         else
-          # This is the key improvement - we filter BEFORE expensive operations
+          # Filter based on last_seen_at in EventSource
           venues_to_process
           |> Enum.split_with(fn venue_data ->
-            should_process_venue?(venue_data, existing_sources_by_venue)
+            _venue_key = generate_venue_key(venue_data["name"], venue_data["address"])
+            source_url = generate_source_url(%{name: venue_data["name"]})
+            should_process_venue?(source_url, source.id)
           end)
         end
 
@@ -83,12 +79,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
         # Log which venues are being skipped
         Enum.each(to_skip, fn venue_data ->
-          venue_key = generate_venue_key(venue_data["name"], venue_data["address"])
-          last_seen_at = Map.get(existing_sources_by_venue, venue_key)
-
-          if last_seen_at do
-            Logger.info("⏩ Skipping venue '#{venue_data["name"]}' - recently seen on #{DateTime.to_iso8601(last_seen_at)}")
-          end
+          _venue_key = generate_venue_key(venue_data["name"], venue_data["address"])
+          Logger.info("⏩ Skipping venue '#{venue_data["name"]}' - recently seen")
         end)
 
         # Now process only the venues that need processing
@@ -137,37 +129,35 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
               Map.get(venue, :start_time) || extract_start_time(%{time_text: time_text})
             }
 
-        # Build venue data for the detail job
-        venue_data = %{
-          "name" => venue.name,
-          "address" => venue.address,
-          "phone" => venue.phone,
-          "website" => venue.website,
-          "source_id" => source.id,
-          "time_text" => time_text,
-          "day_of_week" => day_of_week,
-          "start_time" => start_time,
-          "frequency" => Map.get(venue, :frequency) || "weekly",
-          "entry_fee" => Map.get(venue, :entry_fee) || "2.50",
-          "description" => Map.get(venue, :description),
-          "hero_image" => Map.get(venue, :hero_image),
-          "hero_image_url" => Map.get(venue, :hero_image_url),
-          "facebook" => Map.get(venue, :facebook),
-          "instagram" => Map.get(venue, :instagram),
+            # Build venue data for the detail job
+            venue_data = %{
+              "name" => venue.name,
+              "address" => venue.address,
+              "phone" => venue.phone,
+              "website" => venue.website,
+              "source_id" => source.id,
+              "time_text" => time_text,
+              "day_of_week" => day_of_week,
+              "start_time" => start_time,
+              "frequency" => Map.get(venue, :frequency) || "weekly",
+              "entry_fee" => Map.get(venue, :entry_fee) || "2.50",
+              "description" => Map.get(venue, :description),
+              "hero_image" => Map.get(venue, :hero_image),
+              "hero_image_url" => Map.get(venue, :hero_image_url),
+              "facebook" => Map.get(venue, :facebook),
+              "instagram" => Map.get(venue, :instagram),
               "source_url" => generate_source_url(venue)
-        }
+            }
 
             Logger.debug("📦 Created venue_data for job: #{inspect(venue_data)}")
 
-        # Get force_update flag to pass to detail jobs
-        force_update = RateLimiter.force_update?(args)
-
-        # Create the job with the scheduled_in parameter
+            # Create the job with proper arguments including flags
             job = %{
-              venue_data: venue_data,
-              force_update: force_update  # Pass force_update flag to detail jobs
+              "venue_data" => venue_data,
+              "force_update" => force_update,
+              "force_refresh_images" => force_refresh_images
             }
-        |> InquizitionDetailJob.new(schedule_in: scheduled_in)
+            |> InquizitionDetailJob.new(schedule_in: scheduled_in)
 
             Logger.debug("🔄 Created job for venue #{venue.name} to run in #{scheduled_in} seconds")
 
@@ -175,10 +165,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
             Logger.debug("🔄 Job structure: #{inspect(job)}")
 
             job
-      end
-    )
+          end
+        )
 
-    Logger.info("📥 Enqueued #{enqueued_count} Inquizition detail jobs with rate limiting")
+        Logger.info("📥 Enqueued #{enqueued_count} Inquizition detail jobs with rate limiting")
 
         # Create metadata for reporting
         metadata = %{
@@ -223,88 +213,39 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     "#{base_url}##{slug}"
   end
 
-  # Load existing event sources for comparison, keyed by normalized venue name + address
-  defp load_existing_sources(source_id) do
-    # Find all EventSources for this source - this captures venues that have been fully processed
-    event_sources = from(es in EventSource,
-      join: e in Event, on: es.event_id == e.id,
-      join: v in Venue, on: e.venue_id == v.id,
-      where: es.source_id == ^source_id,
-      select: {
-        v.name,
-        v.address,
-        es.last_seen_at
-      })
-      |> Repo.all()
-      |> Enum.reduce(%{}, fn {name, address, last_seen_at}, acc ->
-        key = generate_venue_key(name, address)
-        Map.put(acc, key, last_seen_at)
-      end)
-
-    # IMPORTANT: Unlike before, we don't add non-event venues with a current timestamp
-    # This allows venues in the database without events to be processed
-    event_sources
+  # Check if a venue should be processed based on its URL and last update time
+  defp should_process_venue?(url, source_id) do
+    # Find existing event sources with this URL
+    case find_venues_by_source_url(url, source_id) do
+      [] ->
+        # No existing venues with this URL, should process
+        true
+      event_sources ->
+        # Check if any of these event sources were updated within the threshold
+        not Enum.any?(event_sources, fn event_source ->
+          recently_updated?(event_source)
+        end)
+    end
   end
 
-  # Check if a venue should be processed based on its last seen date
-  defp should_process_venue?(venue, existing_sources_by_venue) do
-    venue_name = venue["name"]
-    venue_address = venue["address"]
+  # Find event sources matching a URL
+  defp find_venues_by_source_url(url, source_id) do
+    query = from es in EventSource,
+      where: es.source_url == ^url and es.source_id == ^source_id,
+      select: es
 
-    # Extract postcode for direct DB lookup
-    postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, venue_address) do
-      [matched_postcode] -> String.trim(matched_postcode)
-      nil -> nil
-    end
+    Repo.all(query)
+  end
 
-    # If we find a venue with this postcode, immediately skip it
-    if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
-      Logger.info("⏩ Skipping venue - postcode #{postcode} already exists in database: #{venue_name}")
-      false
-    else
-      # No postcode match, so try comprehensive DB lookup
-      existing_venue = find_venue_by_name_and_address(venue_name, venue_address)
+  # Check if an event source was recently updated
+  defp recently_updated?(event_source) do
+    # Calculate the threshold date
+    threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
 
-      # If it exists, we should skip it
-      if existing_venue do
-        Logger.info("⏩ Skipping venue - already exists in database: #{venue_name} (ID: #{existing_venue.id})")
-        false
-      else
-        # If not found in database, proceed with regular check based on last_seen_at
-        venue_key = generate_venue_key(venue_name, venue_address)
-
-        # Get the last_seen_at timestamp for this venue (if it exists)
-        last_seen_at = Map.get(existing_sources_by_venue, venue_key)
-
-        cond do
-          # Emergency check - search by name if we have a venue with same name but different address
-          is_nil(last_seen_at) && Repo.exists?(from v in Venue, where: v.name == ^venue_name) ->
-            Logger.info("⏩ Emergency skip - name match found in database: #{venue_name}")
-            false
-
-          # Venue not seen before, should process
-          is_nil(last_seen_at) ->
-            Logger.info("🆕 New venue not seen before: #{venue_name}")
-            true
-
-          # Check if we've seen it recently
-          true ->
-            # Calculate cutoff date (5 days ago)
-            threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
-
-            # Compare last_seen_at with cutoff date
-            case DateTime.compare(last_seen_at, threshold_date) do
-              :lt ->
-                # Last seen before cutoff date, should process
-                Logger.info("🔄 Venue last seen on #{DateTime.to_iso8601(last_seen_at)}, which is before cutoff date. Will process: #{venue_name}")
-                true
-              _ ->
-                # Last seen after cutoff date, should skip
-                Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
-                false
-            end
-        end
-      end
+    # Compare the last_seen_at with the threshold
+    case event_source.last_seen_at do
+      nil -> false
+      last_seen_at -> DateTime.compare(last_seen_at, threshold_date) == :gt
     end
   end
 
