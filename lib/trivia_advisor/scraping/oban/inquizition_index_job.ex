@@ -313,7 +313,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
               _ ->
                 # Last seen after cutoff date, should skip
                 Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
-          false
+                false
             end
         end
       end
