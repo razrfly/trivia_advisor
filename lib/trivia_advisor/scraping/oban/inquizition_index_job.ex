@@ -56,10 +56,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         end
 
         # Pre-filter venues that should be skipped based on last_seen_at
-        # Check if force update is enabled
-        force_update = RateLimiter.force_update?(args)
-
-        # Filter based on force_update flag
+        # Use the force_update value we already checked above, don't duplicate the check
         {to_process, to_skip} = if force_update do
           # If force_update is true, process all venues
           Logger.info("🔄 Force update enabled - processing ALL venues")
@@ -238,24 +235,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         Map.put(acc, key, last_seen_at)
       end)
 
-    # Also find all existing venues in the database, even if they don't have events yet
-    # This prevents re-processing venues that exist but don't yet have events
-    existing_venues = from(v in Venue,
-      where: not is_nil(v.postcode), # Focus on venues with postcodes
-      select: {v.name, v.address})
-      |> Repo.all()
-      |> Enum.reduce(event_sources, fn {name, address}, acc ->
-        key = generate_venue_key(name, address)
-        # If this venue doesn't have an event source record yet, add it with a recent timestamp
-        # to prevent it from being processed again
-        if not Map.has_key?(acc, key) do
-          Map.put(acc, key, DateTime.utc_now())
-        else
-          acc
-        end
-      end)
-
-    existing_venues
+    # Unlike before, we will NOT mark all venues as recently updated
+    # This was causing all venues to be skipped because they appeared to be new
+    # We'll just return the event_sources map directly
+    event_sources
   end
 
   # Check if a venue should be processed based on its last seen date
@@ -263,58 +246,97 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     venue_name = venue["name"]
     venue_address = venue["address"]
 
+    # Generate venue key for lookup in existing_sources
+    venue_key = generate_venue_key(venue_name, venue_address)
+
+    # Get the last_seen_at timestamp for this venue (if it exists)
+    last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+    Logger.debug("🔍 DEBUG: Venue '#{venue_name}' has last_seen_at: #{inspect(last_seen_at)}")
+
+    # Calculate cutoff date (days ago based on RateLimiter value)
+    cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+    Logger.debug("🔍 DEBUG: Cutoff date is: #{inspect(cutoff_date)}")
+
     # Extract postcode for direct DB lookup
     postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, venue_address) do
       [matched_postcode] -> String.trim(matched_postcode)
       nil -> nil
     end
+    Logger.debug("🔍 DEBUG: Extracted postcode: #{inspect(postcode)}")
 
-    # If we find a venue with this postcode, immediately skip it
-    if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
-      Logger.info("⏩ Skipping venue - postcode #{postcode} already exists in database: #{venue_name}")
+    # First check if we have the venue in our mapping with a recent timestamp
+    if !is_nil(last_seen_at) && DateTime.compare(last_seen_at, cutoff_date) == :gt do
+      # Venue was seen recently, skip it
+      Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
+      Logger.debug("🔍 DEBUG: last_seen_at > cutoff_date? #{DateTime.compare(last_seen_at, cutoff_date) == :gt}")
       false
     else
-      # No postcode match, so try comprehensive DB lookup
-      existing_venue = find_venue_by_name_and_address(venue_name, venue_address)
+      # Venue was not seen recently (or never seen)
+      # If we have a postcode, check if it exists in the database
+      if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
+        has_postcode = Repo.exists?(from v in Venue, where: v.postcode == ^postcode)
+        Logger.debug("🔍 DEBUG: Postcode exists in DB? #{has_postcode}")
 
-      # If it exists, we should skip it
-      if existing_venue do
-        Logger.info("⏩ Skipping venue - already exists in database: #{venue_name} (ID: #{existing_venue.id})")
-        false
-      else
-        # If not found in database, proceed with regular check based on last_seen_at
-        venue_key = generate_venue_key(venue_name, venue_address)
+        # Postcode exists - check if this specific venue has a recent event_source record
+        venue_with_postcode = Repo.one(from v in Venue,
+          where: v.postcode == ^postcode,
+          limit: 1)
 
-        # Get the last_seen_at timestamp for this venue (if it exists)
-        last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+        if venue_with_postcode do
+          # Get source_id from Process dictionary args
+          source_id =
+            case Process.get(:job_args) do
+              %{"source_id" => id} -> id
+              _ ->
+                # Fallback to Inquizition source
+                case Repo.get_by(Source, name: "inquizition") do
+                  %{id: id} -> id
+                  _ -> 3 # Absolute last resort fallback
+                end
+            end
 
-        cond do
-          # Emergency check - search by name if we have a venue with same name but different address
-          is_nil(last_seen_at) && Repo.exists?(from v in Venue, where: v.name == ^venue_name) ->
-            Logger.info("⏩ Emergency skip - name match found in database: #{venue_name}")
+          # Check if this venue has an event_source record from this source
+          has_recent_source = Repo.exists?(from es in EventSource,
+            join: e in Event, on: es.event_id == e.id,
+            where: e.venue_id == ^venue_with_postcode.id and
+                   es.source_id == ^source_id and
+                   es.last_seen_at > ^cutoff_date)
+
+          Logger.debug("🔍 DEBUG: Venue with postcode has recent source? #{has_recent_source}")
+
+          if has_recent_source do
+            # Venue with this postcode was processed recently, skip it
+            Logger.info("⏩ Skipping venue - postcode #{postcode} exists and was updated recently: #{venue_name}")
             false
-
+          else
+            # Venue exists but hasn't been updated recently, process it
+            Logger.info("🔄 Processing venue - postcode #{postcode} exists but needs updating: #{venue_name}")
+            true
+          end
+        else
+          # This shouldn't happen (postcode exists but venue not found)
+          # Be permissive and process it
+          Logger.info("🆕 Processing new venue with existing postcode (unusual): #{venue_name}")
+          true
+        end
+      else
+        Logger.debug("🔍 DEBUG: No postcode match found")
+        # No postcode match, process based on last_seen_at
+        cond do
           # Venue not seen before, should process
           is_nil(last_seen_at) ->
             Logger.info("🆕 New venue not seen before: #{venue_name}")
             true
 
-          # Check if we've seen it recently
-          true ->
-            # Calculate cutoff date (5 days ago)
-            cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+          # Venue seen before cutoff date, should process
+          DateTime.compare(last_seen_at, cutoff_date) == :lt ->
+            Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
+            true
 
-            # Compare last_seen_at with cutoff date
-            case DateTime.compare(last_seen_at, cutoff_date) do
-              :lt ->
-                # Last seen before cutoff date, should process
-                Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
-                true
-              _ ->
-                # Last seen after cutoff date, should skip
-                Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
-                false
-            end
+          # This case shouldn't be reached (handled at the top), but for completeness:
+          true ->
+            Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
+            false
         end
       end
     end
