@@ -283,11 +283,23 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           limit: 1)
 
         if venue_with_postcode do
+          # Get source_id from Process dictionary args
+          source_id =
+            case Process.get(:job_args) do
+              %{"source_id" => id} -> id
+              _ ->
+                # Fallback to Inquizition source
+                case Repo.get_by(Source, name: "inquizition") do
+                  %{id: id} -> id
+                  _ -> 3 # Absolute last resort fallback
+                end
+            end
+
           # Check if this venue has an event_source record from this source
           has_recent_source = Repo.exists?(from es in EventSource,
             join: e in Event, on: es.event_id == e.id,
             where: e.venue_id == ^venue_with_postcode.id and
-                   es.source_id == 3 and
+                   es.source_id == ^source_id and
                    es.last_seen_at > ^cutoff_date)
 
           Logger.debug("🔍 DEBUG: Venue with postcode has recent source? #{has_recent_source}")
