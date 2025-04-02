@@ -246,46 +246,76 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     venue_name = venue["name"]
     venue_address = venue["address"]
 
+    # Generate venue key for lookup in existing_sources
+    venue_key = generate_venue_key(venue_name, venue_address)
+
+    # Get the last_seen_at timestamp for this venue (if it exists)
+    last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+
+    # Calculate cutoff date (days ago based on RateLimiter value)
+    cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+
     # Extract postcode for direct DB lookup
     postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, venue_address) do
       [matched_postcode] -> String.trim(matched_postcode)
       nil -> nil
     end
 
-    # If we find a venue with this postcode, immediately skip it
-    if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
-      Logger.info("⏩ Skipping venue - postcode #{postcode} already exists in database: #{venue_name}")
+    # First check if we have the venue in our mapping with a recent timestamp
+    if !is_nil(last_seen_at) && DateTime.compare(last_seen_at, cutoff_date) == :gt do
+      # Venue was seen recently, skip it
+      Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
       false
     else
-      # Generate venue key for lookup in existing_sources
-      venue_key = generate_venue_key(venue_name, venue_address)
+      # Venue was not seen recently (or never seen)
+      # If we have a postcode, check if it exists in the database
+      if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
+        # Postcode exists - check if this specific venue has a recent event_source record
+        venue_with_postcode = Repo.one(from v in Venue,
+          where: v.postcode == ^postcode,
+          limit: 1)
 
-      # Get the last_seen_at timestamp for this venue (if it exists)
-      last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+        if venue_with_postcode do
+          # Check if this venue has an event_source record from this source
+          has_recent_source = Repo.exists?(from es in EventSource,
+            join: e in Event, on: es.event_id == e.id,
+            where: e.venue_id == ^venue_with_postcode.id and
+                   es.source_id == 3 and
+                   es.last_seen_at > ^cutoff_date)
 
-      # Simplified check based on last_seen_at - more like the other scrapers
-      cond do
-        # Venue not seen before, should process
-        is_nil(last_seen_at) ->
-          Logger.info("🆕 New venue not seen before: #{venue_name}")
-          true
-
-        # Check if we've seen it recently
-        true ->
-          # Calculate cutoff date (days ago based on RateLimiter value)
-          cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
-
-          # Compare last_seen_at with cutoff date
-          case DateTime.compare(last_seen_at, cutoff_date) do
-            :lt ->
-              # Last seen before cutoff date, should process
-              Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
-              true
-            _ ->
-              # Last seen after cutoff date, should skip
-              Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
-              false
+          if has_recent_source do
+            # Venue with this postcode was processed recently, skip it
+            Logger.info("⏩ Skipping venue - postcode #{postcode} exists and was updated recently: #{venue_name}")
+            false
+          else
+            # Venue exists but hasn't been updated recently, process it
+            Logger.info("🔄 Processing venue - postcode #{postcode} exists but needs updating: #{venue_name}")
+            true
           end
+        else
+          # This shouldn't happen (postcode exists but venue not found)
+          # Be permissive and process it
+          Logger.info("🆕 Processing new venue with existing postcode (unusual): #{venue_name}")
+          true
+        end
+      else
+        # No postcode match, process based on last_seen_at
+        cond do
+          # Venue not seen before, should process
+          is_nil(last_seen_at) ->
+            Logger.info("🆕 New venue not seen before: #{venue_name}")
+            true
+
+          # Venue seen before cutoff date, should process
+          DateTime.compare(last_seen_at, cutoff_date) == :lt ->
+            Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
+            true
+
+          # This case shouldn't be reached (handled at the top), but for completeness:
+          true ->
+            Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
+            false
+        end
       end
     end
   end
