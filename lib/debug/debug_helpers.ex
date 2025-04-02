@@ -5,12 +5,12 @@ defmodule TriviaAdvisor.Debug.Helpers do
   """
 
   require Logger
-  import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionIndexJob
   alias TriviaAdvisor.Locations.Venue
+  import Ecto.Query
 
   @doc """
   Test function for InquizitionIndexJob to process a single venue.
@@ -30,7 +30,8 @@ defmodule TriviaAdvisor.Debug.Helpers do
 
     Logger.info("🧪 Testing single venue processing for: #{venue_name}, #{venue_address}")
 
-    # Process the single venue
+    # Process the single venue directly
+    # This replaces the call to removed test_single_venue function
     result = Scraper.process_single_venue(venue_data, source.id)
 
     # Return the result
@@ -48,56 +49,60 @@ defmodule TriviaAdvisor.Debug.Helpers do
   end
 
   @doc """
-  Test function to find a venue by name and address.
-  Reimplemented since the original test_find_venue was removed from InquizitionIndexJob.
+  Find a venue by name and address - implementation reimplemented from the removed test function.
   """
   def find_inquizition_venue(name, address) do
-    # Implementation moved from InquizitionIndexJob.test_find_venue
-    Logger.warning("⚠️ Using locally implemented venue finder - test_find_venue removed from InquizitionIndexJob")
+    # Find venue by name and address directly
+    if is_binary(name) and is_binary(address) do
+      venue = Repo.one(from v in Venue,
+        where: v.name == ^name and v.address == ^address,
+        limit: 1)
 
-    case find_venue_by_name_and_address(name, address) do
-      nil -> {:error, :not_found}
-      venue -> {:ok, venue}
+      if venue, do: {:ok, venue}, else: {:error, :not_found}
+    else
+      {:error, :invalid_arguments}
     end
   end
 
   @doc """
-  Test function to load existing sources.
-  Reimplemented since the original test_load_existing_sources was removed from InquizitionIndexJob.
+  Generate a venue key from name and address - reimplemented from the removed test function.
   """
-  def load_inquizition_sources(_source_id) do
-    Logger.warning("⚠️ test_load_existing_sources was removed from InquizitionIndexJob")
-    Logger.warning("⚠️ Returning empty map as a compatibility fallback")
+  def generate_inquizition_venue_key(name, address) do
+    # Normalize name (remove parenthetical suffixes)
+    name_without_suffix = name
+                      |> String.replace(~r/\s*\([^)]+\)\s*$/, "")
+                      |> String.trim()
 
-    # Return empty map for compatibility
-    %{}
+    normalized_name = name_without_suffix
+                  |> String.downcase()
+                  |> String.trim()
+
+    normalized_address = address
+                       |> String.downcase()
+                       |> String.replace(~r/\s+/, " ")
+                       |> String.trim()
+
+    "#{normalized_name}|#{normalized_address}"
   end
 
-  @doc """
-  Test function to check if a venue should be processed.
-  Reimplemented since the original test_should_process_venue? was removed from InquizitionIndexJob.
-  """
-  def should_process_inquizition_venue?(_venue, _existing_sources_by_venue) do
-    Logger.warning("⚠️ test_should_process_venue? was removed from InquizitionIndexJob")
-    Logger.warning("⚠️ Defaulting to process all venues (true)")
+  # The following functions are commented out as they would need more complex reimplementation
+  # and might not be worth the effort since they're only used for debugging
 
-    # Default to processing all venues
-    true
-  end
+  # @doc """
+  # Load existing sources - commented out as it would need complex reimplementation.
+  # """
+  # def load_inquizition_sources(_source_id) do
+  #   Logger.warning("load_inquizition_sources is no longer available")
+  #   %{}
+  # end
 
-  @doc """
-  Test function to generate a venue key.
-  Reimplemented since the original test_venue_key was removed from InquizitionIndexJob.
-  """
-  def generate_inquizition_venue_key(name, _address) do
-    Logger.warning("⚠️ test_venue_key was removed from InquizitionIndexJob")
-
-    # Simple implementation to normalize the name
-    name
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9]+/, "-")
-    |> String.trim("-")
-  end
+  # @doc """
+  # Check if a venue should be processed - commented out as it would need complex reimplementation.
+  # """
+  # def should_process_inquizition_venue?(_venue, _existing_sources_by_venue) do
+  #   Logger.warning("should_process_inquizition_venue? is no longer available")
+  #   true
+  # end
 
   @doc """
   Run the full InquizitionIndexJob with optional arguments.
@@ -105,22 +110,4 @@ defmodule TriviaAdvisor.Debug.Helpers do
   def run_inquizition_job(args \\ %{}) do
     InquizitionIndexJob.perform(%Oban.Job{args: args, id: 999999})
   end
-
-  # Helper to find venue by name and address directly in the database
-  defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
-    # Normalize the name for more flexible matching
-    normalized_name = name
-                      |> String.downcase()
-                      |> String.trim()
-
-    # Try direct lookup first
-    Repo.one(from v in Venue,
-      where: v.name == ^name,
-      limit: 1)
-    || Repo.one(from v in Venue,
-      where: fragment("LOWER(?) LIKE ?", v.name, ^"%#{normalized_name}%") and
-             fragment("LOWER(?) LIKE ?", v.address, ^"%#{address}%"),
-      limit: 1)
-  end
-  defp find_venue_by_name_and_address(_, _), do: nil
 end
