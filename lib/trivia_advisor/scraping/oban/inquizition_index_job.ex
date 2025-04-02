@@ -251,25 +251,36 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
     # Get the last_seen_at timestamp for this venue (if it exists)
     last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+    Logger.debug("🔍 DEBUG: Venue '#{venue_name}' has last_seen_at: #{inspect(last_seen_at)}")
 
     # Calculate cutoff date (days ago based on RateLimiter value)
     cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+    Logger.debug("🔍 DEBUG: Cutoff date is: #{inspect(cutoff_date)}")
 
     # Extract postcode for direct DB lookup
     postcode = case Regex.run(~r/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i, venue_address) do
       [matched_postcode] -> String.trim(matched_postcode)
       nil -> nil
     end
+    Logger.debug("🔍 DEBUG: Extracted postcode: #{inspect(postcode)}")
+
+    # FORCE DEBUGGING - Always process venues to debug the issue
+    Logger.info("⚠️ DEBUG OVERRIDE: Force processing all venues regardless of checks")
+    true
 
     # First check if we have the venue in our mapping with a recent timestamp
     if !is_nil(last_seen_at) && DateTime.compare(last_seen_at, cutoff_date) == :gt do
       # Venue was seen recently, skip it
       Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
+      Logger.debug("🔍 DEBUG: last_seen_at > cutoff_date? #{DateTime.compare(last_seen_at, cutoff_date) == :gt}")
       false
     else
       # Venue was not seen recently (or never seen)
       # If we have a postcode, check if it exists in the database
       if postcode && Repo.exists?(from v in Venue, where: v.postcode == ^postcode) do
+        has_postcode = Repo.exists?(from v in Venue, where: v.postcode == ^postcode)
+        Logger.debug("🔍 DEBUG: Postcode exists in DB? #{has_postcode}")
+
         # Postcode exists - check if this specific venue has a recent event_source record
         venue_with_postcode = Repo.one(from v in Venue,
           where: v.postcode == ^postcode,
@@ -282,6 +293,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
             where: e.venue_id == ^venue_with_postcode.id and
                    es.source_id == 3 and
                    es.last_seen_at > ^cutoff_date)
+
+          Logger.debug("🔍 DEBUG: Venue with postcode has recent source? #{has_recent_source}")
 
           if has_recent_source do
             # Venue with this postcode was processed recently, skip it
@@ -299,6 +312,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           true
         end
       else
+        Logger.debug("🔍 DEBUG: No postcode match found")
         # No postcode match, process based on last_seen_at
         cond do
           # Venue not seen before, should process
