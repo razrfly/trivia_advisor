@@ -14,6 +14,9 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   alias TriviaAdvisor.Scraping.RateLimiter
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
 
+  # Days threshold for skipping recently updated venues
+  @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do
     Logger.info("🔄 Starting Inquizition Index Job...")
@@ -238,24 +241,9 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         Map.put(acc, key, last_seen_at)
       end)
 
-    # Also find all existing venues in the database, even if they don't have events yet
-    # This prevents re-processing venues that exist but don't yet have events
-    existing_venues = from(v in Venue,
-      where: not is_nil(v.postcode), # Focus on venues with postcodes
-      select: {v.name, v.address})
-      |> Repo.all()
-      |> Enum.reduce(event_sources, fn {name, address}, acc ->
-        key = generate_venue_key(name, address)
-        # If this venue doesn't have an event source record yet, add it with a recent timestamp
-        # to prevent it from being processed again
-        if not Map.has_key?(acc, key) do
-          Map.put(acc, key, DateTime.utc_now())
-        else
-          acc
-        end
-      end)
-
-    existing_venues
+    # IMPORTANT: Unlike before, we don't add non-event venues with a current timestamp
+    # This allows venues in the database without events to be processed
+    event_sources
   end
 
   # Check if a venue should be processed based on its last seen date
@@ -302,18 +290,18 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           # Check if we've seen it recently
           true ->
             # Calculate cutoff date (5 days ago)
-            cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
+            threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
 
             # Compare last_seen_at with cutoff date
-            case DateTime.compare(last_seen_at, cutoff_date) do
+            case DateTime.compare(last_seen_at, threshold_date) do
               :lt ->
                 # Last seen before cutoff date, should process
-                Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
+                Logger.info("🔄 Venue last seen on #{DateTime.to_iso8601(last_seen_at)}, which is before cutoff date. Will process: #{venue_name}")
                 true
               _ ->
                 # Last seen after cutoff date, should skip
                 Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
-          false
+                false
             end
         end
       end
