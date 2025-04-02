@@ -7,15 +7,11 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
   import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.Venue
-  alias TriviaAdvisor.Events.EventSource
   alias TriviaAdvisor.Scraping.Scrapers.Inquizition.Scraper
   alias TriviaAdvisor.Scraping.Source
   alias TriviaAdvisor.Scraping.Oban.InquizitionDetailJob
   alias TriviaAdvisor.Scraping.RateLimiter
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
-
-  # Days threshold for skipping recently updated venues
-  @skip_if_updated_within_days RateLimiter.skip_if_updated_within_days()
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do
@@ -62,13 +58,11 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
           Logger.info("🔄 Force update enabled - processing ALL venues")
           {venues_to_process, []}
         else
-          # Filter based on last_seen_at in EventSource
-          venues_to_process
-          |> Enum.split_with(fn venue_data ->
-            _venue_key = generate_venue_key(venue_data["name"], venue_data["address"])
-            source_url = generate_source_url(%{name: venue_data["name"]})
-            should_process_venue?(source_url, source.id)
-          end)
+          # IMPORTANT FIX: Don't filter based on last_seen_at for this scraper
+          # The heavy lifting is already done at this point, and the complex venue matching is more important
+          # We're processing all venues by default unless force_update is specified
+          Logger.info("🔄 Inquizition scraper processes all venues by default - not filtering by last_seen_at")
+          {venues_to_process, []}
         end
 
         processed_count = length(to_process)
@@ -77,7 +71,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         Logger.info("🧮 After filtering: Processing #{processed_count} venues, skipping #{skipped_count} venues")
         Logger.debug("📊 Venues to process: #{inspect(to_process)}")
 
-        # Log which venues are being skipped
+        # Log which venues are being skipped (none in this case unless force_update is false)
         Enum.each(to_skip, fn venue_data ->
           _venue_key = generate_venue_key(venue_data["name"], venue_data["address"])
           Logger.info("⏩ Skipping venue '#{venue_data["name"]}' - recently seen")
@@ -211,42 +205,6 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
            |> String.trim("-")
 
     "#{base_url}##{slug}"
-  end
-
-  # Check if a venue should be processed based on its URL and last update time
-  defp should_process_venue?(url, source_id) do
-    # Find existing event sources with this URL
-    case find_venues_by_source_url(url, source_id) do
-      [] ->
-        # No existing venues with this URL, should process
-        true
-      event_sources ->
-        # Check if any of these event sources were updated within the threshold
-        not Enum.any?(event_sources, fn event_source ->
-          recently_updated?(event_source)
-        end)
-    end
-  end
-
-  # Find event sources matching a URL
-  defp find_venues_by_source_url(url, source_id) do
-    query = from es in EventSource,
-      where: es.source_url == ^url and es.source_id == ^source_id,
-      select: es
-
-    Repo.all(query)
-  end
-
-  # Check if an event source was recently updated
-  defp recently_updated?(event_source) do
-    # Calculate the threshold date
-    threshold_date = DateTime.utc_now() |> DateTime.add(-@skip_if_updated_within_days * 24 * 3600, :second)
-
-    # Compare the last_seen_at with the threshold
-    case event_source.last_seen_at do
-      nil -> false
-      last_seen_at -> DateTime.compare(last_seen_at, threshold_date) == :gt
-    end
   end
 
   # Generate a consistent key for venue lookup based on name + address
