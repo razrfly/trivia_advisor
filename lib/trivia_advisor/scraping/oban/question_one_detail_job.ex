@@ -18,51 +18,39 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: args, id: job_id}) do
-    # Log exactly what args we received - to help with debugging
-    Logger.info("📦 Received job args: #{inspect(args)}")
+    # Log concise version of args
+    Logger.info("🔄 Processing Question One detail job with args: #{inspect(Map.take(args, ["url", "title", "force_refresh_images"]))}")
 
     url = Map.get(args, "url")
     title = Map.get(args, "title")
     source_id = Map.get(args, "source_id")
 
-    # Extract force_refresh_images flag - log the exact args key/value
-    Logger.info("🔍 Looking for force_refresh_images in args: #{inspect(Map.get(args, "force_refresh_images"))}")
+    # Extract force_refresh_images flag
     force_refresh_images = Map.get(args, "force_refresh_images", false)
 
     # CRITICAL: Set the flag explicitly to true if it's true in the args
-    # And this needs to be accessible throughout the job
     if force_refresh_images do
       Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
-      # Store in process dictionary for access in other functions
       Process.put(:force_refresh_images, true)
     else
-      # Explicitly set to false to ensure it's not using a stale value
       Process.put(:force_refresh_images, false)
     end
 
-    # Now we can see the process dictionary value for debugging
-    Logger.info("📝 Process dictionary force_refresh_images set to: #{inspect(Process.get(:force_refresh_images))}")
-
-    Logger.info("🔄 Processing Question One venue: #{title}")
+    # Log the value for verification
+    Logger.info("📝 Force refresh images flag set to: #{inspect(Process.get(:force_refresh_images))}")
 
     # Get the Question One source
     source = Repo.get!(Source, source_id)
 
-    # Store force_refresh_images in args to pass to fetch_venue_details - explicit passing
+    # Store force_refresh_images in args to pass to fetch_venue_details
     fetch_args = %{
       url: url,
       title: title,
       force_refresh_images: Process.get(:force_refresh_images, false)
     }
 
-    # Log the args being passed
-    Logger.info("🔍 Passing to fetch_venue_details: #{inspect(fetch_args)}")
-
-    # Process the venue using the existing logic - pass flag explicitly
+    # Process the venue using the existing logic
     result = fetch_venue_details(fetch_args, source, job_id)
-
-    # Debug log the exact structure we're getting
-    Logger.debug("📊 Result structure: #{inspect(result)}")
 
     # Handle the result with better pattern matching
     handle_processing_result(result)
@@ -70,8 +58,6 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
 
   # A catch-all handler that logs the structure and converts to a standardized format
   defp handle_processing_result(result) do
-    Logger.info("🔄 Processing result with structure: #{inspect(result)}")
-
     case result do
       {:ok, venue} when is_struct(venue, TriviaAdvisor.Locations.Venue) ->
         Logger.info("✅ Successfully processed venue: #{venue.name}")
@@ -93,8 +79,8 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
   # to avoid modifying the original code
 
   # Process a venue and create an event - adapted from QuestionOne.fetch_venue_details
-  defp fetch_venue_details(%{url: url, title: raw_title, force_refresh_images: passed_force_refresh}, source, job_id) do
-    Logger.info("\n🔍 Processing venue: #{raw_title} with force_refresh_images=#{inspect(passed_force_refresh)}")
+  defp fetch_venue_details(%{url: url, title: raw_title, force_refresh_images: force_refresh_images}, source, job_id) do
+    Logger.info("🔍 Processing venue: #{raw_title} with force_refresh_images=#{inspect(force_refresh_images)}")
 
     case HTTPoison.get(url, [], follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
@@ -116,13 +102,7 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
             Logger.info("🔄 Scheduling Google Place lookup job for venue: #{venue.name}")
             schedule_place_lookup(venue)
 
-            # CRITICAL FIX: Use the explicitly passed parameter instead of Process dictionary
-            # This ensures we're being consistent with the passed value
-            force_refresh_images = passed_force_refresh
-            Logger.info("🔄 Using explicitly passed force_refresh_images=#{inspect(force_refresh_images)} for venue: #{venue.name}")
-
-            # IMPLEMENTATION: Delete any existing hero images for this venue if force_refresh_images is true
-            # This ensures images are deleted even if there's no existing event with a hero_image in the DB
+            # Delete any existing hero images if force_refresh_images is true
             if force_refresh_images do
               # Get venue slug for directory path
               venue_slug = venue.slug
@@ -184,14 +164,14 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
 
             # Process the hero image using the centralized ImageDownloader
             hero_image_attrs = if extracted_data.hero_image_url && extracted_data.hero_image_url != "" do
-              # CRITICAL FIX: Use the explicitly passed parameter instead of Process dictionary
-              Logger.info("⚠️ Processing hero image with force_refresh=#{inspect(force_refresh_images)}")
+              # Use the explicitly passed parameter
+              Logger.info("🖼️ Processing hero image with force_refresh=#{inspect(force_refresh_images)}")
 
               case ImageDownloader.download_event_hero_image(extracted_data.hero_image_url, force_refresh_images) do
                 {:ok, upload} ->
                   Logger.info("✅ Successfully downloaded hero image for #{venue.name}")
 
-                  # Log where the final image will be saved (before Waffle processes it)
+                  # Log where the final image will be saved
                   filename = upload.filename
                   if venue && venue.slug do
                     path = Path.join(["priv/static/uploads/venues", venue.slug, filename])
@@ -218,15 +198,12 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob do
               source_url: url
             } |> Map.merge(hero_image_attrs)  # Merge the hero_image if we have it
 
-            # CRITICAL FIX: Use the explicitly passed parameter, not process dictionary
-            # Log for debugging at this exact point
-            Logger.info("⚠️ Before Task.async force_refresh_images=#{inspect(force_refresh_images)}")
+            # Create a task that explicitly captures force_refresh_images variable
+            Logger.info("⬆️ Creating Task with force_refresh_images=#{inspect(force_refresh_images)}")
 
-            # Create a task that explicitly captures force_refresh_images for the Task
-            # Process dictionary values don't transfer to Task processes - MUST NOT use process dictionary inside Task
             event_task = Task.async(fn ->
               # Log inside task to verify we're using the captured variable
-              Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)} from captured variable")
+              Logger.info("⚠️ TASK is using force_refresh=#{inspect(force_refresh_images)}")
 
               # Pass force_refresh_images explicitly as a keyword argument
               EventStore.process_event(venue, event_data, source.id, force_refresh_images: force_refresh_images)
