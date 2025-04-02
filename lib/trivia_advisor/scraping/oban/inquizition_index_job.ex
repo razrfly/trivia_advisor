@@ -264,10 +264,6 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
     end
     Logger.debug("🔍 DEBUG: Extracted postcode: #{inspect(postcode)}")
 
-    # FORCE DEBUGGING - Always process venues to debug the issue
-    Logger.info("⚠️ DEBUG OVERRIDE: Force processing all venues regardless of checks")
-    true
-
     # First check if we have the venue in our mapping with a recent timestamp
     if !is_nil(last_seen_at) && DateTime.compare(last_seen_at, cutoff_date) == :gt do
       # Venue was seen recently, skip it
