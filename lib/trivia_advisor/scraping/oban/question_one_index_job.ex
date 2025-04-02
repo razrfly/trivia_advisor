@@ -32,6 +32,20 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
       Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
     end
 
+    # Check for force_refresh_images flag - use direct extraction like Quizmeisters
+    force_refresh_images = Map.get(args, "force_refresh_images", false) || Map.get(args, :force_refresh_images, false)
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images in detail jobs")
+      # Store in process dictionary for access in other functions
+      Process.put(:force_refresh_images, true)
+    else
+      # Explicitly set to false to ensure it's not using a stale value
+      Process.put(:force_refresh_images, false)
+    end
+
+    # Log the extracted value for debugging
+    Logger.info("🔍 DEBUG: Force refresh images flag extracted from index job args: #{inspect(force_refresh_images)}")
+
     # Get the Question One source
     source = Repo.get_by!(Source, website_url: @base_url)
 
@@ -125,6 +139,21 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
       _ -> false
     end
 
+    # Check if force refresh images is enabled - use the same direct extraction as Quizmeisters
+    force_refresh_images = case Process.get(:job_args) do
+      %{} = args ->
+        # CRITICAL FIX: Ensure we get the right value and don't override it
+        # Get the flag value directly from args rather than using a helper
+        flag_value = Map.get(args, "force_refresh_images", false) || Map.get(args, :force_refresh_images, false)
+        # Log it explicitly for debugging
+        Logger.info("🔍 DEBUG: Force refresh images flag extracted from index job args: #{inspect(flag_value)}")
+        flag_value
+      _ -> false
+    end
+
+    # Log it again for debugging
+    Logger.info("🔍 DEBUG: Will pass force_refresh_images=#{inspect(force_refresh_images)} to detail jobs")
+
     # Filter out venues that were recently updated (unless force_update is true)
     {venues_to_process, skipped_venues} = if force_update do
       # If force_update is true, process all venues
@@ -149,12 +178,22 @@ defmodule TriviaAdvisor.Scraping.Oban.QuestionOneIndexJob do
       venues_to_process,
       TriviaAdvisor.Scraping.Oban.QuestionOneDetailJob,
       fn venue ->
-        %{
-          url: Map.get(venue, :url),
-          title: Map.get(venue, :title),
-          source_id: source_id,
-          force_update: force_update  # Pass force_update flag to detail jobs
+        # IMPORTANT: Use string keys for Oban job args to ensure they're preserved
+        detail_args = %{
+          "url" => Map.get(venue, :url),
+          "title" => Map.get(venue, :title),
+          "source_id" => source_id,
+          "force_update" => force_update,  # Pass force_update flag to detail jobs
+          "force_refresh_images" => force_refresh_images  # Pass force_refresh_images flag to detail jobs
         }
+
+        # Log the first detail job args for debugging
+        if venue == List.first(venues_to_process) do
+          Logger.info("🔍 DEBUG: First detail job args: #{inspect(detail_args)}")
+          Logger.info("🔍 DEBUG: force_refresh_images value in detail job: #{inspect(detail_args["force_refresh_images"])}")
+        end
+
+        detail_args
       end
     )
 
