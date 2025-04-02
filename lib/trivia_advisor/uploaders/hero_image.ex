@@ -43,7 +43,7 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     "https://placehold.co/600x400/png"
   end
 
-  # Generate a unique filename, without adding extension (Waffle adds it automatically)
+  # Generate a unique filename, with prefix for all versions
   def filename(version, {file, _scope}) do
     # Get complete filename and strip any query string
     original_name = file.file_name
@@ -56,78 +56,89 @@ defmodule TriviaAdvisor.Uploaders.HeroImage do
     # but preserve most of the original name structure
     sanitized_name = String.replace(base_name, ~r/[<>:"|?*\0]/, "-")
 
-    # Skip adding the version prefix for original versions to keep filename clean
-    # Only add version for thumbnails
+    # CHANGED: Always add prefix for all versions, including original
+    # This maintains compatibility with existing images
     case version do
-      :original -> sanitized_name
+      :original -> "original_#{sanitized_name}"
       _ -> "#{version}_#{sanitized_name}"
     end
   end
 
-  # Override Waffle's delete to handle both legacy and new filename patterns
-  defoverridable [delete: 1]
+  # This function gets called by Waffle immediately before deleting files
+  # It's the perfect place to add our directory wiping logic
+  def before_delete({file_name, scope}) do
+    # Ensure scope has venue loaded for slug
+    scope = TriviaAdvisor.Venues.maybe_preload_venue(scope)
 
-  def delete(args) do
-    # Use built-in Waffle delete functionality for current pattern
-    # This works for both local files and S3 automatically based on environment
-    result = super(args)
+    venue_slug = if not is_nil(scope.venue), do: scope.venue.slug, else: "temp"
 
-    # Now also handle deleting legacy "original_" files
-    try do
-      # Extract filename for legacy handling
-      {file_name, scope} = case args do
-        {name, scp} when is_binary(name) -> {name, scp}
-        name when is_binary(name) -> {name, nil}
-        _ -> {nil, nil}
-      end
+    # Get force_refresh_images from process dictionary
+    force_refresh_images = Process.get(:force_refresh_images, false)
 
-      # Only handle original versions (thumbnails always had a prefix)
-      if file_name do
-        # Log our attempt to clean up legacy files
-        Logger.info("🔍 LEGACY CLEANUP: Looking for old naming pattern with 'original_' prefix for #{file_name}")
+    # Log the deletion attempt with force_refresh_images status
+    Logger.info("🗑️ Before deleting hero image: #{file_name} (force_refresh=#{force_refresh_images})")
 
-        # Create a mock file with the legacy filename pattern
-        legacy_file = %{file_name: "original_#{file_name}"}
-
-        # Call original Waffle delete with the legacy file
-        # This will use Waffle's built-in storage mechanisms to delete in both local and S3
-        Logger.info("🧹 LEGACY CLEANUP: Attempting to delete 'original_#{file_name}'")
-        super({legacy_file, scope})
-        Logger.info("✅ LEGACY CLEANUP: Successfully processed legacy deletion")
-      end
-    rescue
-      e ->
-        # Log but don't fail if legacy cleanup fails
-        Logger.error("⚠️ LEGACY CLEANUP: Error cleaning legacy files: #{inspect(e)}")
+    # If force_refresh_images is true, delete all files in the directory
+    if force_refresh_images do
+      Logger.warning("⚠️ TEMPORARY FIX: Wiping all files in venue image directory for venue slug: #{venue_slug}")
+      temporary_delete_all_files_in_directory(venue_slug)
     end
 
-    # Return the result of the original delete
-    result
+    # Always return :ok to continue with the deletion
+    :ok
   end
 
-  # Generate backward-compatible URLs for existing files
-  def backwards_compatible_url(version, {file_name, scope}) do
-    if is_binary(file_name) do
-      try do
-        # Try with the new format first
-        new_format_url = url(version, {%{file_name: file_name}, scope})
+  # TEMPORARY FUNCTION: Deletes all files in the venue image directory on S3
+  # This is a temporary solution to clean up old/dangling files
+  defp temporary_delete_all_files_in_directory(venue_slug) do
+    # Only do this in production where S3 is used
+    if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
+      bucket = Application.get_env(:waffle, :bucket)
+      prefix = "uploads/venues/#{venue_slug}/"
 
-        # If that fails, try with the legacy format
-        if version == :original do
-          # For original version, also try with "original_" prefix
-          legacy_file_name = "original_#{file_name}"
-          url(version, {%{file_name: legacy_file_name}, scope})
-        else
-          # For other versions, just return the standard URL
-          new_format_url
+      Logger.warning("🧨 TEMPORARY FIX: Wiping S3 directory: #{bucket}/#{prefix}")
+
+      try do
+        # List all objects with the prefix
+        case ExAws.S3.list_objects(bucket, prefix: prefix)
+             |> ExAws.request() do
+          {:ok, %{body: %{contents: objects}}} ->
+            if objects == [] or is_nil(objects) do
+              Logger.info("ℹ️ No objects found in S3 directory: #{bucket}/#{prefix}")
+              false
+            else
+              # Extract keys from objects
+              keys = Enum.map(objects, fn %{key: key} -> key end)
+
+              Logger.warning("🔥 TEMPORARY FIX: Found #{length(keys)} objects to delete")
+
+              # Delete all objects in one request (S3 allows up to 1000 keys per delete request)
+              delete_result = ExAws.S3.delete_multiple_objects(bucket, keys)
+                             |> ExAws.request()
+
+              case delete_result do
+                {:ok, result} ->
+                  deleted_count = result.body.deleted |> length()
+                  Logger.info("✅ TEMPORARY FIX: Successfully deleted #{deleted_count} objects from S3")
+                  true
+                {:error, error} ->
+                  Logger.error("❌ TEMPORARY FIX: Failed to delete objects from S3: #{inspect(error)}")
+                  false
+              end
+            end
+          {:error, error} ->
+            Logger.error("❌ TEMPORARY FIX: Failed to list objects in S3: #{inspect(error)}")
+            false
         end
       rescue
-        # If URL generation fails, return a default URL
-        _ -> default_url(version, scope)
+        e ->
+          Logger.error("💥 TEMPORARY FIX: Exception in S3 directory wipe: #{inspect(e)}")
+          Logger.error("💥 TEMPORARY FIX: Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}")
+          false
       end
     else
-      # If file_name is not a string, return default URL
-      default_url(version, scope)
+      Logger.info("ℹ️ Skipping S3 directory wipe in non-production environment")
+      false
     end
   end
 end
