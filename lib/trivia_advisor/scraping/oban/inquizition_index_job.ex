@@ -591,35 +591,4 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         {:error, :unexpected_result}
     end
   end
-
-  @doc """
-  Test function to expose find_venue_by_name_and_address for tests
-  """
-  def test_find_venue(name, address) do
-    case find_venue_by_name_and_address(name, address) do
-      nil -> {:error, :not_found}
-      venue -> {:ok, venue}
-    end
-  end
-
-  @doc """
-  Test function to expose load_existing_sources for tests
-  """
-  def test_load_existing_sources(source_id) do
-    load_existing_sources(source_id)
-  end
-
-  @doc """
-  Test function to expose should_process_venue? for tests
-  """
-  def test_should_process_venue?(venue, existing_sources_by_venue) do
-    should_process_venue?(venue, existing_sources_by_venue)
-  end
-
-  @doc """
-  Test function to expose venue key generation for tests
-  """
-  def test_venue_key(name, address) do
-    generate_venue_key(name, address)
-  end
 end

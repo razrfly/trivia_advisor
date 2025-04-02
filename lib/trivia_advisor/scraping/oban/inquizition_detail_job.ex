@@ -277,7 +277,18 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             else
               # No changes needed
               Logger.info("⏩ No changes needed for existing event at venue: #{venue.name}")
-              {:ok, %{venue: venue, event: existing_event, status: :unchanged}}
+
+              # Update the event source even if the event didn't change
+              # This ensures the last_seen_at timestamp is updated
+              case ensure_event_source_updated(existing_event.id, source_id, source_url, venue, description, time_text, parsed_time) do
+                {:ok, updated_source} ->
+                  Logger.info("✅ Updated event_source timestamp for venue: #{venue.name}, last_seen_at: #{DateTime.to_string(updated_source.last_seen_at)}")
+                  {:ok, %{venue: venue, event: existing_event, status: :unchanged}}
+
+                {:error, reason} ->
+                  Logger.error("❌ Failed to update event_source timestamp: #{inspect(reason)}")
+                  {:ok, %{venue: venue, event: existing_event, status: :unchanged}}
+              end
             end
 
           existing_event && existing_event.day_of_week != parsed_time.day_of_week ->
@@ -429,6 +440,54 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
         Logger.info("📍 Scheduled Google Place lookup for venue: #{venue.name}")
       {:error, reason} ->
         Logger.warning("⚠️ Failed to schedule Google Place lookup: #{inspect(reason)}")
+    end
+  end
+
+  # Ensure the EventSource's last_seen_at timestamp is updated
+  # This function is crucial for marking venues as recently seen even when their details don't change
+  defp ensure_event_source_updated(event_id, source_id, source_url, venue, description, time_text, parsed_time) do
+    now = DateTime.utc_now()
+    Logger.info("🕒 Explicitly updating event_source last_seen_at to #{DateTime.to_string(now)}")
+    Logger.info("🔗 Event ID: #{event_id}, Source ID: #{source_id}, Source URL: #{source_url}")
+
+    # Build metadata from event data
+    metadata = %{
+      raw_title: "Inquizition Quiz at #{venue.name}",
+      clean_title: venue.name,
+      address: venue.address,
+      time_text: time_text,
+      day_of_week: parsed_time.day_of_week,
+      start_time: parsed_time.start_time,
+      frequency: :weekly,
+      fee_text: @standard_fee_text,
+      phone: venue.phone,
+      website: venue.website,
+      description: description
+    }
+
+    case Repo.get_by(EventSource, event_id: event_id, source_id: source_id) do
+      nil ->
+        # This shouldn't happen since we're updating an existing event, but handle it just in case
+        Logger.warning("⚠️ No existing event_source found for event_id #{event_id}, source_id #{source_id}")
+        %EventSource{}
+        |> EventSource.changeset(%{
+          event_id: event_id,
+          source_id: source_id,
+          source_url: source_url,
+          metadata: metadata,
+          last_seen_at: now
+        })
+        |> Repo.insert()
+
+      source ->
+        Logger.info("🔄 Updating existing event_source #{source.id} with last_seen_at: #{DateTime.to_string(now)}")
+        source
+        |> EventSource.changeset(%{
+          source_url: source_url,
+          metadata: metadata,
+          last_seen_at: now
+        })
+        |> Repo.update()
     end
   end
 end
