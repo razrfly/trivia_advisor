@@ -257,48 +257,35 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
       Logger.info("⏩ Skipping venue - postcode #{postcode} already exists in database: #{venue_name}")
       false
     else
-      # No postcode match, so try comprehensive DB lookup
-      existing_venue = find_venue_by_name_and_address(venue_name, venue_address)
+      # Generate venue key for lookup in existing_sources
+      venue_key = generate_venue_key(venue_name, venue_address)
 
-      # If it exists, we should skip it
-      if existing_venue do
-        Logger.info("⏩ Skipping venue - already exists in database: #{venue_name} (ID: #{existing_venue.id})")
-        false
-      else
-        # If not found in database, proceed with regular check based on last_seen_at
-        venue_key = generate_venue_key(venue_name, venue_address)
+      # Get the last_seen_at timestamp for this venue (if it exists)
+      last_seen_at = Map.get(existing_sources_by_venue, venue_key)
 
-        # Get the last_seen_at timestamp for this venue (if it exists)
-        last_seen_at = Map.get(existing_sources_by_venue, venue_key)
+      # Simplified check based on last_seen_at - more like the other scrapers
+      cond do
+        # Venue not seen before, should process
+        is_nil(last_seen_at) ->
+          Logger.info("🆕 New venue not seen before: #{venue_name}")
+          true
 
-        cond do
-          # Emergency check - search by name if we have a venue with same name but different address
-          is_nil(last_seen_at) && Repo.exists?(from v in Venue, where: v.name == ^venue_name) ->
-            Logger.info("⏩ Emergency skip - name match found in database: #{venue_name}")
-            false
+        # Check if we've seen it recently
+        true ->
+          # Calculate cutoff date (days ago based on RateLimiter value)
+          cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
 
-          # Venue not seen before, should process
-          is_nil(last_seen_at) ->
-            Logger.info("🆕 New venue not seen before: #{venue_name}")
-            true
-
-          # Check if we've seen it recently
-          true ->
-            # Calculate cutoff date (5 days ago)
-            cutoff_date = DateTime.utc_now() |> DateTime.add(-1 * 24 * 60 * 60 * RateLimiter.skip_if_updated_within_days(), :second)
-
-            # Compare last_seen_at with cutoff date
-            case DateTime.compare(last_seen_at, cutoff_date) do
-              :lt ->
-                # Last seen before cutoff date, should process
-                Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
-                true
-              _ ->
-                # Last seen after cutoff date, should skip
-                Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
-                false
-            end
-        end
+          # Compare last_seen_at with cutoff date
+          case DateTime.compare(last_seen_at, cutoff_date) do
+            :lt ->
+              # Last seen before cutoff date, should process
+              Logger.info("🔄 Venue seen before cutoff date, will process: #{venue_name}")
+              true
+            _ ->
+              # Last seen after cutoff date, should skip
+              Logger.info("⏩ Skipping venue - recently seen: #{venue_name} on #{DateTime.to_iso8601(last_seen_at)}")
+              false
+          end
       end
     end
   end
