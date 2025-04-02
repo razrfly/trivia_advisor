@@ -15,7 +15,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   alias TriviaAdvisor.Scraping.Helpers.JobMetadata
   alias TriviaAdvisor.Scraping.Oban.GooglePlaceLookupJob
 
-  @base_url "https://inquizition.com/find-a-quiz/"
+  # Remove unused base_url constant
+  # @base_url "https://inquizition.com/find-a-quiz/"
   @standard_fee_text "£2.50" # Standard fee for all Inquizition quizzes
   @standard_fee_cents 250
 
@@ -241,16 +242,22 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
         fee_text = venue_data["entry_fee"] || @standard_fee_text
 
         # Get source_url or create default
-        source_url = venue_data["source_url"] || "#{@base_url}##{venue.name}"
+        # IMPORTANT FIX: Generate a more consistent URL for Inquizition venues
+        source_url = venue_data["source_url"] || generate_consistent_source_url(venue)
 
         # Ensure source_url is never empty (required by EventSource)
-        source_url = if source_url == "", do: "#{@base_url}##{venue.name}", else: source_url
+        source_url = if source_url == "", do: generate_consistent_source_url(venue), else: source_url
+
+        # Log the source URL we're using
+        Logger.info("🔗 Using source URL for event: #{source_url}")
 
         # Get description or use time_text
         description = venue_data["description"] || time_text
 
         # Check for existing events for this venue from this source
-        existing_event = find_existing_event(venue.id, source_id)
+        # IMPORTANT FIX: Instead of relying solely on EventSource lookup by URL, use existing_event
+        # through the find_existing_event function that looks up by venue_id and day_of_week
+        existing_event = find_existing_event(venue.id, source_id, parsed_time.day_of_week)
 
         # Different handling based on whether we found an event and what changed
         cond do
@@ -268,6 +275,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
               case update_event(existing_event, update_attrs) do
                 {:ok, updated_event} ->
+                  # IMPORTANT FIX: Always update the EventSource last_seen_at timestamp!
+                  ensure_event_source_updated(updated_event.id, source_id, source_url, venue, description, time_text, parsed_time)
                   Logger.info("✅ Successfully updated event time for venue: #{venue.name}")
                   {:ok, %{venue: venue, event: updated_event, status: :updated}}
                 {:error, reason} ->
@@ -277,6 +286,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             else
               # No changes needed
               Logger.info("⏩ No changes needed for existing event at venue: #{venue.name}")
+              # IMPORTANT FIX: Even though event didn't change, still update the EventSource last_seen_at!
+              ensure_event_source_updated(existing_event.id, source_id, source_url, venue, description, time_text, parsed_time)
               {:ok, %{venue: venue, event: existing_event, status: :unchanged}}
             end
 
@@ -302,6 +313,9 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             case EventStore.process_event(venue, event_data, source_id) do
               {:ok, event} ->
                 Logger.info("✅ Successfully created new event for venue: #{venue.name}")
+                # IMPORTANT: The EventSource is created by EventStore.process_event, but let's verify it happened
+                # and has the correct source_url and last_seen_at
+                ensure_event_source_updated(event.id, source_id, source_url, venue, description, time_text, parsed_time)
                 {:ok, %{venue: venue, event: event, status: :created_new}}
               {:error, reason} ->
                 Logger.error("❌ Failed to create new event: #{inspect(reason)}")
@@ -328,6 +342,9 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             case EventStore.process_event(venue, event_data, source_id) do
               {:ok, event} ->
                 Logger.info("✅ Successfully created event for venue: #{venue.name}")
+                # IMPORTANT: The EventSource is created by EventStore.process_event, but let's verify it happened
+                # and has the correct source_url and last_seen_at
+                ensure_event_source_updated(event.id, source_id, source_url, venue, description, time_text, parsed_time)
                 {:ok, %{venue: venue, event: event, status: :created}}
               {:error, reason} ->
                 Logger.error("❌ Failed to create event: #{inspect(reason)}")
@@ -341,20 +358,67 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     end
   end
 
-  # Helper function to find a venue by both name and address
-  defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
-    Repo.one(from v in TriviaAdvisor.Locations.Venue,
-      where: v.name == ^name and v.address == ^address,
-      limit: 1)
+  # IMPORTANT NEW FUNCTION: Generate a consistent source URL for Inquizition venues
+  # This is critical because Inquizition doesn't have real URLs and we need consistency
+  defp generate_consistent_source_url(venue) do
+    # Always use venue ID as part of the URL to ensure uniqueness and consistency
+    # This will prevent the URL from changing each run
+    "https://inquizition.com/find-a-quiz/venue/#{venue.id}"
   end
-  defp find_venue_by_name_and_address(_, _), do: nil
 
-  # Find existing event for a venue from a specific source
-  defp find_existing_event(venue_id, source_id) do
-    # First find all events for this venue
-    events = Repo.all(from e in Event, where: e.venue_id == ^venue_id, select: e)
+  # IMPORTANT NEW FUNCTION: Ensure the EventSource is updated even if event doesn't change
+  defp ensure_event_source_updated(event_id, source_id, source_url, venue, description, time_text, parsed_time) do
+    # Get the EventSource record
+    event_source = Repo.get_by(EventSource, event_id: event_id, source_id: source_id)
 
-    # If there are no events, return nil
+    if event_source do
+      # Create updated metadata
+      metadata = Map.merge(event_source.metadata || %{}, %{
+        "updated_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "raw_title" => "Inquizition Quiz at #{venue.name}",
+        "clean_title" => venue.name,
+        "address" => venue.address,
+        "time_text" => time_text,
+        "day_of_week" => parsed_time.day_of_week,
+        "start_time" => parsed_time.start_time,
+        "description" => description,
+        "source_url" => source_url
+      })
+
+      # Update the EventSource with current timestamp
+      now = DateTime.utc_now()
+      Logger.info("🕒 Explicitly updating EventSource last_seen_at to #{DateTime.to_string(now)}")
+
+      # Update the record
+      event_source
+      |> Ecto.Changeset.change(%{
+        last_seen_at: now,
+        metadata: metadata,
+        source_url: source_url
+      })
+      |> Repo.update()
+      |> case do
+        {:ok, updated} ->
+          Logger.info("✅ Successfully updated EventSource last_seen_at: #{DateTime.to_string(updated.last_seen_at)}")
+        {:error, changeset} ->
+          Logger.error("❌ Failed to update EventSource: #{inspect(changeset.errors)}")
+      end
+    else
+      # This shouldn't happen, but log it if it does
+      Logger.error("❓ Could not find EventSource for event_id: #{event_id}, source_id: #{source_id}")
+    end
+  end
+
+  # Modified to check existing events by venue_id, source_id, and day_of_week
+  defp find_existing_event(venue_id, source_id, day_of_week) do
+    # Find all events for this venue on this day
+    query = from e in Event,
+      where: e.venue_id == ^venue_id and e.day_of_week == ^day_of_week,
+      select: e
+
+    events = Repo.all(query)
+
+    # If no events, return nil
     if Enum.empty?(events) do
       nil
     else
@@ -383,6 +447,14 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
       end
     end
   end
+
+  # Helper function to find a venue by both name and address
+  defp find_venue_by_name_and_address(name, address) when is_binary(name) and is_binary(address) do
+    Repo.one(from v in TriviaAdvisor.Locations.Venue,
+      where: v.name == ^name and v.address == ^address,
+      limit: 1)
+  end
+  defp find_venue_by_name_and_address(_, _), do: nil
 
   # Update an existing event with new attributes
   defp update_event(event, attrs) do
