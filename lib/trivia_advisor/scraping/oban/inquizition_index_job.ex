@@ -56,10 +56,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         end
 
         # Pre-filter venues that should be skipped based on last_seen_at
-        # Check if force update is enabled
-        force_update = RateLimiter.force_update?(args)
-
-        # Filter based on force_update flag
+        # Use the force_update value we already checked above, don't duplicate the check
         {to_process, to_skip} = if force_update do
           # If force_update is true, process all venues
           Logger.info("🔄 Force update enabled - processing ALL venues")
@@ -238,24 +235,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
         Map.put(acc, key, last_seen_at)
       end)
 
-    # Also find all existing venues in the database, even if they don't have events yet
-    # This prevents re-processing venues that exist but don't yet have events
-    existing_venues = from(v in Venue,
-      where: not is_nil(v.postcode), # Focus on venues with postcodes
-      select: {v.name, v.address})
-      |> Repo.all()
-      |> Enum.reduce(event_sources, fn {name, address}, acc ->
-        key = generate_venue_key(name, address)
-        # If this venue doesn't have an event source record yet, add it with a recent timestamp
-        # to prevent it from being processed again
-        if not Map.has_key?(acc, key) do
-          Map.put(acc, key, DateTime.utc_now())
-        else
-          acc
-        end
-      end)
-
-    existing_venues
+    # Unlike before, we will NOT mark all venues as recently updated
+    # This was causing all venues to be skipped because they appeared to be new
+    # We'll just return the event_sources map directly
+    event_sources
   end
 
   # Check if a venue should be processed based on its last seen date
