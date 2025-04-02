@@ -33,6 +33,22 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
       Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
     end
 
+    # Extract the force_refresh_images flag using both string and atom keys for robustness
+    force_refresh_images = Map.get(args, "force_refresh_images", false) ||
+                           Map.get(args, :force_refresh_images, false)
+
+    # Set process dictionary explicitly based on value
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images")
+      Process.put(:force_refresh_images, true)
+    else
+      # Explicitly set to false to ensure it's not using a stale value
+      Process.put(:force_refresh_images, false)
+    end
+
+    # Log the extracted value for debugging
+    Logger.info("🔍 Force refresh images flag: #{inspect(force_refresh_images)}")
+
     if limit do
       Logger.info("🧪 Testing mode: Limited to #{limit} venues")
     end
@@ -91,6 +107,9 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
             Logger.info("⏩ Skipping #{skipped_count} venues updated within the last #{@skip_if_updated_within_days} days")
             Logger.info("🔄 Processing #{processed_count} venues that need updating")
 
+            # Log the value being passed to detail jobs
+            Logger.info("🔍 Will pass force_refresh_images=#{inspect(force_refresh_images)} to detail jobs")
+
             # Enqueue detail jobs with hourly rate limiting instead of basic rate limiting
             enqueued_count = RateLimiter.schedule_hourly_capped_jobs(
               to_process,
@@ -107,11 +126,20 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
                   venue_data
                 end
 
-                %{
-                  venue: venue_map,
-                  source_id: source.id,
-                  force_update: force_update  # Pass force_update flag to detail jobs
+                # IMPORTANT: Use string keys for Oban job args
+                detail_args = %{
+                  "venue" => venue_map,
+                  "source_id" => source.id,
+                  "force_update" => force_update,  # Pass force_update flag to detail jobs
+                  "force_refresh_images" => force_refresh_images  # Pass force_refresh_images flag
                 }
+
+                # Optional: Log the first job's args for debugging
+                if venue_data == List.first(to_process) do
+                  Logger.debug("🔍 First detail job args: #{inspect(detail_args)}")
+                end
+
+                detail_args
               end
             )
 
@@ -124,6 +152,7 @@ defmodule TriviaAdvisor.Scraping.Oban.GeeksWhoDrinkIndexJob do
               skipped_count: skipped_count,
               applied_limit: limit,
               source_id: source.id,
+              force_refresh_images: force_refresh_images,
               completed_at: DateTime.utc_now() |> DateTime.to_iso8601()
             }
 
