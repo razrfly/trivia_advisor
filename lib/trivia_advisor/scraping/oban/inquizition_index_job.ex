@@ -155,6 +155,7 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionIndexJob do
 
         # Get force_update flag to pass to detail jobs
         force_update = RateLimiter.force_update?(args)
+        Logger.info("🔄 Creating detail job for venue #{venue.name} with force_update=#{force_update}")
 
         # Create the job with the scheduled_in parameter
             job = %{
