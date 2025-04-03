@@ -24,6 +24,12 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     # Handle both formats: args with venue_data as map key or string key
     venue_data = args[:venue_data] || args["venue_data"]
 
+    # Extract force_update flag - this was missing
+    force_update = args[:force_update] || args["force_update"] || false
+
+    # Log force_update flag
+    Logger.info("🔄 Force update flag: #{force_update}")
+
     venue_name = venue_data["name"]
     Logger.info("🔄 Processing Inquizition venue: #{venue_name}")
     Logger.debug("Venue data: #{inspect(venue_data)}")
@@ -42,8 +48,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
     # Log the source for debugging
     Logger.debug("📊 Using source: #{inspect(source)}")
 
-    # Process the venue data
-    result = process_venue_and_event(venue_data, source.id)
+    # Process the venue data - pass force_update flag
+    result = process_venue_and_event(venue_data, source.id, force_update)
 
     # Log the result structure for debugging
     Logger.debug("📊 Result structure: #{inspect(result)}")
@@ -136,7 +142,11 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   end
 
   # Process a venue and create an event from the raw data
-  defp process_venue_and_event(venue_data, source_id) do
+  # Changed to remove default value since it's always passed explicitly
+  defp process_venue_and_event(venue_data, source_id, force_update) do
+    # Log force_update value
+    Logger.info("🔄 Force update flag: #{force_update}")
+
     # Special case for The White Horse which has known time data
     venue_data = if venue_data["name"] == "The White Horse" &&
                    (venue_data["time_text"] == "" || is_nil(venue_data["time_text"])) do
@@ -252,6 +262,13 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
         # Check for existing events for this venue from this source
         existing_event = find_existing_event(venue.id, source_id)
 
+        # IMPORTANT: Always update timestamps for all event sources at this venue
+        # Regardless of whether there are any changes, we need to show this venue was seen
+        if existing_event do
+          Logger.info("🔄 Always updating timestamps for venue #{venue.name} regardless of changes")
+          update_all_event_sources_for_venue(venue.id, source_id)
+        end
+
         # Different handling based on whether we found an event and what changed
         cond do
           existing_event && existing_event.day_of_week == parsed_time.day_of_week ->
@@ -275,10 +292,10 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
                   {:error, reason}
               end
             else
-              # No changes needed
+              # No changes needed, but still ensure timestamp is updated
               Logger.info("⏩ No changes needed for existing event at venue: #{venue.name}")
 
-              # Update the event source even if the event didn't change
+              # Update the event source to ensure the last_seen_at timestamp is updated
               # This ensures the last_seen_at timestamp is updated
               case ensure_event_source_updated(existing_event.id, source_id, source_url, venue, description, time_text, parsed_time) do
                 {:ok, updated_source} ->
@@ -313,6 +330,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             case EventStore.process_event(venue, event_data, source_id) do
               {:ok, event} ->
                 Logger.info("✅ Successfully created new event for venue: #{venue.name}")
+                # Update timestamps for all event sources at this venue
+                update_all_event_sources_for_venue(venue.id, source_id)
                 {:ok, %{venue: venue, event: event, status: :created_new}}
               {:error, reason} ->
                 Logger.error("❌ Failed to create new event: #{inspect(reason)}")
@@ -339,6 +358,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
             case EventStore.process_event(venue, event_data, source_id) do
               {:ok, event} ->
                 Logger.info("✅ Successfully created event for venue: #{venue.name}")
+                # Update timestamps for all event sources at this venue
+                update_all_event_sources_for_venue(venue.id, source_id)
                 {:ok, %{venue: venue, event: event, status: :created}}
               {:error, reason} ->
                 Logger.error("❌ Failed to create event: #{inspect(reason)}")
@@ -481,6 +502,12 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
 
       source ->
         Logger.info("🔄 Updating existing event_source #{source.id} with last_seen_at: #{DateTime.to_string(now)}")
+        # Check if source URL has changed and log it
+        if source.source_url != source_url do
+          Logger.info("🔍 Existing source_url: #{source.source_url}")
+          Logger.info("🔍 New source_url: #{source_url}")
+        end
+
         source
         |> EventSource.changeset(%{
           source_url: source_url,
@@ -489,5 +516,32 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
         })
         |> Repo.update()
     end
+  end
+
+  # Update all event sources for a venue when a new event is created
+  # This ensures that all event sources for a venue are marked as recently updated
+  # even when the event itself is different (e.g., day change)
+  defp update_all_event_sources_for_venue(venue_id, source_id) do
+    now = DateTime.utc_now()
+    Logger.info("🔄 Updating timestamps for all event sources for venue_id: #{venue_id}, source_id: #{source_id}")
+
+    # Find all events for this venue
+    query_events = from e in TriviaAdvisor.Events.Event,
+      where: e.venue_id == ^venue_id,
+      select: e.id
+
+    event_ids = Repo.all(query_events)
+
+    # Find and update all event sources
+    query = from es in TriviaAdvisor.Events.EventSource,
+      where: es.event_id in ^event_ids and es.source_id == ^source_id
+
+    {updated_count, _} = Repo.update_all(
+      query,
+      [set: [last_seen_at: now, updated_at: now]]
+    )
+
+    Logger.info("✅ Updated #{updated_count} event sources for venue_id: #{venue_id}")
+    {:ok, updated_count}
   end
 end
