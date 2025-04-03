@@ -142,8 +142,8 @@ defmodule TriviaAdvisor.Scraping.Oban.InquizitionDetailJob do
   end
 
   # Process a venue and create an event from the raw data
-  # Added force_update parameter with default value of false
-  defp process_venue_and_event(venue_data, source_id, force_update \\ false) do
+  # Changed to remove default value since it's always passed explicitly
+  defp process_venue_and_event(venue_data, source_id, force_update) do
     # Log force_update value
     Logger.info("🔄 Force update flag: #{force_update}")
 
