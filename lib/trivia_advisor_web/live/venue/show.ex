@@ -382,10 +382,14 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                     <div class="h-12 w-12 flex-shrink-0 overflow-hidden rounded-full">
                       <img
                         src={
-                          cond do
-                            is_map(event.performer.profile_image) -> ensure_full_url(TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer}))
-                            is_binary(event.performer.profile_image) -> event.performer.profile_image
-                            true -> nil
+                          try do
+                            cond do
+                              is_map(event.performer.profile_image) -> ensure_full_url(TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer}))
+                              is_binary(event.performer.profile_image) -> event.performer.profile_image
+                              true -> TriviaAdvisor.Uploaders.ProfileImage.default_url(nil, nil)
+                            end
+                          rescue
+                            _ -> TriviaAdvisor.Uploaders.ProfileImage.default_url(nil, nil)
                           end
                         }
                         alt={event.performer.name}
