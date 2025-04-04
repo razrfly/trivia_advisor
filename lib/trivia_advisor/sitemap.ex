@@ -242,7 +242,7 @@ defmodule TriviaAdvisor.Sitemap do
 
       # For S3, the sitemap_url should be the public URL of the S3 bucket
       # This is where search engines will fetch the sitemap from
-      sitemap_host = "#{bucket}.fly.storage.tigris.dev"
+      _sitemap_host = "#{bucket}.fly.storage.tigris.dev"
 
       # Configure sitemap to store on S3
       [
