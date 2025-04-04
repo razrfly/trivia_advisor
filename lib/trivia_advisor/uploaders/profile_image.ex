@@ -57,47 +57,8 @@ defmodule TriviaAdvisor.Uploaders.ProfileImage do
     "#{version}_#{file_name}"
   end
 
-  # Override url/3 to safely handle nil values
+  # Safely handle nil values in url/3 (the only function we need to override)
   def url(nil, _version, _opts), do: default_url(nil, nil)
-  def url(file_and_scope, version, opts) do
-    try do
-      # This matches what HeroImage does successfully
-      if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-        # Get the standard URL from Waffle
-        standard_url = super(file_and_scope, version, opts)
-
-        # Get bucket name from env var, with fallback
-        bucket = System.get_env("BUCKET_NAME") ||
-                 Application.get_env(:waffle, :bucket) ||
-                 "trivia-advisor"
-
-        # Get S3 configuration
-        s3_config = Application.get_env(:ex_aws, :s3, [])
-        host = case s3_config[:host] do
-          h when is_binary(h) -> h
-          _ -> "fly.storage.tigris.dev"
-        end
-
-        # Format path correctly for S3 (remove leading slash)
-        s3_path = if is_binary(standard_url) && String.starts_with?(standard_url, "/"),
-                  do: String.slice(standard_url, 1..-1//1),
-                  else: standard_url
-
-        # Construct the full S3 URL
-        if is_binary(s3_path) do
-          "https://#{bucket}.#{host}/#{s3_path}"
-        else
-          default_url(version, nil)
-        end
-      else
-        super(file_and_scope, version, opts)
-      end
-    rescue
-      e ->
-        Logger.error("Error in ProfileImage.url/3: #{Exception.message(e)}")
-        default_url(version, nil)
-    end
-  end
 
   # Provide a default URL if there hasn't been a file uploaded
   def default_url(_version, _scope) do
