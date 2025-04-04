@@ -384,12 +384,19 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
                         src={
                           try do
                             cond do
-                              is_map(event.performer.profile_image) -> ensure_full_url(TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer}))
-                              is_binary(event.performer.profile_image) -> event.performer.profile_image
-                              true -> TriviaAdvisor.Uploaders.ProfileImage.default_url(nil, nil)
+                              is_map(event.performer.profile_image) ->
+                                # Call the standard URL function which handles nil safely, then ensure it's a full URL
+                                raw_url = TriviaAdvisor.Uploaders.ProfileImage.url({event.performer.profile_image, event.performer}, :original)
+                                ensure_full_url(raw_url)
+                              is_binary(event.performer.profile_image) ->
+                                event.performer.profile_image
+                              true ->
+                                TriviaAdvisor.Uploaders.ProfileImage.default_url(nil, nil)
                             end
                           rescue
-                            _ -> TriviaAdvisor.Uploaders.ProfileImage.default_url(nil, nil)
+                            e ->
+                              Logger.error("Error getting profile image: #{Exception.message(e)}")
+                              TriviaAdvisor.Uploaders.ProfileImage.default_url(nil, nil)
                           end
                         }
                         alt={event.performer.name}

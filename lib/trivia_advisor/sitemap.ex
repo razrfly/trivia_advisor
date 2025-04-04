@@ -240,6 +240,10 @@ defmodule TriviaAdvisor.Sitemap do
       # Log the final configuration details
       Logger.info("Sitemap config - S3Store, bucket: #{bucket}, path: #{sitemap_path}, region: #{region}")
 
+      # For S3, the sitemap_url should be the public URL of the S3 bucket
+      # This is where search engines will fetch the sitemap from
+      _sitemap_host = "#{bucket}.fly.storage.tigris.dev"
+
       # Configure sitemap to store on S3
       [
         store: Sitemapper.S3Store,
