@@ -1,4 +1,4 @@
-defmodule TriviaAdvisorWeb.VenueLive.Show do
+defmodule TriviaAdvisorWeb.Live.Venue.Show do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisor.Services.UnsplashService
   alias TriviaAdvisor.Services.GooglePlacesService
@@ -7,6 +7,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
   alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
   alias TriviaAdvisorWeb.JsonLd.EventSchema
+  alias TriviaAdvisorWeb.JsonLd.BreadcrumbSchema
   require Logger
 
   import ImageGallery
@@ -21,7 +22,6 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
-    # Get venue from database by slug instead of id
     case get_venue_by_slug(slug) do
       {:ok, venue} ->
         # Add hero_image_url to venue
@@ -37,8 +37,15 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         # Get Mapbox access token from config
         mapbox_token = Application.get_env(:trivia_advisor, :mapbox)[:access_token] || ""
 
-        # Generate JSON-LD data for structured data
-        json_ld_data = EventSchema.generate_venue_event_json_ld(venue)
+        # Generate event JSON-LD data for structured data
+        event_json_ld = EventSchema.generate_venue_event_json_ld(venue)
+
+        # Generate breadcrumbs JSON-LD data
+        breadcrumb_items = BreadcrumbSchema.create_venue_breadcrumbs(venue)
+        breadcrumb_json_ld = BreadcrumbSchema.generate_breadcrumb_json_ld(breadcrumb_items)
+
+        # Combine both JSON-LD snippets into an array
+        json_ld_data = "[#{event_json_ld},#{breadcrumb_json_ld}]"
 
         {:ok,
           socket
@@ -48,7 +55,8 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
           |> assign(:country, country)
           |> assign(:city, city)
           |> assign(:mapbox_token, mapbox_token)
-          |> assign(:json_ld_data, json_ld_data)}
+          |> assign(:json_ld_data, json_ld_data)
+          |> assign(:breadcrumb_items, breadcrumb_items)}
 
       {:error, _reason} ->
         {:ok,
@@ -59,6 +67,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
           |> assign(:country, nil)
           |> assign(:city, nil)
           |> assign(:mapbox_token, "")
+          |> assign(:breadcrumb_items, [%{name: "Home", url: "/"}, %{name: "Venue Not Found", url: nil}])
           |> put_flash(:error, "Venue not found")}
     end
   end
@@ -79,31 +88,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
     <div>
       <div class="mx-auto max-w-7xl px-4 py-8">
         <!-- Breadcrumbs -->
-        <%= if @venue && @country && @city do %>
-          <nav class="mb-4">
-            <ol class="flex items-center space-x-1 text-sm text-gray-500">
-              <li class="text-gray-700 font-medium">
-                <%= @country.name %>
-              </li>
-              <li class="flex items-center">
-                <svg class="h-5 w-5 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                  <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
-                </svg>
-              </li>
-              <li>
-                <a href={"/cities/#{@city.slug}"} class="hover:text-indigo-600">
-                  <%= @city.name %>
-                </a>
-              </li>
-              <li class="flex items-center">
-                <svg class="h-5 w-5 flex-shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                  <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd" />
-                </svg>
-              </li>
-              <li class="font-medium text-gray-900"><%= @venue.name %></li>
-            </ol>
-          </nav>
-        <% end %>
+        <TriviaAdvisorWeb.Components.Breadcrumbs.breadcrumbs items={@breadcrumb_items} class="mb-4" />
 
         <!-- Venue Title -->
         <h1 class="mb-6 text-3xl font-bold text-gray-900"><%= @venue.name %></h1>
