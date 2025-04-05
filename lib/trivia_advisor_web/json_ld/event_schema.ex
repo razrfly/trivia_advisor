@@ -7,7 +7,6 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
   """
 
   require Logger
-  alias TriviaAdvisor.Events.Event
 
   @doc """
   Generates JSON-LD structured data for a venue and its events.
@@ -54,8 +53,10 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
       "eventStatus" => "https://schema.org/EventScheduled"
     }
 
-    # Always add description from venue if available
-    venue_data = maybe_add_description(venue_data, venue.metadata["description"] || venue.metadata[:description] || "")
+    # Always add description from venue if available - safely handle nil metadata
+    venue_metadata = venue.metadata || %{}
+    venue_description = Map.get(venue_metadata, "description") || Map.get(venue_metadata, :description)
+    venue_data = maybe_add_description(venue_data, venue_description)
 
     # Calculate dates if event exists
     venue_data = if event do
@@ -75,7 +76,7 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
       |> maybe_add_description(event.description)
       |> maybe_add_price(event.entry_fee_cents, venue)
       |> maybe_add_performer(event.performer)
-      |> add_organizer(event, venue) # Changed from maybe_add_organizer to always attempt to add organizer
+      |> add_organizer(event, venue)
     else
       # Default values if no event
       next_monday = calculate_next_occurrence(1) # Monday
@@ -166,47 +167,6 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
     else
       # Add a default image
       Map.put(schema, "image", ["https://placehold.co/600x400?text=#{URI.encode(venue.name)}"])
-    end
-  end
-
-  # Get a full URL for an image
-  defp get_image_url(image, context) do
-    try do
-      cond do
-        is_binary(image) && String.starts_with?(image, "http") ->
-          image
-
-        is_map(image) && Map.has_key?(image, :file_name) ->
-          # For waffle images
-          base_url = Application.get_env(:trivia_advisor, TriviaAdvisorWeb.Endpoint)[:url]
-          host = base_url[:host]
-          scheme = base_url[:scheme] || "https"
-
-          if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
-            host = "fly.storage.tigris.dev"
-
-            module = case context do
-              %Event{} -> TriviaAdvisor.Uploaders.HeroImage
-              _ -> TriviaAdvisor.Uploaders.ProfileImage
-            end
-
-            url = module.url({image, context}, :original)
-            s3_path = if String.starts_with?(url, "/"), do: String.slice(url, 1..-1//1), else: url
-
-            "https://#{bucket}.#{host}/#{s3_path}"
-          else
-            # Development
-            "#{scheme}://#{host}/uploads/venues/#{context.venue && context.venue.slug}/original_#{Path.basename(image.file_name)}"
-          end
-
-        true ->
-          nil
-      end
-    rescue
-      e ->
-        Logger.error("Error getting image URL: #{Exception.message(e)}")
-        nil
     end
   end
 
@@ -334,9 +294,10 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
     # If no organizer added yet, try from venue metadata
     if !Map.has_key?(schema, "organizer") do
       try do
-        # Check venue metadata
-        source_name = venue.metadata["source_name"] || venue.metadata[:source_name]
-        source_url = venue.metadata["source_url"] || venue.metadata[:source_url]
+        # Check venue metadata safely
+        venue_metadata = venue.metadata || %{}
+        source_name = Map.get(venue_metadata, "source_name") || Map.get(venue_metadata, :source_name)
+        source_url = Map.get(venue_metadata, "source_url") || Map.get(venue_metadata, :source_url)
 
         if source_name && source_url do
           organizer = %{
@@ -504,17 +465,5 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
           {str, ""}
         end
     end
-  end
-
-  # These functions are no longer used but kept as stubs for compatibility
-  defp maybe_add_organizer(schema, _event), do: schema
-
-  defp venue_has_source?(_venue), do: false
-
-  defp get_source_from_venue(_venue) do
-    %{
-      name: "Unknown Source",
-      url: "#"
-    }
   end
 end
