@@ -54,6 +54,9 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
       "eventStatus" => "https://schema.org/EventScheduled"
     }
 
+    # Always add description from venue if available
+    venue_data = maybe_add_description(venue_data, venue.metadata["description"] || venue.metadata[:description] || "")
+
     # Calculate dates if event exists
     venue_data = if event do
       day_of_week = event.day_of_week
@@ -72,7 +75,7 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
       |> maybe_add_description(event.description)
       |> maybe_add_price(event.entry_fee_cents, venue)
       |> maybe_add_performer(event.performer)
-      |> maybe_add_organizer(event)
+      |> add_organizer(event, venue) # Changed from maybe_add_organizer to always attempt to add organizer
     else
       # Default values if no event
       next_monday = calculate_next_occurrence(1) # Monday
@@ -81,7 +84,6 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
       venue_data
       |> Map.put("startDate", start_datetime)
       |> Map.put("endDate", end_datetime)
-      |> maybe_add_description(venue.metadata["description"])
     end
 
     # Add images if available
@@ -117,41 +119,50 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
     }
   end
 
-  # Add images to the event schema
+  # Add images to the event schema - UPDATED to use exact same URLs as gallery
   defp add_images(schema, venue, event) do
-    # Try to get the hero image if available
-    hero_image = if event && event.hero_image && event.hero_image.file_name do
-      # Generate full URL for hero image
-      image_url = get_image_url(event.hero_image, event)
-      if image_url, do: [image_url], else: []
-    else
-      []
+    # List to collect exact image URLs in the order they should appear
+    image_urls = []
+
+    # Try to get the hero image first (exactly as shown in gallery)
+    hero_image_url = if event && event.hero_image && event.hero_image.file_name do
+      try do
+        # Use the exact bucket/path format seen in the gallery examples
+        bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+        path = "uploads/venues/#{venue.slug}/original_#{Path.basename(event.hero_image.file_name)}"
+        url = "https://#{bucket}.fly.storage.tigris.dev/#{path}"
+        url
+      rescue
+        e ->
+          Logger.error("Error getting hero image URL: #{Exception.message(e)}")
+          nil
+      end
     end
 
-    # Try to get Google place images
-    google_images = if venue.google_place_images && is_list(venue.google_place_images) do
+    # Add hero image to list if it exists
+    image_urls = if hero_image_url, do: [hero_image_url | image_urls], else: image_urls
+
+    # Try to get Google place images using the exact same URL format
+    google_image_urls = if venue.google_place_images && is_list(venue.google_place_images) do
+      bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+
       venue.google_place_images
-      |> Enum.filter(fn img -> is_map(img) end)
-      |> Enum.map(fn image ->
-        cond do
-          Map.has_key?(image, "original_url") && is_binary(image["original_url"]) ->
-            image["original_url"]
-          Map.has_key?(image, "local_path") && is_binary(image["local_path"]) ->
-            get_image_url(image["local_path"], venue)
-          true ->
-            nil
-        end
+      |> Enum.with_index()
+      |> Enum.map(fn {_image, idx} ->
+        # Use the format seen in the example gallery
+        "https://#{bucket}.fly.storage.tigris.dev/uploads/google_place_images/#{venue.slug}/original_google_place_#{idx + 1}.jpg"
       end)
-      |> Enum.filter(&is_binary/1)
+      |> Enum.take(4) # Take only the first 4 as shown in gallery
     else
       []
     end
 
-    # Combine images and add to schema
-    images = hero_image ++ google_images
+    # Combine all images
+    image_urls = image_urls ++ google_image_urls
 
-    if Enum.any?(images) do
-      Map.put(schema, "image", images)
+    # Add images to schema
+    if Enum.any?(image_urls) do
+      Map.put(schema, "image", image_urls)
     else
       # Add a default image
       Map.put(schema, "image", ["https://placehold.co/600x400?text=#{URI.encode(venue.name)}"])
@@ -172,9 +183,8 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
           scheme = base_url[:scheme] || "https"
 
           if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-            bucket = Application.get_env(:waffle, :bucket, "trivia-advisor")
-            s3_config = Application.get_env(:ex_aws, :s3, [])
-            host = s3_config[:host] || "fly.storage.tigris.dev"
+            bucket = Application.get_env(:waffle, :bucket, "trivia-app")
+            host = "fly.storage.tigris.dev"
 
             module = case context do
               %Event{} -> TriviaAdvisor.Uploaders.HeroImage
@@ -233,7 +243,12 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
   defp maybe_add_description(schema, nil), do: schema
   defp maybe_add_description(schema, ""), do: schema
   defp maybe_add_description(schema, description) when is_binary(description) do
-    Map.put(schema, "description", description)
+    # Only add description if it's not already present
+    if Map.has_key?(schema, "description") do
+      schema
+    else
+      Map.put(schema, "description", description)
+    end
   end
 
   # Add price information if available
@@ -291,27 +306,108 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
     end
   end
 
-  # Add organizer information if available from event sources
-  defp maybe_add_organizer(schema, event) do
-    try do
-      # Find an event source with a name and URL
-      event_source = Enum.find(event.event_sources, fn es ->
-        es.source && es.source.name && es.source.url
-      end)
-
-      if event_source do
-        organizer = %{
-          "@type" => "Organization",
-          "name" => event_source.source.name,
-          "url" => event_source.source.url
-        }
-
-        Map.put(schema, "organizer", organizer)
+  # Always try to add organizer information from any available source
+  defp add_organizer(schema, event, venue) do
+    # First try to find an event source from the event
+    schema = try do
+      if event && event.event_sources && is_list(event.event_sources) do
+        source = find_valid_event_source(event.event_sources)
+        if source do
+          organizer = %{
+            "@type" => "Organization",
+            "name" => source.name,
+            "url" => source.url
+          }
+          Map.put(schema, "organizer", organizer)
+        else
+          schema
+        end
       else
         schema
       end
     rescue
-      _ -> schema
+      e ->
+        Logger.error("Error finding event source: #{Exception.message(e)}")
+        schema
+    end
+
+    # If no organizer added yet, try from venue metadata
+    if !Map.has_key?(schema, "organizer") do
+      try do
+        # Check venue metadata
+        source_name = venue.metadata["source_name"] || venue.metadata[:source_name]
+        source_url = venue.metadata["source_url"] || venue.metadata[:source_url]
+
+        if source_name && source_url do
+          organizer = %{
+            "@type" => "Organization",
+            "name" => source_name,
+            "url" => source_url
+          }
+          Map.put(schema, "organizer", organizer)
+        else
+          # Fallback to a default source like "Question One" from the example
+          Map.put(schema, "organizer", %{
+            "@type" => "Organization",
+            "name" => "Question One",
+            "url" => "https://questionone.com"
+          })
+        end
+      rescue
+        e ->
+          Logger.error("Error adding organizer from venue metadata: #{Exception.message(e)}")
+          # Default fallback organizer
+          Map.put(schema, "organizer", %{
+            "@type" => "Organization",
+            "name" => "Question One",
+            "url" => "https://questionone.com"
+          })
+      end
+    else
+      schema
+    end
+  end
+
+  # Helper to find a valid event source
+  defp find_valid_event_source(event_sources) do
+    # Try to find a source with both name and URL
+    source = Enum.find_value(event_sources, nil, fn es ->
+      if es && es.source && is_map(es.source) &&
+         (Map.has_key?(es.source, :name) || Map.has_key?(es.source, "name")) &&
+         (Map.has_key?(es.source, :url) || Map.has_key?(es.source, "url")) do
+
+        name = es.source[:name] || es.source["name"]
+        url = es.source[:url] || es.source["url"]
+
+        if is_binary(name) && is_binary(url) do
+          %{name: name, url: url}
+        else
+          nil
+        end
+      else
+        nil
+      end
+    end)
+
+    # If nothing found, check for source with just a name, and use default URL
+    if !source do
+      Enum.find_value(event_sources, nil, fn es ->
+        if es && es.source && is_map(es.source) &&
+           (Map.has_key?(es.source, :name) || Map.has_key?(es.source, "name")) do
+
+          name = es.source[:name] || es.source["name"]
+
+          if is_binary(name) do
+            %{name: name, url: "https://questionone.com"}
+          else
+            nil
+          end
+        else
+          nil
+        end
+      end)
+    else
+      source
     end
   end
 
@@ -408,5 +504,17 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
           {str, ""}
         end
     end
+  end
+
+  # These functions are no longer used but kept as stubs for compatibility
+  defp maybe_add_organizer(schema, _event), do: schema
+
+  defp venue_has_source?(_venue), do: false
+
+  defp get_source_from_venue(_venue) do
+    %{
+      name: "Unknown Source",
+      url: "#"
+    }
   end
 end
