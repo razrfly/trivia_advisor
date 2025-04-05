@@ -107,7 +107,11 @@ defmodule TriviaAdvisorWeb.JsonLd.BreadcrumbSchema do
           "#{host_url}#{path}"
         end
 
-        Map.put(breadcrumb_item, "item", full_url)
+        Map.put(breadcrumb_item, "item", %{
+          "@type" => "Thing",
+          "@id" => full_url,
+          "name" => item.name
+        })
       else
         breadcrumb_item
       end
