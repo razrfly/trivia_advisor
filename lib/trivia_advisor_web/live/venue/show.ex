@@ -6,6 +6,7 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
   alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
   alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
+  alias TriviaAdvisorWeb.JsonLd.EventSchema
   require Logger
 
   import ImageGallery
@@ -36,6 +37,9 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
         # Get Mapbox access token from config
         mapbox_token = Application.get_env(:trivia_advisor, :mapbox)[:access_token] || ""
 
+        # Generate JSON-LD data for structured data
+        json_ld_data = EventSchema.generate_venue_event_json_ld(venue)
+
         {:ok,
           socket
           |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
@@ -43,7 +47,8 @@ defmodule TriviaAdvisorWeb.VenueLive.Show do
           |> assign(:nearby_venues, nearby_venues)
           |> assign(:country, country)
           |> assign(:city, city)
-          |> assign(:mapbox_token, mapbox_token)}
+          |> assign(:mapbox_token, mapbox_token)
+          |> assign(:json_ld_data, json_ld_data)}
 
       {:error, _reason} ->
         {:ok,
