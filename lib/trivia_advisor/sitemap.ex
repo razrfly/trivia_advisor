@@ -6,7 +6,8 @@ defmodule TriviaAdvisor.Sitemap do
 
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.{City, Venue}
-  import Ecto.Query, only: [from: 2]
+  alias TriviaAdvisor.Events.{Event, EventSource}
+  import Ecto.Query
   require Logger
 
   @doc """
@@ -120,17 +121,41 @@ defmodule TriviaAdvisor.Sitemap do
 
   # Returns a stream of all venues
   defp venue_urls do
-    # Get all venues with their last updated time
-    from(v in Venue,
-      select: %{slug: v.slug, updated_at: v.updated_at}
-    )
+    # Join venues with events and event_sources to get the latest last_seen_at
+    # for each venue in a single query
+    query = from v in Venue,
+      left_join: e in Event, on: e.venue_id == v.id,
+      left_join: es in EventSource, on: es.event_id == e.id,
+      group_by: [v.id, v.slug, v.updated_at],
+      select: %{
+        id: v.id,
+        slug: v.slug,
+        updated_at: v.updated_at,
+        # Get the maximum last_seen_at for this venue's events
+        latest_event_timestamp: fragment("MAX(?)", es.last_seen_at)
+      }
+
+    query
     |> Repo.stream()
-    |> Stream.map(fn venue ->
+    |> Stream.map(fn venue_data ->
+      # Determine the best timestamp to use
+      lastmod = if venue_data.latest_event_timestamp do
+        # Use the latest event source timestamp
+        timestamp = NaiveDateTime.to_date(venue_data.latest_event_timestamp)
+        Logger.debug("Venue #{venue_data.id} (#{venue_data.slug}) using event_source timestamp: #{Date.to_string(timestamp)}")
+        timestamp
+      else
+        # Fallback to venue's updated_at
+        timestamp = NaiveDateTime.to_date(venue_data.updated_at)
+        Logger.debug("Venue #{venue_data.id} (#{venue_data.slug}) using venue updated_at: #{Date.to_string(timestamp)}")
+        timestamp
+      end
+
       %Sitemapper.URL{
-        loc: "#{get_base_url()}/venues/#{venue.slug}",
+        loc: "#{get_base_url()}/venues/#{venue_data.slug}",
         changefreq: :daily,
         priority: 0.7,
-        lastmod: NaiveDateTime.to_date(venue.updated_at)
+        lastmod: lastmod
       }
     end)
   end
