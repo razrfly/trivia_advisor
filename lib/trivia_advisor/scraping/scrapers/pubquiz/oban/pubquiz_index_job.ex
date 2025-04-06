@@ -36,6 +36,12 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
       Logger.info("⚠️ Force update enabled - will process ALL venues regardless of last update time")
     end
 
+    # Check if we should force refresh all images
+    force_refresh_images = RateLimiter.force_refresh_images?(args)
+    if force_refresh_images do
+      Logger.info("⚠️ Force image refresh enabled - will refresh ALL images regardless of existing state")
+    end
+
     # Get the Pubquiz source
     source = Repo.get_by!(Source, name: "pubquiz")
 
@@ -76,27 +82,92 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
         # Get force_update flag to pass to detail jobs
         force_update = RateLimiter.force_update?(args)
 
-        enqueued_count = RateLimiter.schedule_hourly_capped_jobs(
-          filtered_venues,
-          PubquizDetailJob,
-          fn venue ->
-            Logger.debug("🔄 Creating job for venue: #{inspect(venue["name"])}")
-            %{
-              venue_data: venue,
-              source_id: source.id,
-              force_update: force_update  # Pass force_update flag to detail jobs
-            }
-          end
-        )
+        # Get force_refresh_images flag to pass to detail jobs
+        force_refresh_images = case Process.get(:job_args) do
+          %{} = args ->
+            # Get the flag value directly from args rather than using a helper
+            flag_value = Map.get(args, "force_refresh_images", false) || Map.get(args, :force_refresh_images, false)
+            # Log it explicitly for debugging
+            Logger.info("🔍 DEBUG: Force refresh images flag extracted from index job args: #{inspect(flag_value)}")
+            flag_value
+          _ -> false
+        end
 
-        Logger.info("📥 Enqueued #{enqueued_count} PubquizDetail jobs with rate limiting, skipped #{skipped_count} recent venues")
+        # Log it again for debugging
+        Logger.info("🔍 DEBUG: Will pass force_refresh_images=#{inspect(force_refresh_images)} to detail jobs")
+
+        # First, filter out venues with invalid URLs
+        valid_venues = Enum.filter(filtered_venues, fn venue ->
+          url = venue[:url]
+          name = venue[:name] || "Unknown Venue"
+
+          is_valid_url = is_binary(url) and String.trim(url) != ""
+
+          if not is_valid_url do
+            Logger.warning("⚠️ Skipping venue with invalid URL: #{inspect(name)}, URL: #{inspect(url)}")
+          end
+
+          is_valid_url
+        end)
+
+        # Log the count of valid venues
+        valid_venues_count = length(valid_venues)
+        Logger.info("📊 Found #{valid_venues_count} valid venues after filtering")
+
+        # Replace the entire job scheduling section to avoid any issues
+        jobs_scheduled = 0
+
+        # Schedule each venue individually
+        jobs_scheduled = Enum.reduce(valid_venues, 0, fn venue, count ->
+          # Get venue data with proper validation
+          url = venue[:url]
+          name = venue[:name] || "Unknown Venue"
+          image_url = venue[:image_url]
+
+          # Make sure URL starts with http
+          url = if String.starts_with?(url, "http") do
+            url
+          else
+            # Add https prefix if missing
+            "https://#{url}"
+          end
+
+          # Convert venue with atom keys to string keys for consistency
+          venue_with_string_keys = %{
+            "name" => name,
+            "url" => url,
+            "image_url" => image_url
+          }
+
+          Logger.debug("🔄 Creating job for venue: #{inspect(venue_with_string_keys["name"])} with URL: #{inspect(venue_with_string_keys["url"])}")
+
+          # Create the job args
+          job_args = %{
+            "venue_data" => venue_with_string_keys,
+            "source_id" => source.id,
+            "force_update" => force_update,  # Pass force_update flag to detail jobs
+            "force_refresh_images" => force_refresh_images  # Pass force_refresh_images flag to detail jobs
+          }
+
+          # Create and schedule the job
+          case Oban.insert(PubquizDetailJob.new(job_args)) do
+            {:ok, _job} ->
+              count + 1
+            {:error, error} ->
+              Logger.error("❌ Failed to schedule job: #{inspect(error)}")
+              count
+          end
+        end)
+
+        # Log the number of jobs scheduled
+        Logger.info("📥 Scheduled #{jobs_scheduled} PubquizDetail jobs directly, skipped #{skipped_count} recent venues")
 
         # Create metadata for reporting
         metadata = %{
           "total_venues" => venues_count,
           "limited_to" => limited_count,
           "applied_limit" => limit,
-          "enqueued_jobs" => enqueued_count,
+          "enqueued_jobs" => jobs_scheduled,
           "skipped_venues" => skipped_count,
           "completed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
         }
@@ -104,7 +175,7 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
         # Update job metadata using JobMetadata helper
         JobMetadata.update_index_job(job_id, metadata)
 
-        {:ok, %{venues_count: venues_count, enqueued_jobs: enqueued_count, skipped_venues: skipped_count}}
+        {:ok, %{venues_count: venues_count, enqueued_jobs: jobs_scheduled, skipped_venues: skipped_count}}
       else
         {:error, reason} ->
           Logger.error("❌ Failed to fetch venues: #{inspect(reason)}")
@@ -144,10 +215,10 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
 
   # Check if a venue should be processed based on its URL and last update time
   defp should_process_venue?(venue, source_id) do
-    # The venue structure has atom keys as shown in the logs:
-    # %{name: "Pasibus", url: "https://pubquiz.pl/kategoria-produktu/bydgoszcz/pasibus/", image_url: "..."}
-    url = venue[:url]
-    venue_name = venue[:name]
+    # The venue structure can have atom keys or string keys depending on context
+    # We need to handle both cases
+    url = venue[:url] || venue["url"]
+    venue_name = venue[:name] || venue["name"]
 
     Logger.info("🔍 Checking venue URL: '#{url}' for venue: '#{venue_name}'")
 
