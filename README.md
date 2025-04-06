@@ -208,7 +208,9 @@ For consistently handling venue/event images:
 # Download and attach hero images for events
 hero_image_url = venue_data["image_url"]
 if hero_image_url && hero_image_url != "" do
-  case ImageDownloader.download_event_hero_image(hero_image_url) do
+  # Pass force_refresh_images flag to control image refresh
+  force_refresh_images = Process.get(:force_refresh_images, false)
+  case ImageDownloader.download_event_hero_image(hero_image_url, force_refresh_images) do
     {:ok, upload} ->
       Logger.info("✅ Successfully downloaded hero image")
       Map.put(event_data, :hero_image, upload)
@@ -220,6 +222,40 @@ else
   event_data
 end
 ```
+
+### 🔄 Force Refresh Images
+All scrapers support the `force_refresh_images` flag that ensures images are always fresh:
+
+1. **How It Works**:
+   - When enabled, existing images are deleted before downloading new ones
+   - Bypasses image caching in ImageDownloader
+   - Propagates through the entire process from index job to detail job to EventStore
+   
+2. **Usage in Jobs**:
+```elixir
+# Through Oban job args
+{:ok, _job} = Oban.insert(
+  TriviaAdvisor.Scraping.Oban.PubquizIndexJob.new(%{
+    "force_refresh_images" => true,
+    "limit" => 5
+  })
+)
+
+# Through mix task flags
+mix scraper.test_pubquiz_index --limit=3 --force-refresh-images
+```
+
+3. **Implementation**:
+   - Index job passes flag to detail jobs
+   - Detail job sets Process.put(:force_refresh_images, true)
+   - ImageDownloader checks flag to force redownload
+   - EventStore explicitly deletes existing images when flag is true
+   
+4. **Supported Scrapers**:
+   - Question One
+   - Quizmeisters
+   - Geeks Who Drink
+   - PubQuiz
 
 ### ⚠️ Important Notes
 1. NEVER make DB migrations without asking first
