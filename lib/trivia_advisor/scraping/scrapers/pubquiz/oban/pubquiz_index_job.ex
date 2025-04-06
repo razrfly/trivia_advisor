@@ -114,9 +114,6 @@ defmodule TriviaAdvisor.Scraping.Oban.PubquizIndexJob do
         valid_venues_count = length(valid_venues)
         Logger.info("📊 Found #{valid_venues_count} valid venues after filtering")
 
-        # Replace the entire job scheduling section to avoid any issues
-        jobs_scheduled = 0
-
         # Schedule each venue individually
         jobs_scheduled = Enum.reduce(valid_venues, 0, fn venue, count ->
           # Get venue data with proper validation
