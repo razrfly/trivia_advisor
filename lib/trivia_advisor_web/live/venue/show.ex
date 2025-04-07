@@ -32,6 +32,38 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
         country = get_country(venue)
         city = get_city(venue)
 
+        # Get city name for title
+        city_name = if is_map(city) && Map.has_key?(city, :name) && is_binary(city.name), do: city.name, else: "Unknown City"
+
+        # Get organizer name for title
+        organizer_name = try do
+          if venue.events && Enum.any?(venue.events) do
+            event = List.first(venue.events)
+            if event && event.event_sources && is_list(event.event_sources) && Enum.any?(event.event_sources) do
+              source = List.first(event.event_sources)
+              if is_map(source) && Map.has_key?(source, :name) && is_binary(source.name), do: source.name, else: nil
+            else
+              nil
+            end
+          else
+            # Try to get from metadata as fallback
+            if is_map(venue.metadata) do
+              venue.metadata["source_name"] || venue.metadata["organizer_name"]
+            else
+              nil
+            end
+          end
+        rescue
+          _ -> nil
+        end
+
+        # Build page title with organizer if available
+        page_title = if is_binary(organizer_name) do
+          limit_title_length("#{venue.name} · in #{city_name} by #{organizer_name} · QuizAdvisor")
+        else
+          limit_title_length("#{venue.name} · in #{city_name} · QuizAdvisor")
+        end
+
         # Get Mapbox access token from config
         mapbox_token = Application.get_env(:trivia_advisor, :mapbox)[:access_token] || ""
 
@@ -47,7 +79,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
 
         {:ok,
           socket
-          |> assign(:page_title, "#{venue.name} - TriviaAdvisor")
+          |> assign(:page_title, page_title)
           |> assign(:venue, venue)
           |> assign(:nearby_venues, nearby_venues)
           |> assign(:country, country)
@@ -59,7 +91,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
       {:error, _reason} ->
         {:ok,
           socket
-          |> assign(:page_title, "Venue Not Found - TriviaAdvisor")
+          |> assign(:page_title, "Venue Not Found · QuizAdvisor")
           |> assign(:venue, nil)
           |> assign(:nearby_venues, [])
           |> assign(:country, nil)
@@ -970,6 +1002,45 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
       Enum.find(venue.events, fn event -> performer_loaded?(event) end)
     else
       nil
+    end
+  end
+
+  # Helper to limit title length to 60 characters for SEO (Google typically shows ~60 chars)
+  defp limit_title_length(title) when is_binary(title) do
+    max_length = 60
+
+    if String.length(title) <= max_length do
+      title
+    else
+      # Try to smartly truncate at a separator
+      separators = [" · ", " by ", " in ", " ", "-"]
+
+      # Try each separator, starting from the right side of the string
+      Enum.reduce_while(separators, title, fn separator, acc ->
+        # Find the rightmost position of the separator
+        case String.split(acc, separator, parts: :infinity) do
+          parts when length(parts) > 1 ->
+            # Try removing parts from the end until we're under the max length
+            Enum.reduce_while(1..length(parts), parts, fn i, parts_acc ->
+              truncated = parts_acc |> Enum.drop(-i) |> Enum.join(separator)
+
+              if String.length(truncated) <= max_length - 3 do
+                # We found a good truncation point, add ellipsis and stop
+                {:halt, {:halt, truncated <> "..."}}
+              else
+                # Keep trying with more parts removed
+                {:cont, parts_acc}
+              end
+            end)
+          _ ->
+            # This separator isn't in the string or didn't help, try the next one
+            {:cont, acc}
+        end
+      end)
+      |> case do
+        {:halt, result} -> result
+        _ -> String.slice(title, 0, max_length - 3) <> "..."  # Hard truncate as fallback
+      end
     end
   end
 end
