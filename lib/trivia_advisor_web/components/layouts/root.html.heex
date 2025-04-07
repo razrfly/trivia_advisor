@@ -7,14 +7,22 @@
     <.live_title default="QuizAdvisor" suffix=" · Pub Quiz">
       {assigns[:page_title]}
     </.live_title>
-    <link phx-track-static rel="stylesheet" href={~p"/assets/app.css"} />
-    <script defer phx-track-static type="text/javascript" src={~p"/assets/app.js"}>
-    </script>
+    
+    <!-- Open Graph tags for social sharing -->
+    <%= if assigns[:open_graph] do %>
+      <TriviaAdvisorWeb.Components.OpenGraphComponent.open_graph_tags {@open_graph} />
+    <% end %>
+    
+    <!-- JSON-LD structured data -->
     <%= if assigns[:json_ld_data] do %>
       <script type="application/ld+json">
         <%= Phoenix.HTML.raw(assigns[:json_ld_data]) %>
       </script>
     <% end %>
+    
+    <link phx-track-static rel="stylesheet" href={~p"/assets/app.css"} />
+    <script defer phx-track-static type="text/javascript" src={~p"/assets/app.js"}>
+    </script>
   </head>
   <body class="bg-white">
     {@inner_content}

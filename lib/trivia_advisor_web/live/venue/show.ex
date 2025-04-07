@@ -77,6 +77,18 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
         # Combine both JSON-LD snippets into an array
         json_ld_data = "[#{event_json_ld},#{breadcrumb_json_ld}]"
 
+        # Get venue description for meta tags
+        venue_description = get_meta_description(venue)
+
+        # Create Open Graph data for social sharing
+        open_graph = %{
+          type: "event",
+          title: "Pub Quiz at #{venue.name} in #{city_name} · QuizAdvisor",
+          description: venue_description,
+          image_url: venue.hero_image_url || get_venue_image(venue),
+          url: "#{TriviaAdvisorWeb.Endpoint.url()}/venues/#{venue.slug}"
+        }
+
         {:ok,
           socket
           |> assign(:page_title, page_title)
@@ -86,9 +98,19 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
           |> assign(:city, city)
           |> assign(:mapbox_token, mapbox_token)
           |> assign(:json_ld_data, json_ld_data)
-          |> assign(:breadcrumb_items, breadcrumb_items)}
+          |> assign(:breadcrumb_items, breadcrumb_items)
+          |> assign(:open_graph, open_graph)}
 
       {:error, _reason} ->
+        # Default Open Graph data for not found page
+        open_graph = %{
+          type: "website",
+          title: "Venue Not Found · QuizAdvisor",
+          description: "We couldn't find the venue you're looking for. Discover other great pub quiz venues at QuizAdvisor.",
+          image_url: "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue.jpg",
+          url: "#{TriviaAdvisorWeb.Endpoint.url()}/venues/#{slug}"
+        }
+
         {:ok,
           socket
           |> assign(:page_title, "Venue Not Found · QuizAdvisor")
@@ -98,6 +120,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
           |> assign(:city, nil)
           |> assign(:mapbox_token, "")
           |> assign(:breadcrumb_items, [%{name: "Home", url: "/"}, %{name: "Venue Not Found", url: nil}])
+          |> assign(:open_graph, open_graph)
           |> put_flash(:error, "Venue not found")}
     end
   end
@@ -1041,6 +1064,55 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
         {:halt, result} -> result
         _ -> String.slice(title, 0, max_length - 3) <> "..."  # Hard truncate as fallback
       end
+    end
+  end
+
+  # Helper to create a meta description for social sharing
+  defp get_meta_description(venue) do
+    # Get next quiz date
+    next_date = format_next_date(get_day_of_week(venue))
+    day = format_day(get_day_of_week(venue))
+    start_time = get_start_time(venue)
+
+    # Check if there's a venue description available
+    venue_desc = get_venue_description(venue)
+
+    # Get organizer name if available
+    organizer =
+      try do
+        if venue.events && Enum.any?(venue.events) do
+          event = List.first(venue.events)
+          if event && event.event_sources && is_list(event.event_sources) && Enum.any?(event.event_sources) do
+            source = List.first(event.event_sources)
+            if is_map(source) && Map.has_key?(source, :name) && is_binary(source.name), do: source.name, else: nil
+          end
+        else
+          if is_map(venue.metadata), do: venue.metadata["source_name"], else: nil
+        end
+      rescue
+        _ -> nil
+      end
+
+    # Create description based on available data
+    cond do
+      # If we have a venue description, date, time and organizer
+      is_binary(venue_desc) && byte_size(venue_desc) > 10 && is_binary(organizer) ->
+        # Truncate description if too long
+        short_desc = if String.length(venue_desc) > 80, do: String.slice(venue_desc, 0, 80) <> "...", else: venue_desc
+        "#{short_desc} Join us on #{next_date} (#{day}) at #{start_time}. Hosted by #{organizer}."
+
+      # If we have a venue description but no organizer
+      is_binary(venue_desc) && byte_size(venue_desc) > 10 ->
+        short_desc = if String.length(venue_desc) > 100, do: String.slice(venue_desc, 0, 100) <> "...", else: venue_desc
+        "#{short_desc} Join us on #{next_date} (#{day}) at #{start_time}."
+
+      # If we have just the basic details
+      true ->
+        if is_binary(organizer) do
+          "Join our pub quiz at #{venue.name} on #{day}s at #{start_time}. Hosted by #{organizer}. Meet other trivia enthusiasts and test your knowledge!"
+        else
+          "Join our pub quiz at #{venue.name} on #{day}s at #{start_time}. Meet other trivia enthusiasts and test your knowledge!"
+        end
     end
   end
 end
