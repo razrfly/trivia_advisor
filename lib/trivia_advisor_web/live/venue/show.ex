@@ -1,7 +1,5 @@
 defmodule TriviaAdvisorWeb.Live.Venue.Show do
   use TriviaAdvisorWeb, :live_view
-  alias TriviaAdvisor.Services.UnsplashService
-  alias TriviaAdvisor.Services.GooglePlacesService
   alias TriviaAdvisor.Locations
   alias TriviaAdvisorWeb.VenueLive.Components.ImageGallery
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
@@ -498,51 +496,76 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
     Map.get(venue, :reviews, [])
   end
 
-  # Get venue image - updated to use the full venue instead of just the name
+  # Get venue image - updated to use the new ImageUrlHelper
   defp get_venue_image(venue) do
-    try do
-      # First check for stored Google Place images
-      if venue.google_place_images && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
-        TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
-      else
-        # Try Unsplash - note that the API returns nil now, not a tuple
-        image_url = UnsplashService.get_venue_image(venue.name)
+    alias TriviaAdvisor.Helpers.ImageUrlHelper
 
-        if image_url do
-          image_url
-        else
-          # Then try to fetch and store Google Places images if venue has place_id
-          if venue.place_id && venue.place_id != "" do
-            case TriviaAdvisor.Services.GooglePlaceImageStore.process_venue_images(venue) do
-              {:ok, updated_venue} ->
-                TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(updated_venue)
-              _ ->
-                # Fallback to direct API call if processing fails
-                GooglePlacesService.get_venue_image(venue.id) || get_fallback_image(venue.name)
+    try do
+      # Check for events with hero_image
+      {_event, event_image_url} =
+        try do
+          if venue.events && Enum.any?(venue.events) do
+            event = List.first(venue.events)
+
+            image_url = if event && event.hero_image && event.hero_image.file_name do
+              try do
+                # Use helper to generate URL
+                ImageUrlHelper.get_image_url({event.hero_image.file_name, event}, TriviaAdvisor.Uploaders.HeroImage, :original)
+              rescue
+                e ->
+                  Logger.error("Error processing hero image URL: #{Exception.message(e)}")
+                  nil
+              end
+            else
+              nil
             end
+
+            {event, image_url}
           else
-            # Fall back to hardcoded images
-            get_fallback_image(venue.name)
+            {nil, nil}
           end
+        rescue
+          _ -> {nil, nil}
+        end
+
+      # Check for stored Google Place images
+      google_place_image = if is_map(venue) && Map.get(venue, :google_place_images) && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
+        try do
+          TriviaAdvisor.Services.GooglePlaceImageStore.get_first_image_url(venue)
+        rescue
+          _ -> nil
         end
       end
-    rescue
-      # If service is not started or any other error occurs
-      error ->
-        Logger.error("Failed to get venue image: #{inspect(error)}")
-        get_fallback_image(venue.name)
-    end
-  end
 
-  defp get_fallback_image(venue_name) do
-    # Fallback to hardcoded image URLs
-    cond do
-      String.contains?(venue_name, "Pub Quiz Champion") ->
-        "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
-      String.contains?(venue_name, "Scholar") ->
-        "https://images.unsplash.com/photo-1574096079513-d8259312b785?q=80&w=2000"
-      true ->
-        "https://images.unsplash.com/photo-1572116469696-31de0f17cc34?q=80&w=2000"
+      # Check for hero_image_url in metadata
+      metadata_image = if is_map(venue) && Map.has_key?(venue, :metadata) && is_map(venue.metadata) do
+        venue.metadata["hero_image_url"] ||
+        venue.metadata["hero_image"] ||
+        venue.metadata["image_url"] ||
+        venue.metadata["image"]
+      end
+
+      # Check if venue has a field for hero_image directly
+      venue_image = if is_map(venue) do
+        Map.get(venue, :hero_image_url) ||
+        Map.get(venue, :hero_image) ||
+        Map.get(venue, :image_url) ||
+        Map.get(venue, :image)
+      end
+
+      # Use the first available image or fall back to placeholder
+      image_url = event_image_url || google_place_image || metadata_image || venue_image
+
+      if is_binary(image_url) do
+        # Use helper to ensure it's a full URL
+        ImageUrlHelper.ensure_full_url(image_url)
+      else
+        "/images/default-venue.jpg"
+      end
+    rescue
+      e ->
+        Logger.error("Error getting venue image: #{inspect(e)}")
+        "/images/default-venue.jpg"
     end
   end
 
@@ -635,109 +658,26 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
 
   # Modified version to properly combine all image sources with consistent ordering
   defp get_venue_image_at_position(venue, position) do
-    # Return default image if venue is nil
-    if is_nil(venue), do: return_default_image()
+    alias TriviaAdvisor.Helpers.ImageUrlHelper
 
-    # Get the event and its hero image if available
+    # Check for events with hero_image
     {_event, event_image_url} =
       try do
-        if venue.events && is_list(venue.events) && Enum.any?(venue.events) do
+        if venue.events && Enum.any?(venue.events) do
           event = List.first(venue.events)
 
-          # More careful checks for hero_image
-          image_url =
-            if event &&
-               is_map(event) &&
-               Map.has_key?(event, :hero_image) &&
-               event.hero_image &&
-               is_map(event.hero_image) &&
-               Map.has_key?(event.hero_image, :file_name) &&
-               event.hero_image.file_name do
-              try do
-                # First try Waffle's URL generation
-                waffle_result = try do
-                  # Manually ensure venue is associated
-                  event_with_venue = if (is_nil(Map.get(event, :venue)) || is_struct(Map.get(event, :venue), Ecto.Association.NotLoaded)) && Map.has_key?(venue, :id) do
-                    Map.put(event, :venue, venue)
-                  else
-                    event
-                  end
-
-                  raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event_with_venue})
-                  Logger.debug("Raw hero image URL: #{inspect(raw_url)}")
-
-                  if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-                    # Get bucket name from env var, with fallback
-                    bucket = System.get_env("BUCKET_NAME") ||
-                             Application.get_env(:waffle, :bucket) ||
-                             "trivia-advisor"
-
-                    # Get S3 configuration
-                    s3_config = Application.get_env(:ex_aws, :s3, [])
-                    host = case s3_config[:host] do
-                      h when is_binary(h) -> h
-                      _ -> "fly.storage.tigris.dev"
-                    end
-
-                    # Format path correctly for S3 (remove leading slash)
-                    s3_path = if String.starts_with?(raw_url, "/"), do: String.slice(raw_url, 1..-1//1), else: raw_url
-
-                    # Construct the full S3 URL using virtual host style
-                    full_url = "https://#{bucket}.#{host}/#{s3_path}"
-                    Logger.debug("Constructed S3 URL from Waffle: #{full_url}")
-                    {:ok, full_url}
-                  else
-                    # In development, use the standard approach
-                    processed_url = String.replace(raw_url, ~r{^/priv/static}, "")
-                    {:ok, processed_url}
-                  end
-                rescue
-                  e ->
-                    Logger.error("Error using Waffle URL generation: #{Exception.message(e)}")
-                    :error
-                end
-
-                case waffle_result do
-                  {:ok, url} ->
-                    url
-                  _ ->
-                    # Fallback to manual URL construction (which we know works)
-                    if Application.get_env(:waffle, :storage) == Waffle.Storage.S3 do
-                      # Get bucket name from env var, with fallback
-                      bucket = System.get_env("BUCKET_NAME") ||
-                               Application.get_env(:waffle, :bucket) ||
-                               "trivia-advisor"
-
-                      # Get S3 configuration
-                      s3_config = Application.get_env(:ex_aws, :s3, [])
-                      host = case s3_config[:host] do
-                        h when is_binary(h) -> h
-                        _ -> "fly.storage.tigris.dev"
-                      end
-
-                      # Get file name parts
-                      file_name = event.hero_image.file_name
-                      extension = Path.extname(file_name)
-                      base_name = Path.basename(file_name, extension)
-
-                      # Construct manual URL like we did in our working solution
-                      original_path = "uploads/venues/#{venue.slug}/original_#{base_name}#{extension}"
-                      Logger.debug("Fallback to manual S3 URL: https://#{bucket}.#{host}/#{original_path}")
-                      "https://#{bucket}.#{host}/#{original_path}"
-                    else
-                      # In development, try again with standard approach
-                      raw_url = TriviaAdvisor.Uploaders.HeroImage.url({event.hero_image, event})
-                      String.replace(raw_url, ~r{^/priv/static}, "")
-                    end
-                end
-              rescue
-                e ->
-                  Logger.error("Error processing hero image URL: #{Exception.message(e)}")
-                  nil
-              end
-            else
-              nil
+          image_url = if event && event.hero_image && event.hero_image.file_name do
+            try do
+              # Use helper to generate URL
+              ImageUrlHelper.get_image_url({event.hero_image.file_name, event}, TriviaAdvisor.Uploaders.HeroImage, :original)
+            rescue
+              e ->
+                Logger.error("Error processing hero image URL: #{Exception.message(e)}")
+                nil
             end
+          else
+            nil
+          end
 
           {event, image_url}
         else
@@ -779,24 +719,24 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
               cond do
                 # Handle Places API (New) format with photo_name
                 is_map(image_data) &&
-                Map.has_key?(image_data, "photo_name") &&
+                is_map_key(image_data, "photo_name") &&
                 is_binary(image_data["photo_name"]) ->
                   "https://places.googleapis.com/v1/#{image_data["photo_name"]}/media?key=#{api_key}&maxHeightPx=800"
 
                 # Handle legacy Places API format with photo_reference
                 is_map(image_data) &&
-                Map.has_key?(image_data, "photo_reference") &&
+                is_map_key(image_data, "photo_reference") &&
                 is_binary(image_data["photo_reference"]) ->
                   "https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=#{image_data["photo_reference"]}&key=#{api_key}"
 
                 # Handle other legacy formats
                 is_map(image_data) &&
-                Map.has_key?(image_data, "local_path") &&
+                is_map_key(image_data, "local_path") &&
                 is_binary(image_data["local_path"]) ->
-                  ensure_full_url(image_data["local_path"])
+                  ImageUrlHelper.ensure_full_url(image_data["local_path"])
 
                 is_map(image_data) &&
-                Map.has_key?(image_data, "original_url") &&
+                is_map_key(image_data, "original_url") &&
                 is_binary(image_data["original_url"]) ->
                   image_data["original_url"]
 

@@ -120,19 +120,18 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
     }
   end
 
-  # Add images to the event schema - UPDATED to use exact same URLs as gallery
+  # Add images to the event schema - UPDATED to use ImageUrlHelper
   defp add_images(schema, venue, event) do
-    # List to collect exact image URLs in the order they should appear
+    alias TriviaAdvisor.Helpers.ImageUrlHelper
+
+    # List to collect image URLs in the order they should appear
     image_urls = []
 
-    # Try to get the hero image first (exactly as shown in gallery)
+    # Try to get the hero image first
     hero_image_url = if event && event.hero_image && event.hero_image.file_name do
       try do
-        # Use the exact bucket/path format seen in the gallery examples
-        bucket = Application.get_env(:waffle, :bucket, "trivia-app")
-        path = "uploads/venues/#{venue.slug}/original_#{Path.basename(event.hero_image.file_name)}"
-        url = "https://#{bucket}.fly.storage.tigris.dev/#{path}"
-        url
+        # Use the helper to get the proper URL
+        ImageUrlHelper.get_image_url({event.hero_image.file_name, event}, TriviaAdvisor.Uploaders.HeroImage, :original)
       rescue
         e ->
           Logger.error("Error getting hero image URL: #{Exception.message(e)}")
@@ -143,17 +142,35 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
     # Add hero image to list if it exists
     image_urls = if hero_image_url, do: [hero_image_url | image_urls], else: image_urls
 
-    # Try to get Google place images using the exact same URL format
+    # Try to get Google place images using ImageUrlHelper
     google_image_urls = if venue.google_place_images && is_list(venue.google_place_images) do
-      bucket = Application.get_env(:waffle, :bucket, "trivia-app")
-
       venue.google_place_images
       |> Enum.with_index()
-      |> Enum.map(fn {_image, idx} ->
-        # Use the format seen in the example gallery
-        "https://#{bucket}.fly.storage.tigris.dev/uploads/google_place_images/#{venue.slug}/original_google_place_#{idx + 1}.jpg"
+      |> Enum.map(fn {image, _idx} ->
+        try do
+          cond do
+            # Handle case where image is a struct with file_name
+            is_map(image) && is_map_key(image, :file_name) ->
+              ImageUrlHelper.get_image_url({image.file_name, venue}, TriviaAdvisor.Uploaders.GooglePlaceImage, :original)
+
+            # Handle case where image is a map with string keys and local_path
+            is_map(image) && is_map_key(image, "local_path") ->
+              ImageUrlHelper.ensure_full_url(image["local_path"])
+
+            # Handle case where image has original_url as fallback
+            is_map(image) && is_map_key(image, "original_url") ->
+              image["original_url"]
+
+            true -> nil
+          end
+        rescue
+          e ->
+            Logger.error("Error processing Google place image: #{Exception.message(e)}")
+            nil
+        end
       end)
-      |> Enum.take(4) # Take only the first 4 as shown in gallery
+      |> Enum.filter(&is_binary/1)
+      |> Enum.take(4) # Take only the first 4 images
     else
       []
     end
