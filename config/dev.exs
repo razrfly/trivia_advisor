@@ -68,6 +68,9 @@ config :trivia_advisor, dev_routes: true
 # Do not include metadata nor timestamps in development logs
 config :logger, :console, format: "[$level] $message\n"
 
+# Set logger level to warn to reduce noise in logs
+config :logger, level: :warning
+
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
 config :phoenix, :stacktrace_depth, 20
@@ -75,14 +78,20 @@ config :phoenix, :stacktrace_depth, 20
 # Set environment tag
 config :trivia_advisor, env: :dev
 
+# Disable Ecto SQL query logging to reduce console spam
+config :logger, Ecto.LogEntry, level: :warning
+
+# Disable LiveView debug instrumentation
+config :phoenix_live_view, debug: false
+
 # Initialize plugs at runtime for faster development compilation
 config :phoenix, :plug_init_mode, :runtime
 
 config :phoenix_live_view,
-  # Include HEEx debug annotations as HTML comments in rendered markup
-  debug_heex_annotations: true,
-  # Enable helpful, but potentially expensive runtime checks
-  enable_expensive_runtime_checks: true
+  # Disable HEEx debug annotations to reduce log noise
+  debug_heex_annotations: false,
+  # Disable expensive runtime checks to improve performance
+  enable_expensive_runtime_checks: false
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false

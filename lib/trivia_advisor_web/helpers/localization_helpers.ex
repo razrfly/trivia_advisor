@@ -57,10 +57,10 @@ defmodule TriviaAdvisorWeb.Helpers.LocalizationHelpers do
         # Determine format based on country's time format preference
         format_options = if uses_24h_format?(country) do
           # 24-hour format
-          [format: :time, style: :medium]
+          [format: "HH:mm"]
         else
           # 12-hour format
-          [format: :time]
+          [format: "h:mm a"]
         end
 
         # Use CLDR with appropriate format

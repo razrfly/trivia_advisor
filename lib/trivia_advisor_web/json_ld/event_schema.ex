@@ -354,8 +354,17 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
          (Map.has_key?(es.source, :name) || Map.has_key?(es.source, "name")) &&
          (Map.has_key?(es.source, :url) || Map.has_key?(es.source, "url")) do
 
-        name = es.source[:name] || es.source["name"]
-        url = es.source[:url] || es.source["url"]
+        name = try do
+          if Map.has_key?(es.source, :name), do: es.source.name, else: es.source["name"]
+        rescue
+          _ -> Map.get(es.source, "name")
+        end
+
+        url = try do
+          if Map.has_key?(es.source, :website_url), do: es.source.website_url, else: es.source["url"] || es.source_url
+        rescue
+          _ -> Map.get(es.source, "url") || es.source_url
+        end
 
         if is_binary(name) && is_binary(url) do
           %{name: name, url: url}
@@ -373,7 +382,11 @@ defmodule TriviaAdvisorWeb.JsonLd.EventSchema do
         if es && es.source && is_map(es.source) &&
            (Map.has_key?(es.source, :name) || Map.has_key?(es.source, "name")) do
 
-          name = es.source[:name] || es.source["name"]
+          name = try do
+            if Map.has_key?(es.source, :name), do: es.source.name, else: es.source["name"]
+          rescue
+            _ -> Map.get(es.source, "name")
+          end
 
           if is_binary(name) do
             %{name: name, url: "https://questionone.com"}
