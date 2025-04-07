@@ -96,7 +96,8 @@ if config_env() == :prod do
   config :waffle,
     storage: Waffle.Storage.S3,
     bucket: System.get_env("BUCKET_NAME", "trivia-advisor"),
-    virtual_host: true
+    virtual_host: true,
+    asset_host: System.get_env("CDN_HOST", "http://cdn.quizadvisor.com")
 
   # Configure S3 client for access to Tigris
   config :ex_aws,
