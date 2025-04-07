@@ -18,6 +18,8 @@ defmodule TriviaAdvisorWeb.Components.OpenGraphComponent do
   attr :title, :string, required: true
   attr :description, :string, required: true
   attr :image_url, :string, required: true
+  attr :image_width, :integer, default: 1200
+  attr :image_height, :integer, default: 630
   attr :url, :string, required: true
   attr :site_name, :string, default: "QuizAdvisor"
 
@@ -37,6 +39,8 @@ defmodule TriviaAdvisorWeb.Components.OpenGraphComponent do
     <meta property="og:title" content={@title}>
     <meta property="og:description" content={@description}>
     <meta property="og:image" content={@image_url}>
+    <meta property="og:image:width" content={@image_width}>
+    <meta property="og:image:height" content={@image_height}>
     <meta property="og:url" content={@url}>
     <meta property="og:site_name" content={@site_name}>
 
