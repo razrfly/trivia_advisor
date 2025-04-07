@@ -88,33 +88,44 @@ defmodule TriviaAdvisorWeb.JsonLd.BreadcrumbSchema do
   defp format_breadcrumb_items(breadcrumbs, base_url) do
     host_url = get_host_url(base_url)
 
+    # Determine current page URL from the last breadcrumb (for last item)
+    current_page_url = case List.last(breadcrumbs) do
+      %{name: name} ->
+        # Create a fallback URL for the current page based on the name
+        path = name |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-")
+        "#{host_url}/#{path}"
+      _ ->
+        "#{host_url}/"
+    end
+
     breadcrumbs
     |> Enum.with_index(1)  # Start position at 1
     |> Enum.map(fn {item, position} ->
-      breadcrumb_item = %{
-        "@type" => "ListItem",
-        "position" => position,
-        "name" => item.name
-      }
-
-      # Add URL if it exists (last item typically doesn't have URL)
-      if item.url do
-        full_url = if String.starts_with?(item.url, "http") do
+      # Get full URL for this item
+      item_url = if item.url do
+        if String.starts_with?(item.url, "http") do
           item.url
         else
           # Ensure URL has leading slash
           path = if String.starts_with?(item.url, "/"), do: item.url, else: "/#{item.url}"
           "#{host_url}#{path}"
         end
-
-        Map.put(breadcrumb_item, "item", %{
-          "@type" => "Thing",
-          "@id" => full_url,
-          "name" => item.name
-        })
       else
-        breadcrumb_item
+        # For last item without URL, use the current page URL
+        current_page_url
       end
+
+      # Format according to Google's recommendations:
+      # - name at ListItem level
+      # - item as a URL string
+      %{
+        "@type" => "ListItem",
+        "position" => position,
+        "item" => %{
+          "@id" => item_url,
+          "name" => item.name
+        }
+      }
     end)
   end
 
