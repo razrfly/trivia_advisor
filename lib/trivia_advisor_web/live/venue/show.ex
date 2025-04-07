@@ -80,12 +80,22 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
         # Get venue description for meta tags
         venue_description = get_meta_description(venue)
 
+        # Get the thumbnail URL instead of original for consistent dimensions
+        thumbnail_url = get_social_sharing_image(venue)
+
+        # Use consistent dimensions based on how thumbnails are generated in the application
+        # These should match the dimensions used in your uploader's transform function
+        thumbnail_width = 800
+        thumbnail_height = 420
+
         # Create Open Graph data for social sharing
         open_graph = %{
           type: "event",
           title: "Pub Quiz at #{venue.name} in #{city_name} · QuizAdvisor",
           description: venue_description,
-          image_url: venue.hero_image_url || get_venue_image(venue),
+          image_url: thumbnail_url,
+          image_width: thumbnail_width,
+          image_height: thumbnail_height,
           url: "#{TriviaAdvisorWeb.Endpoint.url()}/venues/#{venue.slug}"
         }
 
@@ -108,6 +118,8 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
           title: "Venue Not Found · QuizAdvisor",
           description: "We couldn't find the venue you're looking for. Discover other great pub quiz venues at QuizAdvisor.",
           image_url: "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue.jpg",
+          image_width: 800,
+          image_height: 420,
           url: "#{TriviaAdvisorWeb.Endpoint.url()}/venues/#{slug}"
         }
 
@@ -1113,6 +1125,21 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
         else
           "Join our pub quiz at #{venue.name} on #{day}s at #{start_time}. Meet other trivia enthusiasts and test your knowledge!"
         end
+    end
+  end
+
+  # Helper to get the thumbnail URL for social sharing
+  defp get_social_sharing_image(venue) do
+    # Get the venue image
+    image_url = get_venue_image(venue)
+
+    # Check if the image URL is valid
+    if is_binary(image_url) and String.length(image_url) > 0 do
+      # Use the existing get_venue_image function to ensure it's a full URL
+      image_url
+    else
+      # If no valid image URL is found, return a default image URL
+      "/images/default-venue.jpg"
     end
   end
 end
