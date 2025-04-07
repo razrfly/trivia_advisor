@@ -117,7 +117,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
           type: "website",
           title: "Venue Not Found · QuizAdvisor",
           description: "We couldn't find the venue you're looking for. Discover other great pub quiz venues at QuizAdvisor.",
-          image_url: "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue.jpg",
+          image_url: "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg",
           image_width: 800,
           image_height: 420,
           url: "#{TriviaAdvisorWeb.Endpoint.url()}/venues/#{slug}"
@@ -627,12 +627,13 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
         # Use helper to ensure it's a full URL
         ImageUrlHelper.ensure_full_url(image_url)
       else
-        "/images/default-venue.jpg"
+        # If no valid image URL is found, return a default image URL
+        "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
       end
     rescue
       e ->
         Logger.error("Error getting venue image: #{inspect(e)}")
-        "/images/default-venue.jpg"
+        "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
     end
   end
 
@@ -838,7 +839,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
     if venue && is_map(venue) && Map.has_key?(venue, :name) && is_binary(venue.name) do
       "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
     else
-      "/images/default-venue.jpg"
+      "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
     end
   end
 
@@ -1130,16 +1131,24 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
 
   # Helper to get the thumbnail URL for social sharing
   defp get_social_sharing_image(venue) do
+    alias TriviaAdvisor.Helpers.ImageUrlHelper
+
     # Get the venue image
     image_url = get_venue_image(venue)
 
     # Check if the image URL is valid
     if is_binary(image_url) and String.length(image_url) > 0 do
-      # Use the existing get_venue_image function to ensure it's a full URL
-      image_url
+      # Convert from original to thumbnail URL
+      # For paths containing /original_ in the URL, replace with /thumb_
+      if String.contains?(image_url, "/original_") do
+        String.replace(image_url, "/original_", "/thumb_")
+      else
+        # If it's not a standard path with original, just use the original image
+        image_url
+      end
     else
       # If no valid image URL is found, return a default image URL
-      "/images/default-venue.jpg"
+      "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
     end
   end
 end
