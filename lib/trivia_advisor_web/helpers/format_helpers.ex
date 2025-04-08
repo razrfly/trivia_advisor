@@ -200,9 +200,23 @@ defmodule TriviaAdvisorWeb.Helpers.FormatHelpers do
   """
   def get_source_name_from_event_source(event_source) when is_map(event_source) do
     if Map.has_key?(event_source, :source) && !is_nil(event_source.source) do
+      source_name = case event_source.source do
+        %{name: name} when is_binary(name) -> name
+        source when is_map(source) -> Map.get(source, :name)
+        _ -> "Unknown Source"
+      end
+
+      source_url = event_source.source_url ||
+                  (try do
+                     if is_map(event_source.source), do: Map.get(event_source.source, :website_url)
+                   rescue
+                     _ -> nil
+                   end) ||
+                  nil
+
       %{
-        name: titleize(event_source.source.name),
-        url: event_source.source_url || event_source.source.website_url || nil
+        name: titleize(source_name),
+        url: source_url
       }
     else
       %{name: "Unknown Source", url: nil}

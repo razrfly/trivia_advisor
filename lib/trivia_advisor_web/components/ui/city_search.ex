@@ -72,8 +72,6 @@ defmodule TriviaAdvisorWeb.Components.UI.CitySearch do
   end
 
   def handle_event("search", %{"query" => query}, socket) do
-    IO.inspect(query, label: "SEARCH QUERY")
-
     # Only search if query is at least 2 characters
     {results, show_results} =
       if byte_size(query) >= 2 do
