@@ -7,6 +7,17 @@ defmodule TriviaAdvisorWeb.CityLive.Helpers.CityShowHelpers do
   alias TriviaAdvisorWeb.Helpers.ImageHelpers
   require Logger
 
+  # Map day numbers to day names
+  @days_of_week %{
+    1 => "Monday",
+    2 => "Tuesday",
+    3 => "Wednesday",
+    4 => "Thursday",
+    5 => "Friday",
+    6 => "Saturday",
+    7 => "Sunday"
+  }
+
   @doc """
   Get city data using either the database or mock data.
   Returns an :ok/:error tuple with formatted city data.
@@ -328,6 +339,63 @@ defmodule TriviaAdvisorWeb.CityLive.Helpers.CityShowHelpers do
   end
 
   @doc """
+  Gets days of the week with venue counts within a radius of the city.
+  Only returns days that have at least one venue with events on that day.
+  """
+  def get_days_of_week(city, radius) do
+    try do
+      # Get all venues near the city within the specified radius
+      venues = get_venues_near_city(city, radius)
+
+      # Collect all days of the week from venue events
+      # Create day-venue pairs for grouping
+      day_venue_pairs =
+        venues
+        |> Enum.flat_map(fn %{venue: venue} ->
+          days = get_venue_days_of_week(venue)
+          Enum.map(days, fn day -> {day, venue.id} end)
+        end)
+
+      # Group by day of week and count unique venues per day
+      venues_by_day =
+        day_venue_pairs
+        |> Enum.group_by(fn {day, _venue_id} -> day end, fn {_day, venue_id} -> venue_id end)
+        |> Enum.map(fn {day, venue_ids} ->
+          %{
+            day_of_week: day,
+            name: @days_of_week[day],
+            venue_count: Enum.uniq(venue_ids) |> length()
+          }
+        end)
+        |> Enum.sort_by(fn %{day_of_week: day} -> day end)
+
+      venues_by_day
+    rescue
+      e ->
+        Logger.error("Error getting days of week: #{inspect(e)}")
+        []
+    end
+  end
+
+  # Extracts days of the week from a venue's events.
+  # Returns a list of day numbers (1-7 for Monday-Sunday).
+  defp get_venue_days_of_week(%{events: events}) when is_list(events) and length(events) > 0 do
+    events
+    |> Enum.map(fn event ->
+      day = event.day_of_week || 1
+      # Ensure day is between 1-7
+      cond do
+        day < 1 -> 1
+        day > 7 -> 7
+        true -> day
+      end
+    end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+  defp get_venue_days_of_week(_), do: []
+
+  @doc """
   Ensure country data is available on venue.
   """
   def ensure_country_data(venue, city) do
@@ -371,5 +439,63 @@ defmodule TriviaAdvisorWeb.CityLive.Helpers.CityShowHelpers do
     ]
 
     Enum.find(mock_cities, fn city -> city.slug == slug end)
+  end
+
+  @doc """
+  Filters venues based on selected days of the week.
+  """
+  def filter_venues_by_days(city, radius, selected_days) do
+    try do
+      # Get all venues near the city
+      venues = get_venues_near_city(city, radius)
+
+      # Filter venues that have events on any of the selected days
+      venues
+      |> Enum.filter(fn %{venue: venue} ->
+        venue_days = get_venue_days_of_week(venue)
+        Enum.any?(selected_days, fn day -> day in venue_days end)
+      end)
+    rescue
+      e ->
+        Logger.error("Error filtering venues by days: #{inspect(e)}")
+        []
+    end
+  end
+
+  @doc """
+  Filters venues by both suburbs and days of the week.
+  """
+  def filter_venues_by_suburbs_and_days(city, radius, selected_suburb_ids, suburbs, selected_days) do
+    try do
+      cond do
+        # If both filters are empty, return all venues within radius
+        Enum.empty?(selected_suburb_ids) && Enum.empty?(selected_days) ->
+          get_venues_near_city(city, radius)
+
+        # If only day filter is active
+        Enum.empty?(selected_suburb_ids) && !Enum.empty?(selected_days) ->
+          filter_venues_by_days(city, radius, selected_days)
+
+        # If only suburb filter is active
+        !Enum.empty?(selected_suburb_ids) && Enum.empty?(selected_days) ->
+          filter_venues_by_suburbs(city, radius, selected_suburb_ids, suburbs)
+
+        # If both filters are active
+        true ->
+          # Get venues filtered by suburbs
+          suburb_venues = filter_venues_by_suburbs(city, radius, selected_suburb_ids, suburbs)
+
+          # Further filter by days of week
+          suburb_venues
+          |> Enum.filter(fn %{venue: venue} ->
+            venue_days = get_venue_days_of_week(venue)
+            Enum.any?(selected_days, fn day -> day in venue_days end)
+          end)
+      end
+    rescue
+      e ->
+        Logger.error("Error filtering venues by suburbs and days: #{inspect(e)}")
+        []
+    end
   end
 end

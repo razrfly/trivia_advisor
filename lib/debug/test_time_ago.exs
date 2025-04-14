@@ -1,5 +1,5 @@
 # Test script for time formatting functions
-# Run with: mix run test_time_ago.exs
+# Run with: mix run lib/debug/test_time_ago.exs
 
 # Import the FormatHelpers module
 alias TriviaAdvisorWeb.Helpers.FormatHelpers
