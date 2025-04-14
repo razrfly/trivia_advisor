@@ -6,6 +6,7 @@ defmodule TriviaAdvisorWeb.CityLive.Components.VenueList do
 
   alias TriviaAdvisorWeb.Helpers.FormatHelpers
   import FormatHelpers, only: [time_ago: 1, format_day_of_week: 1]
+  import TriviaAdvisorWeb.Helpers.LocalizationHelpers, only: [format_localized_time: 2]
 
   require Logger
 
@@ -62,7 +63,7 @@ defmodule TriviaAdvisorWeb.CityLive.Components.VenueList do
                 <div class="mb-3 flex items-center text-sm text-gray-600">
                   <span class="font-medium text-indigo-600"><%= format_day(get_venue_day_of_week(venue)) %>s</span>
                   <span class="mx-2">•</span>
-                  <span><%= get_venue_start_time(venue) %></span>
+                  <span><%= format_localized_time(get_venue_start_time(venue), get_venue_country(venue)) %></span>
                   <span class="mx-2">•</span>
                   <span><%= get_venue_entry_fee(venue) %></span>
                 </div>
@@ -140,4 +141,36 @@ defmodule TriviaAdvisorWeb.CityLive.Components.VenueList do
   defp get_venue_entry_fee(venue) do
     TriviaAdvisorWeb.CityLive.Helpers.CityShowHelpers.get_venue_entry_fee(venue)
   end
+
+  # Get country data from venue for proper localization
+  defp get_venue_country(venue) do
+    cond do
+      # Check if venue has country_code directly (most common case based on the error)
+      Map.get(venue, :country_code) ->
+        %{code: venue.country_code, name: get_country_name(venue.country_code)}
+
+      # Check if venue has city and country properly loaded
+      Map.has_key?(venue, :city) &&
+      venue.city &&
+      !is_struct(venue.city, Ecto.Association.NotLoaded) &&
+      Map.has_key?(venue.city, :country) &&
+      venue.city.country &&
+      !is_struct(venue.city.country, Ecto.Association.NotLoaded) ->
+        venue.city.country
+
+      # Default to US if no country data is available
+      true ->
+        %{code: "US", name: "United States"}
+    end
+  end
+
+  # Helper to get country name from country code
+  defp get_country_name("GB"), do: "United Kingdom"
+  defp get_country_name("US"), do: "United States"
+  defp get_country_name("AU"), do: "Australia"
+  defp get_country_name("CA"), do: "Canada"
+  defp get_country_name("DE"), do: "Germany"
+  defp get_country_name("FR"), do: "France"
+  defp get_country_name("JP"), do: "Japan"
+  defp get_country_name(_), do: "Unknown"
 end

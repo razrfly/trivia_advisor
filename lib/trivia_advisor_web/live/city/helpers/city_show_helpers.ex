@@ -205,15 +205,16 @@ defmodule TriviaAdvisorWeb.CityLive.Helpers.CityShowHelpers do
 
   @doc """
   Extract venue's start time from its events.
+  Returns a Time struct or formatted string.
   """
   def get_venue_start_time(venue) do
     # Get the start time from the first event if available
     if venue.events && Enum.any?(venue.events) do
       event = List.first(venue.events)
-      Map.get(event, :start_time, "7:00 PM")
+      Map.get(event, :start_time, ~T[19:00:00])
     else
-      # Default value if no events
-      "7:00 PM"
+      # Default value if no events (return as Time struct for consistency)
+      ~T[19:00:00]
     end
   end
 
