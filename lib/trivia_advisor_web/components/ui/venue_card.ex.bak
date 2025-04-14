@@ -8,7 +8,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     <div class="venue-card flex flex-col overflow-hidden rounded-lg border bg-white shadow-sm transition hover:shadow-md">
       <div class="relative h-48 overflow-hidden">
         <img
-          src={get_venue_image_url(assigns.venue)}
+          src={get_hero_image(assigns.venue)}
           alt={Map.get(assigns.venue, :name, "Venue")}
           class="h-full w-full object-cover"
         />
@@ -47,26 +47,15 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
           <%= Map.get(assigns.venue, :description, "Join us for trivia nights!") %>
         </p>
 
-        <!-- City and Country (replacing ratings) -->
+        <!-- City and Country info instead of rating -->
         <div class="mt-auto flex items-center">
-          <svg class="mr-1 h-4 w-4 text-gray-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M1 2.75A.75.75 0 011.75 2h10.5a.75.75 0 010 1.5H12v13.75a.75.75 0 01-.75.75h-1.5a.75.75 0 01-.75-.75v-2.5h-2v2.5a.75.75 0 01-.75.75h-1.5a.75.75 0 01-.75-.75v-2.5h-2v2.5a.75.75 0 01-.75.75h-1.5a.75.75 0 01-.75-.75V3.5h-.25A.75.75 0 011 2.75zM4 5.5a.5.5 0 01.5-.5h1a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-1a.5.5 0 01-.5-.5v-1zM4.5 9a.5.5 0 00-.5.5v1a.5.5 0 00.5.5h1a.5.5 0 00.5-.5v-1a.5.5 0 00-.5-.5h-1zM8 5.5a.5.5 0 01.5-.5h1a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-1a.5.5 0 01-.5-.5v-1zM8.5 9a.5.5 0 00-.5.5v1a.5.5 0 00.5.5h1a.5.5 0 00.5-.5v-1a.5.5 0 00-.5-.5h-1zM14.25 6a.75.75 0 00-.75.75V17a1 1 0 001 1h3.75a.75.75 0 000-1.5H18v-9h.25a.75.75 0 000-1.5h-4zm.5 3.5a.5.5 0 01.5-.5h1a.5.5 0 01.5.5v1a.5.5 0 01-.5.5h-1a.5.5 0 01-.5-.5v-1zm.5 3.5a.5.5 0 00-.5.5v1a.5.5 0 00.5.5h1a.5.5 0 00.5-.5v-1a.5.5 0 00-.5-.5h-1z" clip-rule="evenodd" />
+          <svg class="mr-1 h-4 w-4 text-gray-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9.69 18.933l.003.001C9.89 19.02 10 19 10 19s.11.02.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.018.008.006.003zM10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" clip-rule="evenodd" />
           </svg>
           <span class="text-sm text-gray-600">
-            <%= display_city_and_country(assigns.venue) %>
+            <%= get_venue_city(assigns.venue) %>, <%= get_venue_country_name(assigns.venue) %>
           </span>
         </div>
-
-        <!-- Commented out rating stars section
-        <div class="mt-auto flex items-center">
-          <div class="flex">
-            <%= render_rating_stars(assigns.venue) %>
-          </div>
-          <span class="ml-1 text-sm text-gray-600">
-            <%= format_rating(assigns.venue) %>
-          </span>
-        </div>
-        -->
       </div>
     </div>
     """
@@ -152,82 +141,91 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
   end
 
   # Get venue image with fallback
-  defp get_venue_image_url(venue) do
+  defp get_hero_image(venue) do
     cond do
       Map.has_key?(venue, :hero_image_url) && venue.hero_image_url && venue.hero_image_url != "" ->
         venue.hero_image_url
 
-      true ->
-        # Directly call ImageHelpers without checking if exported
+      # Use image helper if available
+      function_exported?(ImageHelpers, :get_venue_image, 1) ->
         ImageHelpers.get_venue_image(venue)
-    end
-  end
 
-  # Render star rating based on venue rating
-  defp render_rating_stars(venue) do
-    rating = get_venue_rating(venue)
-
-    cond do
-      is_nil(rating) -> "★★★★★"
-      not is_number(rating) -> "★★★★★"
       true ->
-        full_stars = floor(rating)
-        half_star = if rating - full_stars >= 0.5, do: 1, else: 0
-        empty_stars = 5 - full_stars - half_star
-
-        full_star_html = String.duplicate("★", full_stars)
-        half_star_html = if half_star == 1, do: "★", else: ""
-        empty_star_html = String.duplicate("☆", empty_stars)
-
-        full_star_html <> half_star_html <> empty_star_html
+        # Default placeholder image
+        "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
     end
   end
 
-  # Get venue rating with fallback
-  defp get_venue_rating(venue) do
-    rating = Map.get(venue, :rating)
+  # Fix the format_price function to properly handle entry_fee_cents
+  defp format_price(entry_fee_cents, venue) do
+    # Log the values for debugging
+    IO.inspect(entry_fee_cents, label: "Entry fee cents param")
+    if is_map(venue), do: IO.inspect(Map.get(venue, :entry_fee_cents), label: "Venue.entry_fee_cents")
 
-    if is_number(rating), do: rating, else: nil
-  end
+    # First try to get the actual value from entry_fee_cents parameter
+    entry_fee = cond do
+      is_integer(entry_fee_cents) and entry_fee_cents > 0 ->
+        entry_fee_cents
 
-  # Format rating for display
-  defp format_rating(venue) do
-    rating = get_venue_rating(venue)
+      # If not, try to extract it directly from the venue map
+      is_map(venue) and Map.has_key?(venue, :entry_fee_cents) ->
+        fee = venue.entry_fee_cents
+        if is_integer(fee) and fee > 0, do: fee, else: nil
 
-    if is_number(rating) do
-      "#{:erlang.float_to_binary(rating, [decimals: 1])}"
-    else
-      "No ratings yet"
+      # Try string parsing if it's a string
+      is_binary(entry_fee_cents) ->
+        case Integer.parse(entry_fee_cents) do
+          {int_cents, _} when int_cents > 0 -> int_cents
+          _ -> nil
+        end
+
+      true -> nil
     end
-  end
 
-  # Helper functions for formatting
-  defp format_price(cents, venue) when not is_nil(cents) do
-    # Convert to integer to ensure proper handling
-    cents_int =
-      case cents do
-        cents when is_integer(cents) -> cents
-        cents when is_binary(cents) ->
-          case Integer.parse(cents) do
-            {int, _} -> int
-            :error -> 0
-          end
-        _ -> 0
-      end
+    # Log the resolved entry fee
+    IO.inspect(entry_fee, label: "Resolved entry fee")
 
-    if cents_int > 0 do
+    if entry_fee do
       # Get the appropriate currency for this venue
       country_code = get_venue_country_code(venue)
       currency_code = get_country_currency(country_code)
 
       # Create Money struct with proper currency and format it
-      money = Money.new(cents_int, currency_code)
+      money = Money.new(entry_fee, currency_code)
       Money.to_string(money)
     else
       "Free"
     end
   end
-  defp format_price(_, _), do: "Free"
+
+  # This is the clean version without debugging logs
+  defp format_price(entry_fee_cents, venue) do
+    entry_fee = cond do
+      is_integer(entry_fee_cents) and entry_fee_cents > 0 ->
+        entry_fee_cents
+
+      is_map(venue) and Map.has_key?(venue, :entry_fee_cents) ->
+        fee = venue.entry_fee_cents
+        if is_integer(fee) and fee > 0, do: fee, else: nil
+
+      is_binary(entry_fee_cents) ->
+        case Integer.parse(entry_fee_cents) do
+          {int_cents, _} when int_cents > 0 -> int_cents
+          _ -> nil
+        end
+
+      true -> nil
+    end
+
+    if entry_fee do
+      country_code = get_venue_country_code(venue)
+      currency_code = get_country_currency(country_code)
+      money = Money.new(entry_fee, currency_code)
+      Money.to_string(money)
+    else
+      "Free"
+    end
+  end
 
   # Helper to get venue's country code
   defp get_venue_country_code(venue) do
@@ -302,15 +300,29 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     LocalizationHelpers.format_localized_time(time, country)
   end
 
-  # New function to display city and country
-  defp display_city_and_country(venue) do
-    city_name = if has_city?(venue), do: venue.city.name, else: nil
-    country_name = if has_country?(venue), do: venue.city.country.name, else: nil
-
+  # Get venue's country name
+  defp get_venue_country_name(venue) do
     cond do
-      city_name && country_name -> "#{city_name}, #{country_name}"
-      city_name -> city_name
-      true -> "Location TBD"
+      # If venue has loaded city with country association
+      has_country?(venue) ->
+        venue.city.country.name
+
+      # Try to get country name using country code
+      code = get_venue_country_code(venue) ->
+        country_data = Countries.get(code)
+        if country_data, do: country_data.name, else: "United Kingdom"
+
+      true -> "United Kingdom" # Default if not found
+    end
+  end
+
+  # Get venue's city name
+  defp get_venue_city(venue) do
+    cond do
+      has_city?(venue) ->
+        venue.city.name
+      true ->
+        "Unknown Location"
     end
   end
 end
