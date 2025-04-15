@@ -1066,7 +1066,7 @@ defmodule TriviaAdvisor.Locations do
       else
         # Find cities to absorb, but exclude preferred cities
         absorbed_cities = find_cities_to_absorb(
-          Enum.reject(sorted_cities, fn {other_key, other_data} ->
+          Enum.reject(sorted_cities, fn {_other_key, other_data} ->
             Enum.member?(@preferred_cities, other_data.name)
           end),
           city_key,
