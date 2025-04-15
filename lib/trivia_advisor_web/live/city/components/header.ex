@@ -32,7 +32,7 @@ defmodule TriviaAdvisorWeb.CityLive.Components.Header do
       <div class="absolute bottom-0 w-full px-4 py-8 text-white sm:px-6 lg:px-8">
         <div class="container mx-auto">
           <h1 class="text-4xl font-bold"><%= @city.name %>, <%= @city.country_name %></h1>
-          <p class="mt-2 text-lg"><%= @city.venue_count %> Trivia Venues</p>
+          <p class="mt-2 text-lg"><%= @city.venue_count %> Quiz Venues</p>
           <%= if @city.attribution do %>
             <p class="mt-1 text-xs opacity-80">
               Photo by
