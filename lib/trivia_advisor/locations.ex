@@ -301,21 +301,110 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
-  Creates a venue.
+  Creates a new venue from the given attributes.
+
+  ## Parameters
+  - attrs: Map of venue attributes
+  - opts: Optional keyword list of options
+
+  ## Options
+  - `:validate` - Whether to validate venue data (default: `true`)
+  - `:check_duplicates` - Whether to check for nearby duplicates (default: `true`)
 
   ## Examples
-
-      iex> create_venue(%{field: value})
+      iex> create_venue(%{name: "The Fox Pub", address: "123 Main St", latitude: 51.5074, longitude: -0.1278})
       {:ok, %Venue{}}
 
-      iex> create_venue(%{field: bad_value})
-      {:error, %Ecto.Changeset{}}
-
+  Returns `{:ok, venue}` if the venue was created successfully.
+  Returns `{:error, changeset}` if validation fails.
+  Returns `{:error, :nearby_duplicates, [venue]}` if nearby duplicates are found.
   """
-  def create_venue(attrs \\ %{}) do
-    %Venue{}
-    |> Venue.changeset(attrs)
-    |> Repo.insert()
+  @spec create_venue(map(), Keyword.t()) ::
+    {:ok, Venue.t()} |
+    {:error, Ecto.Changeset.t()} |
+    {:error, :nearby_duplicates, [Venue.t()]}
+  def create_venue(attrs, opts \\ []) do
+    validate = Keyword.get(opts, :validate, true)
+    check_duplicates = Keyword.get(opts, :check_duplicates, true)
+
+    attrs = if validate, do: extract_venue_metadata(attrs), else: attrs
+
+    coords = parse_coordinates(attrs)
+
+    # Check for nearby duplicates if enabled and coordinates are valid
+    if check_duplicates and coords do
+      nearby_duplicates = find_nearby_duplicate_venues(coords, Map.get(attrs, :name))
+
+      if Enum.any?(nearby_duplicates) do
+        {:error, :nearby_duplicates, nearby_duplicates}
+      else
+        do_create_venue(attrs)
+      end
+    else
+      do_create_venue(attrs)
+    end
+  end
+
+  defp do_create_venue(attrs) do
+    result =
+      %Venue{}
+      |> Venue.changeset(attrs)
+      |> Repo.insert()
+
+    case result do
+      {:ok, venue} -> {:ok, Repo.preload(venue, city: :country)}
+      error -> error
+    end
+  end
+
+  defp parse_coordinates(%{latitude: lat, longitude: lng}) when is_number(lat) and is_number(lng), do: {lat, lng}
+  defp parse_coordinates(%{"latitude" => lat, "longitude" => lng}) when is_number(lat) and is_number(lng), do: {lat, lng}
+  defp parse_coordinates(_), do: nil
+
+  @doc """
+  Finds potential duplicate venues within a specified distance.
+
+  ## Parameters
+  - coords: Tuple of {latitude, longitude}
+  - venue_name: Optional venue name to check for similarity
+
+  ## Examples
+      iex> find_nearby_duplicate_venues({51.5074, -0.1278}, "The Fox Pub")
+      [%Venue{}, ...]
+
+  Returns a list of venues that are within the minimum distance (defaults to 50 meters)
+  and optionally have similar names to the provided venue_name.
+  """
+  @spec find_nearby_duplicate_venues({number(), number()}, String.t() | nil) :: [Venue.t()]
+  def find_nearby_duplicate_venues(coords, venue_name \\ nil) do
+    {lat, lng} = coords
+    min_distance = Application.get_env(:trivia_advisor, :venue_validation)[:min_duplicate_distance] || 50
+
+    # Base query to find venues within the specified distance
+    query = from v in Venue,
+            where: fragment("ST_DWithin(ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography, ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)::geography, ?)", ^lng, ^lat, ^min_distance)
+
+    # If venue name is provided, filter by name similarity
+    query = if venue_name do
+      similarity_threshold = Application.get_env(:trivia_advisor, :venue_validation)[:name_similarity_threshold] || 0.3
+      from v in query,
+           where: fragment("similarity(?, ?) > ?", v.name, ^venue_name, ^similarity_threshold)
+    else
+      query
+    end
+
+    Repo.all(query)
+  end
+
+  defp extract_venue_metadata(attrs) do
+    # Extract all the Google Place data and relevant address components
+    google_place_id = Map.get(attrs, "google_place_id")
+    google_place_data = Map.get(attrs, "google_place_data")
+
+    attrs
+    |> Map.put("source", "google")
+    |> Map.put("google_place_id", google_place_id)
+    |> Map.put("google_place_data", google_place_data)
   end
 
   @doc """
@@ -454,7 +543,10 @@ defmodule TriviaAdvisor.Locations do
       existing_venue =
         if validated_data.place_id do
           # First try by place_id
-          Repo.get_by(Venue, place_id: validated_data.place_id)
+          Venue
+          |> where([v], v.place_id == ^validated_data.place_id)
+          |> preload(city: :country)
+          |> Repo.one()
         end
 
       # Then try by proximity if no venue found by place_id
@@ -473,6 +565,7 @@ defmodule TriviaAdvisor.Locations do
                 type(^lat_float, :float),
                 type(^lng_float, :float)
               ),
+            preload: [city: :country],
             limit: 1
           )
         else
@@ -506,51 +599,36 @@ defmodule TriviaAdvisor.Locations do
   end
 
   defp create_venue(attrs, validated_data, city) do
-    metadata = extract_relevant_metadata(validated_data)
+    # Get metadata from Google
+    attrs = extract_venue_metadata(attrs)
+    attrs = Map.put(attrs, "city_id", city.id)
 
-    %Venue{}
-    |> Venue.changeset(%{
-      name: attrs["title"],
-      address: attrs["address"],
-      postcode: validated_data.postcode,
-      latitude: Decimal.new(to_string(validated_data.lat)),
-      longitude: Decimal.new(to_string(validated_data.lng)),
-      place_id: validated_data.place_id,
-      phone: attrs["phone"],
-      website: attrs["website"],
-      city_id: city.id,
-      metadata: metadata
-    })
-    |> Repo.insert()
-  end
+    # Parse and validate geocoordinates
+    attrs = case validated_data do
+      %{lat: lat, lng: lng} when is_number(lat) and is_number(lng) ->
+        attrs
+        |> Map.put("latitude", lat)
+        |> Map.put("longitude", lng)
+      _ -> attrs
+    end
 
-  defp extract_relevant_metadata(google_data) do
-    %{
-      "formatted_address" => Map.get(google_data, "formatted_address"),
-      "place_id" => Map.get(google_data, "place_id"),
-      "address_components" => extract_address_components(Map.get(google_data, "address_components", [])),
-      "business_status" => Map.get(google_data, "business_status"),
-      "formatted_phone_number" => Map.get(google_data, "formatted_phone_number"),
-      "international_phone_number" => Map.get(google_data, "international_phone_number"),
-      "opening_hours" => Map.get(google_data, "opening_hours"),
-      "rating" => Map.get(google_data, "rating"),
-      "user_ratings_total" => Map.get(google_data, "user_ratings_total")
-    }
-    |> Map.reject(fn {_k, v} -> is_nil(v) end)
-  end
+    # Check for nearby duplicate venues if enabled in config
+    duplicate_check_enabled = Application.get_env(:trivia_advisor, :venue_validation)[:duplicate_check_enabled] || false
 
-  defp extract_address_components(components) do
-    Enum.reduce(components, %{}, fn component, acc ->
-      type = List.first(Map.get(component, "types", []))
-      if type do
-        Map.put(acc, type, %{
-          "long_name" => Map.get(component, "long_name"),
-          "short_name" => Map.get(component, "short_name")
-        })
+    if duplicate_check_enabled && Map.has_key?(attrs, "latitude") && Map.has_key?(attrs, "longitude") do
+      nearby_venues = find_nearby_duplicate_venues(
+        {Map.get(attrs, "latitude"), Map.get(attrs, "longitude")},
+        Map.get(attrs, "name")
+      )
+
+      if Enum.any?(nearby_venues) do
+        {:error, :potential_duplicate, nearby_venues}
       else
-        acc
+        do_create_venue(attrs)
       end
-    end)
+    else
+      do_create_venue(attrs)
+    end
   end
 
   @doc """
