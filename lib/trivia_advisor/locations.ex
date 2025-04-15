@@ -916,6 +916,9 @@ defmodule TriviaAdvisor.Locations do
     end
   end
 
+  # Define a module attribute for preferred cities to make it available throughout the module
+  @preferred_cities ["London", "Melbourne", "Sydney", "New York", "Chicago", "Toronto", "Dubai", "Berlin", "Paris"]
+
   @doc """
   Get popular cities based on venue counts with geographic clustering.
 
@@ -1003,10 +1006,33 @@ defmodule TriviaAdvisor.Locations do
     |> Enum.sort_by(fn {_key, data} -> data.count end, :desc)
   end
 
+  # Check if a city has already been absorbed by a larger city
+  defp already_absorbed?(processed_cities, city_key) do
+    Enum.any?(processed_cities, fn cluster ->
+      Enum.any?(cluster.absorbed_cities, fn {absorbed_key, _} ->
+        absorbed_key == city_key
+      end)
+    end)
+  end
+
+  # Find cities to absorb within the distance threshold
+  defp find_cities_to_absorb(sorted_cities, city_key, city_data, distance_threshold) do
+    Enum.filter(sorted_cities, fn {other_key, other_data} ->
+      city_key != other_key &&
+        distance_in_km(city_data.coords, other_data.coords) <= distance_threshold
+    end)
+  end
+
   # Cluster cities based on geographic proximity
   defp cluster_nearby_cities(sorted_cities, distance_threshold) do
-    Enum.reduce(sorted_cities, [], fn {city_key, city_data}, acc ->
-      # Skip if this city is already absorbed by a larger city
+    # First, separate preferred cities from regular cities
+    {preferred_city_items, other_city_items} = Enum.split_with(sorted_cities, fn {_key, city_data} ->
+      Enum.member?(@preferred_cities, city_data.name)
+    end)
+
+    # Process preferred cities first, allowing them to absorb nearby cities
+    processed_cities = Enum.reduce(preferred_city_items, [], fn {city_key, city_data}, acc ->
+      # Skip if this city is already absorbed by another preferred city
       if already_absorbed?(acc, city_key) do
         acc
       else
@@ -1031,32 +1057,62 @@ defmodule TriviaAdvisor.Locations do
         } | acc]
       end
     end)
-    |> Enum.sort_by(fn cluster -> cluster.venue_count end, :desc)
-  end
 
-  # Check if a city has already been absorbed by a larger city
-  defp already_absorbed?(processed_cities, city_key) do
-    Enum.any?(processed_cities, fn cluster ->
-      Enum.any?(cluster.absorbed_cities, fn {absorbed_key, _} ->
-        absorbed_key == city_key
-      end)
+    # Then process other cities, but don't let them absorb preferred cities
+    Enum.reduce(other_city_items, processed_cities, fn {city_key, city_data}, acc ->
+      # Skip if this city is already absorbed by a preferred city
+      if already_absorbed?(acc, city_key) do
+        acc
+      else
+        # Find cities to absorb, but exclude preferred cities
+        absorbed_cities = find_cities_to_absorb(
+          Enum.reject(sorted_cities, fn {other_key, other_data} ->
+            Enum.member?(@preferred_cities, other_data.name)
+          end),
+          city_key,
+          city_data,
+          distance_threshold
+        )
+
+        # Calculate total count
+        total_count = city_data.count +
+          Enum.sum(Enum.map(absorbed_cities, fn {_, other_data} -> other_data.count end))
+
+        # Add to results
+        [%{
+          id: city_data.id,
+          name: city_data.name,
+          slug: city_data.slug,
+          country_name: city_data.country_name,
+          country_id: city_data.country_id,
+          country_code: city_data.country_code,
+          venue_count: total_count,
+          coords: city_data.coords,
+          absorbed_cities: Map.new(absorbed_cities)
+        } | acc]
+      end
     end)
-  end
-
-  # Find cities to absorb within the distance threshold
-  defp find_cities_to_absorb(sorted_cities, city_key, city_data, distance_threshold) do
-    Enum.filter(sorted_cities, fn {other_key, other_data} ->
-      city_key != other_key &&
-        distance_in_km(city_data.coords, other_data.coords) <= distance_threshold
+    |> Enum.sort_by(fn cluster ->
+      # Sort by preferred cities first, then by venue count
+      preferred_index = Enum.find_index(@preferred_cities, fn name -> name == cluster.name end)
+      {preferred_index || 999, -cluster.venue_count}
     end)
   end
 
   # Filter top cities based on criteria
   defp filter_top_cities(processed_cities, limit, diverse_countries) do
+    # Sort cities by preferred status first, then by venue count
+    sorted_cities = Enum.sort_by(processed_cities, fn city ->
+      preferred_index = Enum.find_index(@preferred_cities, fn name -> name == city.name end)
+      # If city is in the preferred list, use its index for sorting (lower is better)
+      # If not in the list, use a high number + sort by venue count as secondary criteria
+      {preferred_index || 999, -city.venue_count}
+    end)
+
     if diverse_countries do
-      select_diverse_cities(processed_cities, limit)
+      select_diverse_cities(sorted_cities, limit)
     else
-      Enum.take(processed_cities, limit)
+      Enum.take(sorted_cities, limit)
     end
   end
 
