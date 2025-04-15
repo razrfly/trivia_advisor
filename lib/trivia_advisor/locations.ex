@@ -622,7 +622,8 @@ defmodule TriviaAdvisor.Locations do
       )
 
       if Enum.any?(nearby_venues) do
-        {:error, :potential_duplicate, nearby_venues}
+-        {:error, :potential_duplicate, nearby_venues}
++        {:error, :nearby_duplicates, nearby_venues}
       else
         do_create_venue(attrs)
       end
