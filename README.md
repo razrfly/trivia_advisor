@@ -264,3 +264,6 @@ mix scraper.test_pubquiz_index --limit=3 --force-refresh-images
 4. Handle errors gracefully
 5. Use the VenueHelpers module for common functionality
 6. NEVER write repetitive case statements that do the same thing with different data structures - see [Scraping Best Practices](lib/trivia_advisor/scraping/README.md#best-practices) for details
+7. NEVER hardcode Unsplash or other external image URLs directly in the code - use database or configuration
+8. Prefer database-backed data over static lists when possible
+9. Focus on optimizing queries rather than replacing with hardcoded data

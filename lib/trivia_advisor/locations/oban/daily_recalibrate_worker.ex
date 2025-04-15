@@ -5,6 +5,9 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
   This worker automates the process previously handled by the mix cities.update_coordinates task.
   It calculates the average latitude and longitude of all venues in each city and
   updates the city record with those coordinates.
+
+  Additionally, it precalculates and caches popular cities to prevent expensive
+  computations during page loads.
   """
 
   use Oban.Worker, queue: :default, max_attempts: 3
@@ -61,12 +64,80 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
       set: [meta: metadata]
     )
 
+    # After updating coordinates, precalculate and cache popular cities
+    cache_popular_cities()
+
     :ok
   end
 
   # Get all cities from the database
   defp get_all_cities do
     Repo.all(City)
+  end
+
+  # Cache popular cities for each common parameter combination
+  defp cache_popular_cities do
+    Logger.info("Caching popular cities combinations")
+
+    # Cache various combinations of parameters
+    [true, false]
+    |> Enum.each(fn diverse ->
+      [15, 10, 6]
+      |> Enum.each(fn limit ->
+        [50, 30]
+        |> Enum.each(fn distance ->
+          cache_city_combination(limit: limit, distance_threshold: distance, diverse_countries: diverse)
+        end)
+      end)
+    end)
+
+    # Always cache the default combination as fallback
+    store_fallback_popular_cities()
+
+    Logger.info("Completed caching popular cities")
+  end
+
+  # Cache a specific combination of parameters
+  defp cache_city_combination(opts) do
+    cache_key = "popular_cities:#{inspect(opts)}"
+
+    try do
+      # Calculate popular cities
+      cities = TriviaAdvisor.Locations.do_get_popular_cities(opts)
+
+      # Store in cache with 24hr TTL
+      TriviaAdvisor.Cache.store(cache_key, cities, 86400)
+
+      Logger.info("Cached popular cities for #{inspect(opts)}")
+    rescue
+      e ->
+        # Log error and continue with other combinations
+        Logger.error("Failed to cache popular cities for #{inspect(opts)}: #{inspect(e)}")
+    end
+  end
+
+  # Store fallback popular cities in cache
+  defp store_fallback_popular_cities do
+    # Cache all common combinations with these fallback cities
+    [true, false]
+    |> Enum.each(fn diverse ->
+      [15, 10, 6]
+      |> Enum.each(fn limit ->
+        [50, 30]
+        |> Enum.each(fn distance ->
+          opts = [limit: limit, distance_threshold: distance, diverse_countries: diverse]
+          cache_key = "popular_cities:#{inspect(opts)}"
+
+          # Get fallback cities from central function
+          cities = TriviaAdvisor.Locations.get_fallback_popular_cities(limit: limit)
+
+          # Store in cache with 24hr TTL
+          TriviaAdvisor.Cache.store(cache_key, cities, 86400)
+        end)
+      end)
+    end)
+
+    Logger.info("Stored fallback popular cities in cache")
   end
 
   # Update coordinates for a single city

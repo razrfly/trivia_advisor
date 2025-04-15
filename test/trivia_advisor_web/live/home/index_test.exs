@@ -50,7 +50,7 @@ defmodule TriviaAdvisorWeb.HomeLive.IndexTest do
   end
 
   describe "Home page" do
-    test "renders featured venues, popular cities, and upcoming events", %{conn: conn, venues: _venues} do
+    test "renders featured venues and popular cities", %{conn: conn, venues: _venues} do
       {:ok, view, html} = live(conn, ~p"/")
 
       # Test that the page loads with the right title
@@ -60,7 +60,6 @@ defmodule TriviaAdvisorWeb.HomeLive.IndexTest do
       # Test that the page has the main sections
       assert has_element?(view, "[data-testid='featured-venues']")
       assert has_element?(view, "[data-testid='popular-cities']")
-      assert has_element?(view, "[data-testid='upcoming-events']")
 
       # Test that venue cards are rendered properly
       assert has_element?(view, ".venue-card")

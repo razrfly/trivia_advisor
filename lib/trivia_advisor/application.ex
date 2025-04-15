@@ -28,6 +28,8 @@ defmodule TriviaAdvisor.Application do
       {TriviaAdvisor.Services.GooglePlacesService, []},
       # Start Google Place Image Store service
       {TriviaAdvisor.Services.GooglePlaceImageStore, []},
+      # Start the Cache module for in-memory caching
+      {TriviaAdvisor.Cache, []},
       # Start to serve requests, typically the last entry
       TriviaAdvisorWeb.Endpoint
     ]

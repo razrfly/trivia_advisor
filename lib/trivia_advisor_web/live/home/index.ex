@@ -4,18 +4,14 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
-    # Use real data only
+    # Use real data with caching
     featured_venues = TriviaAdvisor.Locations.get_featured_venues(limit: 4)
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
-
-    # Empty list for upcoming events until implemented
-    upcoming_events = []
 
     {:ok, assign(socket,
       page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
       featured_venues: featured_venues,
-      popular_cities: popular_cities,
-      upcoming_events: upcoming_events
+      popular_cities: popular_cities
     )}
   end
 
@@ -153,49 +149,6 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
             <%= for city <- @popular_cities do %>
               <CityCard.city_card city={city} />
             <% end %>
-          </div>
-        </div>
-      </section>
-
-      <!-- Upcoming Events Section -->
-      <section class="bg-gray-50 py-16">
-        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
-          <div class="mb-8 flex items-center justify-between">
-            <h2 class="text-3xl font-bold tracking-tight text-gray-900">Upcoming Events</h2>
-            <a href="#" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-              View all events
-              <span aria-hidden="true">→</span>
-            </a>
-          </div>
-          <div class="overflow-hidden rounded-lg bg-white shadow" data-testid="upcoming-events">
-            <div class="divide-y divide-gray-200">
-              <%= for event <- @upcoming_events do %>
-                <div class="flex items-center gap-4 p-4 transition hover:bg-gray-50">
-                  <div class="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-md bg-indigo-100 text-indigo-600">
-                    <p class="text-center font-semibold leading-none">
-                      <span class="block text-xs"><%= String.slice(event.day, 0, 3) %></span>
-                      <span class="text-xl"><%= event.date %></span>
-                    </p>
-                  </div>
-                  <div class="min-w-0 flex-1">
-                    <h3 class="truncate text-base font-medium text-gray-900">
-                      <a href={~p"/venues/#{event.venue_id}"} class="hover:text-indigo-600"><%= event.name %></a>
-                    </h3>
-                    <div class="mt-1 flex items-center text-sm text-gray-500">
-                      <svg class="mr-1.5 h-4 w-4 flex-shrink-0 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd" />
-                      </svg>
-                      <span><%= event.time %></span>
-                    </div>
-                  </div>
-                  <div class="flex-shrink-0">
-                    <span class={"inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium #{if event.free?, do: "bg-green-100 text-green-800", else: "bg-indigo-100 text-indigo-800"}"}>
-                      <%= if event.free?, do: "Free", else: event.price %>
-                    </span>
-                  </div>
-                </div>
-              <% end %>
-            </div>
           </div>
         </div>
       </section>
