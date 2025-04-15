@@ -916,6 +916,240 @@ defmodule TriviaAdvisor.Locations do
     end
   end
 
+  @doc """
+  Get popular cities based on venue counts with geographic clustering.
+
+  This function finds the most popular cities by venue count, while preventing nearby
+  suburbs from being counted separately. Cities within a certain distance threshold
+  are clustered together, with the largest city absorbing the venue counts of nearby
+  smaller cities.
+
+  ## Options
+    * `:limit` - maximum number of cities to return (default: 15)
+    * `:distance_threshold` - distance in kilometers for city clustering (default: 50)
+    * `:diverse_countries` - whether to select cities from different countries (default: false)
+
+  ## Examples
+
+      iex> get_popular_cities(limit: 10, distance_threshold: 30)
+      [%{id: 1, name: "London", country_name: "United Kingdom", venue_count: 120, ...}, ...]
+  """
+  def get_popular_cities(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 15)
+    distance_threshold = Keyword.get(opts, :distance_threshold, 50)
+    diverse_countries = Keyword.get(opts, :diverse_countries, false)
+
+    # Get all venues with coordinates
+    venues = query_venues_with_coordinates()
+
+    # Group venues by city for initial counting
+    city_venue_counts = group_venues_by_city(venues)
+
+    # Process cities for clustering
+    processed_cities = cluster_nearby_cities(city_venue_counts, distance_threshold)
+
+    # Get top cities diversified by country if requested
+    top_cities = filter_top_cities(processed_cities, limit, diverse_countries)
+
+    # Add image URLs to each city
+    add_city_images(top_cities)
+  end
+
+  # Query venues with valid coordinates
+  defp query_venues_with_coordinates do
+    from(v in Venue,
+      where: not is_nil(v.latitude) and not is_nil(v.longitude),
+      select: %{
+        id: v.id,
+        city_id: v.city_id,
+        lat: v.latitude,
+        lng: v.longitude
+      })
+    |> Repo.all()
+  end
+
+  # Group venues by city and prepare initial data
+  defp group_venues_by_city(venues) do
+    city_data = Enum.reduce(venues, %{}, fn venue, acc ->
+      # Get the city for this venue
+      city = get_city!(venue.city_id)
+      |> Repo.preload(:country)
+
+      city_key = "#{city.id}:#{city.name}"
+      coords = {venue.lat, venue.lng}
+
+      city_info = Map.get(acc, city_key, %{
+        id: city.id,
+        name: city.name,
+        slug: city.slug,
+        country_name: city.country.name,
+        country_id: city.country.id,
+        country_code: city.country.code,
+        count: 0,
+        coords: coords,
+        venues: []
+      })
+
+      Map.put(acc, city_key, %{
+        city_info |
+        count: city_info.count + 1,
+        venues: [venue.id | city_info.venues]
+      })
+    end)
+
+    # Sort cities by venue count
+    city_data
+    |> Map.to_list()
+    |> Enum.sort_by(fn {_key, data} -> data.count end, :desc)
+  end
+
+  # Cluster cities based on geographic proximity
+  defp cluster_nearby_cities(sorted_cities, distance_threshold) do
+    Enum.reduce(sorted_cities, [], fn {city_key, city_data}, acc ->
+      # Skip if this city is already absorbed by a larger city
+      if already_absorbed?(acc, city_key) do
+        acc
+      else
+        # Find cities to absorb (within distance_threshold)
+        absorbed_cities = find_cities_to_absorb(sorted_cities, city_key, city_data, distance_threshold)
+
+        # Calculate total count including absorbed cities
+        total_count = city_data.count +
+          Enum.sum(Enum.map(absorbed_cities, fn {_, other_data} -> other_data.count end))
+
+        # Add to results with all the required fields for the city card component
+        [%{
+          id: city_data.id,
+          name: city_data.name,
+          slug: city_data.slug,
+          country_name: city_data.country_name,
+          country_id: city_data.country_id,
+          country_code: city_data.country_code,
+          venue_count: total_count,
+          coords: city_data.coords,
+          absorbed_cities: Map.new(absorbed_cities)
+        } | acc]
+      end
+    end)
+    |> Enum.sort_by(fn cluster -> cluster.venue_count end, :desc)
+  end
+
+  # Check if a city has already been absorbed by a larger city
+  defp already_absorbed?(processed_cities, city_key) do
+    Enum.any?(processed_cities, fn cluster ->
+      Enum.any?(cluster.absorbed_cities, fn {absorbed_key, _} ->
+        absorbed_key == city_key
+      end)
+    end)
+  end
+
+  # Find cities to absorb within the distance threshold
+  defp find_cities_to_absorb(sorted_cities, city_key, city_data, distance_threshold) do
+    Enum.filter(sorted_cities, fn {other_key, other_data} ->
+      city_key != other_key &&
+        distance_in_km(city_data.coords, other_data.coords) <= distance_threshold
+    end)
+  end
+
+  # Filter top cities based on criteria
+  defp filter_top_cities(processed_cities, limit, diverse_countries) do
+    if diverse_countries do
+      select_diverse_cities(processed_cities, limit)
+    else
+      Enum.take(processed_cities, limit)
+    end
+  end
+
+  # Add images to city data
+  defp add_city_images(cities) do
+    # Get city names for batch image fetching
+    city_names = Enum.map(cities, & &1.name)
+    city_images = TriviaAdvisor.Services.UnsplashService.get_city_images_batch(city_names)
+
+    # Add image URLs to each city
+    Enum.map(cities, fn city ->
+      # Get image data from pre-fetched batch
+      image_data = Map.get(city_images, city.name, %{url: nil})
+
+      # Extract image URL with backward compatibility
+      image_url = extract_image_url(image_data)
+
+      Map.put(city, :image_url, image_url)
+    end)
+  end
+
+  # Extract image URL from various possible formats
+  defp extract_image_url(image_data) do
+    cond do
+      is_map(image_data) && Map.has_key?(image_data, :url) -> image_data.url
+      is_map(image_data) && Map.has_key?(image_data, :image_url) -> image_data.image_url
+      is_binary(image_data) -> image_data
+      true -> nil
+    end
+  end
+
+  # Helper function to select cities from diverse countries
+  defp select_diverse_cities(cities, limit) do
+    # First select one city from each country
+    {diverse_cities, _country_counts} =
+      Enum.reduce(cities, {[], %{}}, fn city, {selected, country_counts} ->
+        country_code = city.country_code
+        country_count = Map.get(country_counts, country_code, 0)
+
+        # Only take the first city from each country
+        if length(selected) < limit and country_count < 1 do
+          {
+            [city | selected],
+            Map.put(country_counts, country_code, country_count + 1)
+          }
+        else
+          {selected, country_counts}
+        end
+      end)
+
+    # Calculate how many more cities we need
+    remaining = limit - length(diverse_cities)
+
+    # If we don't have enough diverse cities, add more from top cities
+    cities_to_return =
+      if remaining > 0 do
+        # Get cities we already selected
+        selected_ids = MapSet.new(Enum.map(diverse_cities, & &1.id))
+
+        # Add more cities not yet selected
+        additional_cities = cities
+        |> Enum.reject(fn city -> MapSet.member?(selected_ids, city.id) end)
+        |> Enum.take(remaining)
+
+        diverse_cities ++ additional_cities
+      else
+        diverse_cities
+      end
+
+    # Sort by venue count
+    Enum.sort_by(cities_to_return, fn city -> city.venue_count end, :desc)
+  end
+
+  # Calculate distance between two lat/lng coordinates using Haversine formula
+  defp distance_in_km({lat1, lng1}, {lat2, lng2}) do
+    lat1 = if is_struct(lat1, Decimal), do: Decimal.to_float(lat1), else: lat1
+    lng1 = if is_struct(lng1, Decimal), do: Decimal.to_float(lng1), else: lng1
+    lat2 = if is_struct(lat2, Decimal), do: Decimal.to_float(lat2), else: lat2
+    lng2 = if is_struct(lng2, Decimal), do: Decimal.to_float(lng2), else: lng2
+
+    earth_radius = 6371 # km
+
+    dlat = :math.pi() * (lat2 - lat1) / 180
+    dlng = :math.pi() * (lng2 - lng1) / 180
+
+    a = :math.sin(dlat / 2) * :math.sin(dlat / 2) +
+        :math.cos(:math.pi() * lat1 / 180) * :math.cos(:math.pi() * lat2 / 180) *
+        :math.sin(dlng / 2) * :math.sin(dlng / 2)
+
+    c = 2 * :math.atan2(:math.sqrt(a), :math.sqrt(1 - a))
+    earth_radius * c
+  end
+
   # Helper function to select venues from diverse locations
   defp select_diverse_venues(venues, limit) do
     venues
