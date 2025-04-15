@@ -88,18 +88,14 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
 
   # -- VENUE DATA HELPERS --
 
-  @doc """
-  Gets the venue slug or generates one from the name if not available.
-  """
+  # Gets the venue slug or generates one from the name if not available.
   @spec get_venue_slug(map()) :: String.t()
   defp get_venue_slug(venue) do
     slug = Map.get(venue, :slug)
     if is_binary(slug) && slug != "", do: slug, else: create_slug_from_name(venue)
   end
 
-  @doc """
-  Creates a URL-friendly slug from the venue name.
-  """
+  # Creates a URL-friendly slug from the venue name.
   @spec create_slug_from_name(map()) :: String.t()
   defp create_slug_from_name(venue) do
     name = Map.get(venue, :name, "venue")
@@ -113,9 +109,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     if slug == "", do: id, else: slug
   end
 
-  @doc """
-  Gets the formatted venue address, combining address and city when available.
-  """
+  # Gets the formatted venue address, combining address and city when available.
   @spec get_venue_address(map()) :: String.t()
   defp get_venue_address(venue) do
     address = Map.get(venue, :address)
@@ -129,9 +123,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets the venue day of week with appropriate fallbacks.
-  """
+  # Gets the venue day of week with appropriate fallbacks.
   @spec get_venue_day_of_week(map()) :: integer()
   defp get_venue_day_of_week(venue) do
     cond do
@@ -150,9 +142,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets the venue start time with appropriate fallbacks.
-  """
+  # Gets the venue start time with appropriate fallbacks.
   @spec get_venue_time(map()) :: Time.t() | String.t()
   defp get_venue_time(venue) do
     cond do
@@ -175,9 +165,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets the venue image URL with fallback to ImageHelpers.
-  """
+  # Gets the venue image URL with fallback to ImageHelpers.
   @spec get_venue_image_url(map()) :: String.t()
   defp get_venue_image_url(venue) do
     cond do
@@ -191,9 +179,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets the venue description, falling back to event description or a default.
-  """
+  # Gets the venue description, falling back to event description or a default.
   @spec get_venue_description(map()) :: String.t()
   defp get_venue_description(venue) do
     venue_description = Map.get(venue, :description)
@@ -218,9 +204,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Creates a default description using the venue name.
-  """
+  # Creates a default description using the venue name.
   @spec default_description(map()) :: String.t()
   defp default_description(venue) do
     "Join us for trivia nights at #{Map.get(venue, :name, "this venue")}!"
@@ -228,9 +212,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
 
   # -- FORMATTING HELPERS --
 
-  @doc """
-  Renders star rating based on venue rating with defaults.
-  """
+  # Renders star rating based on venue rating with defaults.
   @spec render_rating_stars(map()) :: String.t()
   defp render_rating_stars(venue) do
     rating = get_venue_rating(venue)
@@ -251,18 +233,14 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets venue rating value with type checking.
-  """
+  # Gets venue rating value with type checking.
   @spec get_venue_rating(map()) :: float() | nil
   defp get_venue_rating(venue) do
     rating = Map.get(venue, :rating)
     if is_number(rating), do: rating, else: nil
   end
 
-  @doc """
-  Formats rating as a string for display.
-  """
+  # Formats rating as a string for display.
   @spec format_rating(map()) :: String.t()
   defp format_rating(venue) do
     rating = get_venue_rating(venue)
@@ -274,9 +252,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Displays formatted price with proper currency based on venue's country.
-  """
+  # Displays formatted price with proper currency based on venue's country.
   @spec display_formatted_price(map()) :: String.t()
   defp display_formatted_price(venue) do
     # Find the entry fee based on priority order
@@ -306,10 +282,8 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets entry fee cents based on priority: venue fee -> event fee -> nil.
-  """
-  @spec get_entry_fee_cents(map()) :: integer() | String.t() | nil
+  # Gets the entry fee amount in cents with fallbacks.
+  @spec get_entry_fee_cents(map()) :: integer() | nil
   defp get_entry_fee_cents(venue) do
     venue_fee = Map.get(venue, :entry_fee_cents)
 
@@ -329,10 +303,8 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Normalizes cents value to integer regardless of input type.
-  """
-  @spec normalize_cents(integer() | String.t()) :: integer()
+  # Normalizes various formats of cents into a consistent integer.
+  @spec normalize_cents(any()) :: integer() | nil
   defp normalize_cents(cents) do
     case cents do
       cents when is_integer(cents) -> cents
@@ -345,10 +317,8 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets venue's country code with fallbacks.
-  """
-  @spec get_venue_country_code(map()) :: String.t()
+  # Gets the venue's country code with fallbacks.
+  @spec get_venue_country_code(map()) :: String.t() | nil
   defp get_venue_country_code(venue) do
     cond do
       # From city.country association
@@ -364,18 +334,14 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Gets the full country data structure for localization.
-  """
-  @spec get_venue_country(map()) :: map()
+  # Gets the venue's country with appropriate fallbacks.
+  @spec get_venue_country(map()) :: map() | nil
   defp get_venue_country(venue) do
     country_code = get_venue_country_code(venue)
     %{code: country_code}
   end
 
-  @doc """
-  Gets country's currency code with fallback to GBP.
-  """
+  # Gets the currency for a country based on country code.
   @spec get_country_currency(String.t()) :: String.t()
   defp get_country_currency(country_code) do
     # Try to use the Countries library to get currency code
@@ -388,12 +354,10 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  @doc """
-  Formats day number to day name.
-  """
-  @spec format_day(integer() | any()) :: String.t()
-  defp format_day(day) when is_integer(day) do
-    case day do
+  # Formats a day of week integer into a readable string.
+  @spec format_day(integer()) :: String.t()
+  defp format_day(day_of_week) do
+    case day_of_week do
       1 -> "Monday"
       2 -> "Tuesday"
       3 -> "Wednesday"
@@ -404,19 +368,14 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
       _ -> "Unknown"
     end
   end
-  defp format_day(_), do: "TBA"
 
-  @doc """
-  Uses localization helper for time formatting.
-  """
-  @spec format_localized_time(Time.t() | String.t(), map()) :: String.t()
-  defp format_localized_time(time, country) do
-    LocalizationHelpers.format_localized_time(time, country)
+  # Formats a time for the specified time zone.
+  @spec format_localized_time(Time.t() | String.t(), String.t()) :: String.t()
+  defp format_localized_time(time, timezone) do
+    LocalizationHelpers.format_localized_time(time, timezone)
   end
 
-  @doc """
-  Displays city and country information with fallbacks.
-  """
+  # Displays city and country names with appropriate formatting.
   @spec display_city_and_country(map()) :: String.t()
   defp display_city_and_country(venue) do
     city_name = if has_city?(venue), do: venue.city.name, else: nil
@@ -429,11 +388,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  # -- HELPER PREDICATES --
-
-  @doc """
-  Checks if venue has valid city data.
-  """
+  # Checks if the venue has a valid city association.
   @spec has_city?(map()) :: boolean()
   defp has_city?(venue) do
     is_map(venue) &&
@@ -443,9 +398,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     is_binary(venue.city.name)
   end
 
-  @doc """
-  Checks if venue has valid country data through city.
-  """
+  # Checks if the venue has a valid country association.
   @spec has_country?(map()) :: boolean()
   defp has_country?(venue) do
     has_city?(venue) &&
@@ -455,9 +408,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     is_binary(venue.city.country.code)
   end
 
-  @doc """
-  Checks if venue has country code in metadata.
-  """
+  # Checks if the venue has country info in metadata.
   @spec has_metadata_country?(map()) :: boolean()
   defp has_metadata_country?(venue) do
     is_map(venue) &&
@@ -467,9 +418,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     is_binary(venue.metadata["country_code"])
   end
 
-  @doc """
-  Checks if venue has events that are loaded (not NotLoaded).
-  """
+  # Checks if the venue has preloaded events.
   @spec has_loaded_events?(map()) :: boolean()
   defp has_loaded_events?(venue) do
     is_map(venue) &&
