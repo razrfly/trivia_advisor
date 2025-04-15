@@ -1,8 +1,16 @@
 defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
+  @moduledoc """
+  Component for rendering venue cards throughout the application.
+  Handles consistent display of venue information with fallbacks.
+  """
   use TriviaAdvisorWeb, :html
   alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
   alias TriviaAdvisorWeb.Helpers.ImageHelpers
 
+  @doc """
+  Renders a venue card with all available information.
+  Falls back gracefully when data is missing.
+  """
   def venue_card(assigns) do
     ~H"""
     <div class="venue-card flex flex-col overflow-hidden rounded-lg border bg-white shadow-sm transition hover:shadow-md">
@@ -12,11 +20,6 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
           alt={Map.get(assigns.venue, :name, "Venue")}
           class="h-full w-full object-cover"
         />
-
-        <!-- Entry fee badge -->
-        <div class="absolute right-2 top-2 rounded-full bg-indigo-600 px-2 py-1 text-xs font-medium text-white">
-          <%= format_price(Map.get(assigns.venue, :entry_fee_cents), assigns.venue) %>
-        </div>
       </div>
 
       <div class="flex flex-1 flex-col p-4">
@@ -33,7 +36,7 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
           <span class="truncate"><%= get_venue_address(assigns.venue) %></span>
         </div>
 
-        <div class="mb-3 flex items-center text-sm text-gray-600">
+        <div class="mb-2 flex items-center text-sm text-gray-600">
           <svg class="mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd" />
           </svg>
@@ -42,9 +45,20 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
           </span>
         </div>
 
+        <!-- Price information -->
+        <div class="mb-2 flex items-center text-sm text-gray-600">
+          <svg class="mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M10.75 10.818v2.614A3.13 3.13 0 0011.888 13c.482-.315.612-.648.612-.875 0-.227-.13-.56-.612-.875a3.13 3.13 0 00-1.138-.432zM8.33 8.62c.053.055.115.11.184.164.208.16.46.284.736.363V6.603a2.45 2.45 0 00-.35.13c-.14.065-.27.143-.386.233-.377.292-.514.627-.514.909 0 .184.058.39.202.592.037.051.08.102.128.152z" />
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-6a.75.75 0 01.75.75v.316a3.78 3.78 0 011.653.713c.426.33.744.74.925 1.2a.75.75 0 01-1.395.55 1.35 1.35 0 00-.447-.563 2.187 2.187 0 00-.736-.363V9.3c.698.093 1.383.32 1.959.696.787.514 1.29 1.27 1.29 2.13 0 .86-.504 1.616-1.29 2.13-.576.377-1.261.603-1.96.696v.299a.75.75 0 11-1.5 0v-.3c-.697-.092-1.382-.318-1.958-.695-.482-.315-.857-.717-1.078-1.188a.75.75 0 111.359-.636c.08.173.245.376.54.569.313.205.706.353 1.138.432v-2.748a3.782 3.782 0 01-1.653-.713C6.9 9.433 6.5 8.681 6.5 7.875c0-.805.4-1.558 1.097-2.096a3.78 3.78 0 011.653-.713V4.75A.75.75 0 0110 4z" clip-rule="evenodd" />
+          </svg>
+          <span>
+            <%= display_formatted_price(assigns.venue) %>
+          </span>
+        </div>
+
         <!-- Description with line clamp -->
         <p class="mb-4 flex-1 text-sm text-gray-600 line-clamp-3">
-          <%= Map.get(assigns.venue, :description, "Join us for trivia nights!") %>
+          <%= get_venue_description(assigns.venue) %>
         </p>
 
         <!-- City and Country (replacing ratings) -->
@@ -72,13 +86,21 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     """
   end
 
-  # Safe helper to get venue slug or generate one from name
+  # -- VENUE DATA HELPERS --
+
+  @doc """
+  Gets the venue slug or generates one from the name if not available.
+  """
+  @spec get_venue_slug(map()) :: String.t()
   defp get_venue_slug(venue) do
     slug = Map.get(venue, :slug)
-    if slug && slug != "", do: slug, else: create_slug_from_name(venue)
+    if is_binary(slug) && slug != "", do: slug, else: create_slug_from_name(venue)
   end
 
-  # Create a slug from venue name
+  @doc """
+  Creates a URL-friendly slug from the venue name.
+  """
+  @spec create_slug_from_name(map()) :: String.t()
   defp create_slug_from_name(venue) do
     name = Map.get(venue, :name, "venue")
     id = Map.get(venue, :id, "unknown")
@@ -91,7 +113,10 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     if slug == "", do: id, else: slug
   end
 
-  # Safe helper to get venue address
+  @doc """
+  Gets the formatted venue address, combining address and city when available.
+  """
+  @spec get_venue_address(map()) :: String.t()
   defp get_venue_address(venue) do
     address = Map.get(venue, :address)
     city_name = if has_city?(venue), do: venue.city.name, else: nil
@@ -104,66 +129,109 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  # Check if venue has city data
-  defp has_city?(venue) do
-    Map.has_key?(venue, :city) &&
-    is_map(venue.city) &&
-    Map.has_key?(venue.city, :name) &&
-    is_binary(venue.city.name)
-  end
-
-  # Get venue day of week with fallback
+  @doc """
+  Gets the venue day of week with appropriate fallbacks.
+  """
+  @spec get_venue_day_of_week(map()) :: integer()
   defp get_venue_day_of_week(venue) do
     cond do
+      # Directly on venue
       Map.has_key?(venue, :day_of_week) && venue.day_of_week ->
         venue.day_of_week
 
-      Map.has_key?(venue, :events) &&
-      !match?(%Ecto.Association.NotLoaded{}, venue.events) &&
-      venue.events &&
-      Enum.any?(venue.events) ->
+      # From first event
+      has_loaded_events?(venue) ->
         event = List.first(venue.events)
         Map.get(event, :day_of_week, 1)
 
+      # Default
       true ->
         1 # Default to Monday
     end
   end
 
-  # Get venue time with fallback
+  @doc """
+  Gets the venue start time with appropriate fallbacks.
+  """
+  @spec get_venue_time(map()) :: Time.t() | String.t()
   defp get_venue_time(venue) do
     cond do
+      # Time struct directly on venue
       Map.has_key?(venue, :start_time) && venue.start_time && is_struct(venue.start_time, Time) ->
         venue.start_time
 
+      # String time on venue
       Map.has_key?(venue, :start_time) && is_binary(venue.start_time) ->
         venue.start_time
 
-      Map.has_key?(venue, :events) &&
-      !match?(%Ecto.Association.NotLoaded{}, venue.events) &&
-      venue.events &&
-      Enum.any?(venue.events) ->
+      # Time from first event
+      has_loaded_events?(venue) ->
         event = List.first(venue.events)
         Map.get(event, :start_time, ~T[19:00:00])
 
+      # Default
       true ->
         ~T[19:00:00] # Default to 7:00 PM
     end
   end
 
-  # Get venue image with fallback
+  @doc """
+  Gets the venue image URL with fallback to ImageHelpers.
+  """
+  @spec get_venue_image_url(map()) :: String.t()
   defp get_venue_image_url(venue) do
     cond do
-      Map.has_key?(venue, :hero_image_url) && venue.hero_image_url && venue.hero_image_url != "" ->
+      # Hero image URL directly on venue
+      Map.has_key?(venue, :hero_image_url) && is_binary(venue.hero_image_url) && venue.hero_image_url != "" ->
         venue.hero_image_url
 
+      # Use ImageHelpers fallback
       true ->
-        # Directly call ImageHelpers without checking if exported
         ImageHelpers.get_venue_image(venue)
     end
   end
 
-  # Render star rating based on venue rating
+  @doc """
+  Gets the venue description, falling back to event description or a default.
+  """
+  @spec get_venue_description(map()) :: String.t()
+  defp get_venue_description(venue) do
+    venue_description = Map.get(venue, :description)
+
+    cond do
+      # Use venue description if available
+      is_binary(venue_description) && venue_description != "" ->
+        venue_description
+
+      # Try to get description from first event
+      has_loaded_events?(venue) ->
+        event = List.first(venue.events)
+        event_description = Map.get(event, :description)
+
+        if is_binary(event_description) && event_description != "",
+          do: event_description,
+          else: default_description(venue)
+
+      # Default fallback
+      true ->
+        default_description(venue)
+    end
+  end
+
+  @doc """
+  Creates a default description using the venue name.
+  """
+  @spec default_description(map()) :: String.t()
+  defp default_description(venue) do
+    "Join us for trivia nights at #{Map.get(venue, :name, "this venue")}!"
+  end
+
+  # -- FORMATTING HELPERS --
+
+  @doc """
+  Renders star rating based on venue rating with defaults.
+  """
+  @spec render_rating_stars(map()) :: String.t()
   defp render_rating_stars(venue) do
     rating = get_venue_rating(venue)
 
@@ -183,14 +251,19 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  # Get venue rating with fallback
+  @doc """
+  Gets venue rating value with type checking.
+  """
+  @spec get_venue_rating(map()) :: float() | nil
   defp get_venue_rating(venue) do
     rating = Map.get(venue, :rating)
-
     if is_number(rating), do: rating, else: nil
   end
 
-  # Format rating for display
+  @doc """
+  Formats rating as a string for display.
+  """
+  @spec format_rating(map()) :: String.t()
   defp format_rating(venue) do
     rating = get_venue_rating(venue)
 
@@ -201,76 +274,109 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
-  # Helper functions for formatting
-  defp format_price(cents, venue) when not is_nil(cents) do
-    # Convert to integer to ensure proper handling
-    cents_int =
-      case cents do
-        cents when is_integer(cents) -> cents
-        cents when is_binary(cents) ->
-          case Integer.parse(cents) do
-            {int, _} -> int
-            :error -> 0
-          end
-        _ -> 0
-      end
+  @doc """
+  Displays formatted price with proper currency based on venue's country.
+  """
+  @spec display_formatted_price(map()) :: String.t()
+  defp display_formatted_price(venue) do
+    # Find the entry fee based on priority order
+    entry_fee_cents = get_entry_fee_cents(venue)
 
-    if cents_int > 0 do
-      # Get the appropriate currency for this venue
-      country_code = get_venue_country_code(venue)
-      currency_code = get_country_currency(country_code)
+    cond do
+      # No fee or zero fee
+      is_nil(entry_fee_cents) ||
+      (is_binary(entry_fee_cents) && entry_fee_cents == "") ->
+        "Free Entry"
 
-      # Create Money struct with proper currency and format it
-      money = Money.new(cents_int, currency_code)
-      Money.to_string(money)
-    else
-      "Free"
+      # Convert and format fee
+      true ->
+        cents_int = normalize_cents(entry_fee_cents)
+
+        if cents_int <= 0 do
+          "Free Entry"
+        else
+          # Get the appropriate currency for this venue
+          country_code = get_venue_country_code(venue)
+          currency_code = get_country_currency(country_code)
+
+          # Create Money struct with proper currency and format it
+          money = Money.new(cents_int, currency_code)
+          "Entry: #{Money.to_string(money)}"
+        end
     end
   end
-  defp format_price(_, _), do: "Free"
 
-  # Helper to get venue's country code
+  @doc """
+  Gets entry fee cents based on priority: venue fee -> event fee -> nil.
+  """
+  @spec get_entry_fee_cents(map()) :: integer() | String.t() | nil
+  defp get_entry_fee_cents(venue) do
+    venue_fee = Map.get(venue, :entry_fee_cents)
+
+    event_fee =
+      if has_loaded_events?(venue) do
+        event = List.first(venue.events)
+        Map.get(event, :entry_fee_cents)
+      else
+        nil
+      end
+
+    # Use the most appropriate fee
+    cond do
+      is_integer(venue_fee) && venue_fee > 0 -> venue_fee
+      is_integer(event_fee) && event_fee > 0 -> event_fee
+      true -> nil
+    end
+  end
+
+  @doc """
+  Normalizes cents value to integer regardless of input type.
+  """
+  @spec normalize_cents(integer() | String.t()) :: integer()
+  defp normalize_cents(cents) do
+    case cents do
+      cents when is_integer(cents) -> cents
+      cents when is_binary(cents) ->
+        case Integer.parse(cents) do
+          {int, _} -> int
+          :error -> 0
+        end
+      _ -> 0
+    end
+  end
+
+  @doc """
+  Gets venue's country code with fallbacks.
+  """
+  @spec get_venue_country_code(map()) :: String.t()
   defp get_venue_country_code(venue) do
     cond do
-      # If venue has loaded city with country association
+      # From city.country association
       has_country?(venue) ->
         venue.city.country.code
 
-      # Try to get country from metadata
+      # From metadata
       has_metadata_country?(venue) ->
         venue.metadata["country_code"]
 
+      # Default
       true -> "GB" # Default to GB if not found
     end
   end
 
-  # Check if venue has country data
-  defp has_country?(venue) do
-    is_map(venue) &&
-    Map.has_key?(venue, :city) &&
-    is_map(venue.city) &&
-    Map.has_key?(venue.city, :country) &&
-    is_map(venue.city.country) &&
-    Map.has_key?(venue.city.country, :code) &&
-    venue.city.country.code
-  end
-
-  # Check if venue has country in metadata
-  defp has_metadata_country?(venue) do
-    is_map(venue) &&
-    Map.has_key?(venue, :metadata) &&
-    venue.metadata &&
-    is_map(venue.metadata) &&
-    Map.has_key?(venue.metadata, "country_code")
-  end
-
-  # Helper to get the full country data for localization
+  @doc """
+  Gets the full country data structure for localization.
+  """
+  @spec get_venue_country(map()) :: map()
   defp get_venue_country(venue) do
     country_code = get_venue_country_code(venue)
     %{code: country_code}
   end
 
-  # Helper to get country's currency code
+  @doc """
+  Gets country's currency code with fallback to GBP.
+  """
+  @spec get_country_currency(String.t()) :: String.t()
   defp get_country_currency(country_code) do
     # Try to use the Countries library to get currency code
     country_data = Countries.get(country_code)
@@ -282,6 +388,10 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
     end
   end
 
+  @doc """
+  Formats day number to day name.
+  """
+  @spec format_day(integer() | any()) :: String.t()
   defp format_day(day) when is_integer(day) do
     case day do
       1 -> "Monday"
@@ -294,15 +404,20 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
       _ -> "Unknown"
     end
   end
-
   defp format_day(_), do: "TBA"
 
-  # Use the localization helper for time formatting
+  @doc """
+  Uses localization helper for time formatting.
+  """
+  @spec format_localized_time(Time.t() | String.t(), map()) :: String.t()
   defp format_localized_time(time, country) do
     LocalizationHelpers.format_localized_time(time, country)
   end
 
-  # New function to display city and country
+  @doc """
+  Displays city and country information with fallbacks.
+  """
+  @spec display_city_and_country(map()) :: String.t()
   defp display_city_and_country(venue) do
     city_name = if has_city?(venue), do: venue.city.name, else: nil
     country_name = if has_country?(venue), do: venue.city.country.name, else: nil
@@ -312,5 +427,55 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
       city_name -> city_name
       true -> "Location TBD"
     end
+  end
+
+  # -- HELPER PREDICATES --
+
+  @doc """
+  Checks if venue has valid city data.
+  """
+  @spec has_city?(map()) :: boolean()
+  defp has_city?(venue) do
+    is_map(venue) &&
+    Map.has_key?(venue, :city) &&
+    is_map(venue.city) &&
+    Map.has_key?(venue.city, :name) &&
+    is_binary(venue.city.name)
+  end
+
+  @doc """
+  Checks if venue has valid country data through city.
+  """
+  @spec has_country?(map()) :: boolean()
+  defp has_country?(venue) do
+    has_city?(venue) &&
+    Map.has_key?(venue.city, :country) &&
+    is_map(venue.city.country) &&
+    Map.has_key?(venue.city.country, :code) &&
+    is_binary(venue.city.country.code)
+  end
+
+  @doc """
+  Checks if venue has country code in metadata.
+  """
+  @spec has_metadata_country?(map()) :: boolean()
+  defp has_metadata_country?(venue) do
+    is_map(venue) &&
+    Map.has_key?(venue, :metadata) &&
+    is_map(venue.metadata) &&
+    Map.has_key?(venue.metadata, "country_code") &&
+    is_binary(venue.metadata["country_code"])
+  end
+
+  @doc """
+  Checks if venue has events that are loaded (not NotLoaded).
+  """
+  @spec has_loaded_events?(map()) :: boolean()
+  defp has_loaded_events?(venue) do
+    is_map(venue) &&
+    Map.has_key?(venue, :events) &&
+    !match?(%Ecto.Association.NotLoaded{}, venue.events) &&
+    is_list(venue.events) &&
+    length(venue.events) > 0
   end
 end
