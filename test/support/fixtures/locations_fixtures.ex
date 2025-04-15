@@ -104,6 +104,17 @@ defmodule TriviaAdvisor.LocationsFixtures do
       merged_attrs
       |> TriviaAdvisor.Locations.create_venue([validate: false])
 
+    # Ensure venue has fully preloaded city and country
+    venue = case venue do
+      %{city: %{country: %{__struct__: Ecto.Association.NotLoaded}}} ->
+        # If country is not loaded, reload with proper preloading
+        TriviaAdvisor.Repo.preload(venue, [city: :country])
+      %{city: %{__struct__: Ecto.Association.NotLoaded}} ->
+        # If city is not loaded, reload with proper preloading
+        TriviaAdvisor.Repo.preload(venue, [city: :country])
+      _ -> venue
+    end
+
     venue
   end
 end
