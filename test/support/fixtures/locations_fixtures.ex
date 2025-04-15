@@ -75,21 +75,34 @@ defmodule TriviaAdvisor.LocationsFixtures do
     city = city_fixture()
     unique_id = System.unique_integer([:positive])
 
-    attrs = Enum.into(attrs, %{
-      name: "Venue #{unique_id}",  # Make name unique
-      address: "some address",
-      postcode: "some postcode",
-      latitude: Decimal.new("51.5074"),
-      longitude: Decimal.new("-0.1278"),
-      place_id: "place_id_#{unique_id}",  # Make place_id unique
-      phone: "some phone",
-      website: "some website",
-      city_id: city.id
-    })
+    # Create a base venue with string keys
+    base_attrs = %{
+      "name" => "Venue #{unique_id}",  # Make name unique
+      "address" => "some address",
+      "postcode" => "some postcode",
+      "latitude" => Decimal.new("51.5074"),
+      "longitude" => Decimal.new("-0.1278"),
+      "place_id" => "place_id_#{unique_id}",  # Make place_id unique
+      "phone" => "some phone",
+      "website" => "some website",
+      "city_id" => city.id
+    }
+
+    # Convert keys in attrs to strings if they are atoms
+    string_attrs = for {key, val} <- attrs, into: %{} do
+      if is_atom(key) do
+        {Atom.to_string(key), val}
+      else
+        {key, val}
+      end
+    end
+
+    # Merge with base attrs
+    merged_attrs = Map.merge(base_attrs, string_attrs)
 
     {:ok, venue} =
-      attrs
-      |> TriviaAdvisor.Locations.create_venue()
+      merged_attrs
+      |> TriviaAdvisor.Locations.create_venue([validate: false])
 
     venue
   end

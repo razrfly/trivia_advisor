@@ -34,6 +34,12 @@ config :trivia_advisor,
   generators: [timestamp_type: :utc_datetime],
   google_api_key: System.get_env("GOOGLE_API_KEY")
 
+
+# Add configuration for venue proximity validation
+config :trivia_advisor, :venue_validation,
+  min_duplicate_distance: 50,
+  duplicate_check_enabled: true
+
 # Configures the endpoint
 config :trivia_advisor, TriviaAdvisorWeb.Endpoint,
   url: [host: "localhost"],

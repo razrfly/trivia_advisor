@@ -54,7 +54,7 @@ defmodule TriviaAdvisorWeb.HomeLive.IndexTest do
       {:ok, view, html} = live(conn, ~p"/")
 
       # Test that the page loads with the right title
-      assert html =~ "TriviaAdvisor - Find the Best Pub Quizzes Near You"
+      assert html =~ "QuizAdvisor - Find the Best Pub Quizzes Near You"
       assert html =~ "Find the Best Pub Quizzes Near You"
 
       # Test that the page has the main sections
