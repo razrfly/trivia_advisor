@@ -378,7 +378,7 @@ defmodule TriviaAdvisor.Locations do
   @spec find_nearby_duplicate_venues({number(), number()}, String.t() | nil) :: [Venue.t()]
   def find_nearby_duplicate_venues(coords, venue_name \\ nil) do
     {lat, lng} = coords
-    min_distance = Application.get_env(:trivia_advisor, :venue_validation)[:min_duplicate_distance] || 50
+    min_distance = Application.get_env(:trivia_advisor, :venue_validation)[:minimum_distance_meters] || 50
 
     # Base query to find venues within the specified distance
     query = from v in Venue,
