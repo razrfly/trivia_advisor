@@ -1,25 +1,15 @@
 defmodule TriviaAdvisorWeb.HomeLive.Index do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisorWeb.Components.UI.{CitySearch, VenueCard, CityCard}
-  alias TriviaAdvisor.TestFixtures
 
   @impl true
   def mount(_params, _session, socket) do
-    # Use real data in production but mock data in test environment
-    {featured_venues, popular_cities, upcoming_events} =
-      if Mix.env() == :test do
-        {
-          TestFixtures.mock_featured_venues(),
-          TestFixtures.mock_popular_cities(),
-          TestFixtures.mock_upcoming_events()
-        }
-      else
-        {
-          TriviaAdvisor.Locations.get_featured_venues(limit: 4),
-          TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true),
-          TestFixtures.mock_upcoming_events() # Keep this mock for now until we implement real events
-        }
-      end
+    # Use real data only
+    featured_venues = TriviaAdvisor.Locations.get_featured_venues(limit: 4)
+    popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
+
+    # Empty list for upcoming events until implemented
+    upcoming_events = []
 
     {:ok, assign(socket,
       page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
