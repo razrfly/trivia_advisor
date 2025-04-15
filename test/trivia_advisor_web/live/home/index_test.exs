@@ -50,7 +50,7 @@ defmodule TriviaAdvisorWeb.HomeLive.IndexTest do
   end
 
   describe "Home page" do
-    test "renders featured venues, popular cities, and upcoming events", %{conn: conn, venues: venues} do
+    test "renders featured venues, popular cities, and upcoming events", %{conn: conn, venues: _venues} do
       {:ok, view, html} = live(conn, ~p"/")
 
       # Test that the page loads with the right title
