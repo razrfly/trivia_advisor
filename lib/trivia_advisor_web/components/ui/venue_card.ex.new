@@ -1,0 +1,159 @@
+defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
+  use TriviaAdvisorWeb, :html
+  alias TriviaAdvisorWeb.Helpers.LocalizationHelpers
+  alias TriviaAdvisorWeb.Helpers.ImageHelpers
+
+  def venue_card(assigns) do
+    ~H"""
+    <div class="venue-card flex flex-col overflow-hidden rounded-lg border bg-white shadow-sm transition hover:shadow-md">
+      <div class="relative h-48 overflow-hidden">
+        <img
+          src={get_hero_image(assigns.venue)}
+          alt={Map.get(assigns.venue, :name, "Venue")}
+          class="h-full w-full object-cover"
+        />
+
+        <!-- Entry fee badge -->
+        <div class="absolute right-2 top-2 rounded-full bg-indigo-600 px-2 py-1 text-xs font-medium text-white">
+          <%= format_price(Map.get(assigns.venue, :entry_fee_cents), assigns.venue) %>
+        </div>
+      </div>
+
+      <div class="flex flex-1 flex-col p-4">
+        <h3 class="mb-1 text-lg font-semibold text-gray-900 line-clamp-1">
+          <a href={~p"/venues/#{get_venue_slug(assigns.venue)}"} class="hover:text-indigo-600">
+            <%= Map.get(assigns.venue, :name, "Venue") %>
+          </a>
+        </h3>
+
+        <div class="mb-2 flex items-center text-sm text-gray-600">
+          <svg class="mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9.69 18.933l.003.001C9.89 19.02 10 19 10 19s.11.02.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.018.008.006.003zM10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" clip-rule="evenodd" />
+          </svg>
+          <span class="truncate"><%= get_venue_address(assigns.venue) %></span>
+        </div>
+
+        <div class="mb-3 flex items-center text-sm text-gray-600">
+          <svg class="mr-1 h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-13a.75.75 0 00-1.5 0v5c0 .414.336.75.75.75h4a.75.75 0 000-1.5h-3.25V5z" clip-rule="evenodd" />
+          </svg>
+          <span>
+            <%= format_day(get_venue_day_of_week(assigns.venue)) %> at <%= format_localized_time(get_venue_time(assigns.venue), get_venue_country(assigns.venue)) %>
+          </span>
+        </div>
+
+        <!-- Description with line clamp -->
+        <p class="mb-4 flex-1 text-sm text-gray-600 line-clamp-3">
+          <%= Map.get(assigns.venue, :description, "Join us for trivia nights!") %>
+        </p>
+
+        <!-- City and Country info instead of rating -->
+        <div class="mt-auto flex items-center">
+          <svg class="mr-1 h-4 w-4 text-gray-600" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M9.69 18.933l.003.001C9.89 19.02 10 19 10 19s.11.02.308-.066l.002-.001.006-.003.018-.008a5.741 5.741 0 00.281-.14c.186-.096.446-.24.757-.433.62-.384 1.445-.966 2.274-1.765C15.302 14.988 17 12.493 17 9A7 7 0 103 9c0 3.492 1.698 5.988 3.355 7.584a13.731 13.731 0 002.273 1.765 11.842 11.842 0 00.976.544l.062.029.018.008.006.003zM10 11.25a2.25 2.25 0 100-4.5 2.25 2.25 0 000 4.5z" clip-rule="evenodd" />
+          </svg>
+          <span class="text-sm text-gray-600">
+            <%= get_venue_city(assigns.venue) %>, <%= get_venue_country_name(assigns.venue) %>
+          </span>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  # Safe helper to get venue slug or generate one from name
+  defp get_venue_slug(venue) do
+    slug = Map.get(venue, :slug)
+    if slug && slug != "", do: slug, else: create_slug_from_name(venue)
+  end
+
+  # Create a slug from venue name
+  defp create_slug_from_name(venue) do
+    name = Map.get(venue, :name, "venue")
+    id = Map.get(venue, :id, "unknown")
+
+    slug = name
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "-")
+    |> String.trim("-")
+
+    if slug == "", do: id, else: slug
+  end
+
+  # Safe helper to get venue address
+  defp get_venue_address(venue) do
+    address = Map.get(venue, :address)
+    city_name = if has_city?(venue), do: venue.city.name, else: nil
+
+    cond do
+      address && city_name -> "#{address}, #{city_name}"
+      address -> address
+      city_name -> city_name
+      true -> "Location details coming soon"
+    end
+  end
+
+  # Check if venue has city data
+  defp has_city?(venue) do
+    Map.has_key?(venue, :city) &&
+    is_map(venue.city) &&
+    Map.has_key?(venue.city, :name) &&
+    is_binary(venue.city.name)
+  end
+
+  # Get venue day of week with fallback
+  defp get_venue_day_of_week(venue) do
+    cond do
+      Map.has_key?(venue, :day_of_week) && venue.day_of_week ->
+        venue.day_of_week
+
+      Map.has_key?(venue, :events) &&
+      !match?(%Ecto.Association.NotLoaded{}, venue.events) &&
+      venue.events &&
+      Enum.any?(venue.events) ->
+        event = List.first(venue.events)
+        Map.get(event, :day_of_week, 1)
+
+      true ->
+        1 # Default to Monday
+    end
+  end
+
+  # Get venue time with fallback
+  defp get_venue_time(venue) do
+    cond do
+      Map.has_key?(venue, :start_time) && venue.start_time && is_struct(venue.start_time, Time) ->
+        venue.start_time
+
+      Map.has_key?(venue, :start_time) && is_binary(venue.start_time) ->
+        venue.start_time
+
+      Map.has_key?(venue, :events) &&
+      !match?(%Ecto.Association.NotLoaded{}, venue.events) &&
+      venue.events &&
+      Enum.any?(venue.events) ->
+        event = List.first(venue.events)
+        Map.get(event, :start_time, ~T[19:00:00])
+
+      true ->
+        ~T[19:00:00] # Default to 7:00 PM
+    end
+  end
+
+  # Get venue image with fallback
+  defp get_hero_image(venue) do
+    cond do
+      Map.has_key?(venue, :hero_image_url) && venue.hero_image_url && venue.hero_image_url != "" ->
+        venue.hero_image_url
+
+      # Use image helper if available
+      function_exported?(ImageHelpers, :get_venue_image, 1) ->
+        ImageHelpers.get_venue_image(venue)
+
+      true ->
+        # Default placeholder image
+        "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000"
+    end
+  end
+
+  # Fix the format_price function to properly handle entry_fee_cents

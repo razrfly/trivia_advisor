@@ -4,12 +4,10 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
-    # In a real app, you would fetch this data from your database
-    # For now, we'll use mock data
-
+    # Fetch real data from database
     {:ok, assign(socket,
       page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
-      featured_venues: mock_featured_venues(),
+      featured_venues: TriviaAdvisor.Locations.get_featured_venues(limit: 4),
       popular_cities: mock_popular_cities(),
       upcoming_events: mock_upcoming_events()
     )}
@@ -127,7 +125,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
               <span aria-hidden="true">→</span>
             </a>
           </div>
-          <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" data-testid="featured-venues">
             <%= for venue <- @featured_venues do %>
               <VenueCard.venue_card venue={venue} />
             <% end %>
@@ -145,7 +143,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
               <span aria-hidden="true">→</span>
             </a>
           </div>
-          <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3" data-testid="popular-cities">
             <%= for city <- @popular_cities do %>
               <CityCard.city_card city={city} />
             <% end %>
@@ -163,7 +161,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
               <span aria-hidden="true">→</span>
             </a>
           </div>
-          <div class="overflow-hidden rounded-lg bg-white shadow">
+          <div class="overflow-hidden rounded-lg bg-white shadow" data-testid="upcoming-events">
             <div class="divide-y divide-gray-200">
               <%= for event <- @upcoming_events do %>
                 <div class="flex items-center gap-4 p-4 transition hover:bg-gray-50">
@@ -262,55 +260,6 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
   end
 
   # Mock data functions for demonstration
-  defp mock_featured_venues do
-    [
-      %{
-        id: "1",
-        name: "The Pub Quiz Champion",
-        address: "123 Main St, London",
-        day_of_week: 4, # Thursday
-        start_time: "7:30 PM",
-        entry_fee_cents: 500,
-        description: "Join us every Thursday for our legendary pub quiz. Six rounds of trivia, picture rounds, and music. Great prizes and a fun atmosphere!",
-        hero_image_url: "https://images.unsplash.com/photo-1546622891-02c72c1537b6?q=80&w=2000",
-        rating: 4.5
-      },
-      %{
-        id: "2",
-        name: "Quiz Night at The Scholar",
-        address: "456 High St, Manchester",
-        day_of_week: 2, # Tuesday
-        start_time: "8:00 PM",
-        entry_fee_cents: 300,
-        description: "Tuesday night is quiz night! Form teams of up to 6 people and test your knowledge across a variety of categories.",
-        hero_image_url: "https://images.unsplash.com/photo-1574096079513-d8259312b785?q=80&w=2000",
-        rating: 4.2
-      },
-      %{
-        id: "3",
-        name: "Brainiac Trivia",
-        address: "789 Park Lane, Edinburgh",
-        day_of_week: 3, # Wednesday
-        start_time: "7:00 PM",
-        entry_fee_cents: nil,
-        description: "Free entry! Join us for an evening of challenging questions and a chance to win bar tabs and other prizes!",
-        hero_image_url: "https://images.unsplash.com/photo-1566633806327-68e152aaf26d?q=80&w=2000",
-        rating: 4.8
-      },
-      %{
-        id: "4",
-        name: "The Knowledge Inn",
-        address: "321 River Road, Glasgow",
-        day_of_week: 1, # Monday
-        start_time: "8:30 PM",
-        entry_fee_cents: 200,
-        description: "Start your week with our Monday quiz night. Different themes each week with special food and drink offers for participants.",
-        hero_image_url: "https://images.unsplash.com/photo-1600431521340-491eca880813?q=80&w=2000",
-        rating: 4.0
-      }
-    ]
-  end
-
   defp mock_popular_cities do
     [
       %{

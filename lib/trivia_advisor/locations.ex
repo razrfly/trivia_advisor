@@ -862,4 +862,85 @@ defmodule TriviaAdvisor.Locations do
 
     Repo.all(query)
   end
+
+  @doc """
+  Get featured venues for the homepage.
+
+  This function fetches a diverse set of venues with events, prioritizing
+  venues from different cities and countries, sorted by newest first.
+  If no venues with events are found, it falls back to venues without events.
+
+  ## Options
+    * `:limit` - maximum number of venues to return (default: 4)
+
+  ## Examples
+
+      iex> get_featured_venues(limit: 6)
+      [%Venue{}, ...]
+  """
+  def get_featured_venues(opts \\ []) do
+    limit = Keyword.get(opts, :limit, 4)
+
+    # Start with a query for venues that have events
+    venues_with_events_query = from v in Venue,
+      distinct: v.id,
+      join: e in assoc(v, :events),
+      join: c in assoc(v, :city),
+      join: country in assoc(c, :country),
+      preload: [city: {c, country: country}, events: e],
+      order_by: [desc: v.inserted_at]
+
+    # Get all venues with events
+    venues_with_events = Repo.all(venues_with_events_query)
+
+    # If we have venues with events, select a diverse set
+    venues = select_diverse_venues(venues_with_events, limit)
+
+    # If we don't have enough venues with events, fall back to venues without events
+    if length(venues) < limit do
+      # Query for venues without the events join
+      fallback_query = from v in Venue,
+        distinct: v.id,
+        join: c in assoc(v, :city),
+        join: country in assoc(c, :country),
+        preload: [city: {c, country: country}],
+        order_by: [desc: v.inserted_at],
+        limit: ^(limit - length(venues))
+
+      fallback_venues = Repo.all(fallback_query)
+
+      # Combine the venues from both queries
+      venues ++ fallback_venues
+    else
+      venues
+    end
+  end
+
+  # Helper function to select venues from diverse locations
+  defp select_diverse_venues(venues, limit) do
+    venues
+    |> Enum.reduce({[], %{}, %{}}, fn venue, {selected, city_ids, country_codes} ->
+      city_id = venue.city.id
+      country_code = venue.city.country.code
+
+      # Check if we've already selected a venue from this city or country
+      city_count = Map.get(city_ids, city_id, 0)
+      country_count = Map.get(country_codes, country_code, 0)
+
+      # Prioritize venues from new cities and countries
+      if length(selected) < limit and (city_count == 0 or (country_count < 2 and length(selected) < limit - 2)) do
+        {
+          [venue | selected],
+          Map.put(city_ids, city_id, city_count + 1),
+          Map.put(country_codes, country_code, country_count + 1)
+        }
+      else
+        {selected, city_ids, country_codes}
+      end
+    end)
+    |> elem(0)
+    |> Enum.reverse()
+    |> Enum.take(limit)
+    |> Repo.preload([:events, :city])
+  end
 end
