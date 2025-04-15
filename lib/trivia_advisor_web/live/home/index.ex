@@ -40,8 +40,8 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
     ~H"""
     <div>
       <!-- Hero Section -->
-      <section class="relative bg-gradient-to-r from-indigo-700 to-indigo-900 py-24 text-white">
-        <div class="container mx-auto px-4">
+      <section class="bg-gradient-to-r from-indigo-700 to-indigo-900 py-24 text-white">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="mx-auto max-w-4xl text-center">
             <h1 class="mb-6 text-4xl font-bold leading-tight sm:text-5xl md:text-6xl">
               Find the Best Pub Quizzes Near You
@@ -80,8 +80,8 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       </section>
 
       <!-- How It Works Section -->
-      <section class="py-16">
-        <div class="container mx-auto px-4">
+      <section class="bg-white py-16">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <h2 class="mb-12 text-center text-3xl font-bold tracking-tight text-gray-900">How TriviaAdvisor Works</h2>
           <div class="grid gap-8 md:grid-cols-3">
             <div class="flex flex-col items-center text-center">
@@ -117,7 +117,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
 
       <!-- Featured Venues Section -->
       <section class="bg-gray-50 py-16">
-        <div class="container mx-auto px-4">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="mb-8 flex items-center justify-between">
             <h2 class="text-3xl font-bold tracking-tight text-gray-900">Featured Venues</h2>
             <a href="#" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
@@ -134,8 +134,8 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       </section>
 
       <!-- Popular Cities Section -->
-      <section class="py-16">
-        <div class="container mx-auto px-4">
+      <section class="bg-white py-16">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="mb-8 flex items-center justify-between">
             <h2 class="text-3xl font-bold tracking-tight text-gray-900">Popular Cities</h2>
             <a href={~p"/cities"} class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
@@ -153,7 +153,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
 
       <!-- Upcoming Events Section -->
       <section class="bg-gray-50 py-16">
-        <div class="container mx-auto px-4">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="mb-8 flex items-center justify-between">
             <h2 class="text-3xl font-bold tracking-tight text-gray-900">Upcoming Events</h2>
             <a href="#" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
@@ -195,8 +195,8 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       </section>
 
       <!-- Newsletter Section -->
-      <section class="py-16">
-        <div class="container mx-auto px-4">
+      <section class="bg-white py-16">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="rounded-2xl bg-indigo-700 px-6 py-12 md:py-16 md:px-12">
             <div class="mx-auto max-w-3xl text-center">
               <h2 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
@@ -230,8 +230,8 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       </section>
 
       <!-- Map Preview Section -->
-      <section class="py-16">
-        <div class="container mx-auto px-4">
+      <section class="bg-gray-50 py-16">
+        <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="grid gap-8 md:grid-cols-2">
             <div class="flex flex-col justify-center">
               <h2 class="mb-4 text-3xl font-bold tracking-tight text-gray-900">Find Trivia Nights on the Map</h2>
