@@ -9,7 +9,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
 
     {:ok, assign(socket,
-      page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
+      page_title: "QuizAdvisor - Find the Best Pub Quizzes Near You",
       featured_venues: featured_venues,
       popular_cities: popular_cities
     )}
@@ -84,7 +84,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       <!-- How It Works Section -->
       <section class="bg-white py-16">
         <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
-          <h2 class="mb-12 text-center text-3xl font-bold tracking-tight text-gray-900">How TriviaAdvisor Works</h2>
+          <h2 class="mb-12 text-center text-3xl font-bold tracking-tight text-gray-900">How QuizAdvisor Works</h2>
           <div class="grid gap-8 md:grid-cols-3">
             <div class="flex flex-col items-center text-center">
               <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
@@ -92,7 +92,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
                   <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
                 </svg>
               </div>
-              <h3 class="mb-2 text-xl font-semibold">Find Trivia Nights</h3>
+              <h3 class="mb-2 text-xl font-semibold">Find Quiz Nights</h3>
               <p class="text-gray-600">Discover pub quizzes and trivia events in your area or any city you're visiting.</p>
             </div>
             <div class="flex flex-col items-center text-center">
@@ -121,9 +121,9 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       <section class="bg-gray-50 py-16">
         <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
           <div class="mb-8 flex items-center justify-between">
-            <h2 class="text-3xl font-bold tracking-tight text-gray-900">Featured Venues</h2>
-            <a href="#" class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
-              View all venues
+            <h2 class="text-3xl font-bold tracking-tight text-gray-900">Latest Venues</h2>
+            <a href={~p"/venues/latest"} class="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+              View all new venues
               <span aria-hidden="true">→</span>
             </a>
           </div>

@@ -30,6 +30,7 @@ defmodule TriviaAdvisorWeb.Router do
     live "/cities/:slug", CityLive.Show, :show
     live "/cities", CityLive.Index, :index
     live "/countries/:slug", CountryLive.Show, :show
+    live "/venues/latest", VenueLive.Latest, :index
     live "/venues/:slug", Live.Venue.Show, :show
 
     # Admin route for image cache management (only in dev)
