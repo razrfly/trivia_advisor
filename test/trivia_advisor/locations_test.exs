@@ -13,6 +13,10 @@ defmodule TriviaAdvisor.LocationsTest do
   alias TriviaAdvisor.Utils.Slug
   alias TriviaAdvisor.Repo
 
+  # Helper to safely convert Decimal to float
+  defp to_float(%Decimal{} = decimal), do: Decimal.to_float(decimal)
+  defp to_float(value), do: value
+
   # Define a helper function to set up expectations
   defp mock_lookup_address(fun) do
     MockGoogleLookup

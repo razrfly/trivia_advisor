@@ -9,7 +9,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
 
     {:ok, assign(socket,
-      page_title: "QuizAdvisor - Find the Best Pub Quizzes Near You",
+      page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
       featured_venues: featured_venues,
       popular_cities: popular_cities
     )}
@@ -84,7 +84,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       <!-- How It Works Section -->
       <section class="bg-white py-16">
         <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
-          <h2 class="mb-12 text-center text-3xl font-bold tracking-tight text-gray-900">How QuizAdvisor Works</h2>
+          <h2 class="mb-12 text-center text-3xl font-bold tracking-tight text-gray-900">How TriviaAdvisor Works</h2>
           <div class="grid gap-8 md:grid-cols-3">
             <div class="flex flex-col items-center text-center">
               <div class="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">

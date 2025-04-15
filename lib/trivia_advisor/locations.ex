@@ -378,7 +378,7 @@ defmodule TriviaAdvisor.Locations do
   @spec find_nearby_duplicate_venues({number(), number()}, String.t() | nil) :: [Venue.t()]
   def find_nearby_duplicate_venues(coords, venue_name \\ nil) do
     {lat, lng} = coords
-    min_distance = Application.get_env(:trivia_advisor, :venue_validation)[:minimum_distance_meters] || 50
+    min_distance = Application.get_env(:trivia_advisor, :venue_validation)[:min_duplicate_distance] || 50
 
     # Base query to find venues within the specified distance
     query = from v in Venue,
@@ -616,14 +616,23 @@ defmodule TriviaAdvisor.Locations do
     duplicate_check_enabled = Application.get_env(:trivia_advisor, :venue_validation)[:duplicate_check_enabled] || false
 
     if duplicate_check_enabled && Map.has_key?(attrs, "latitude") && Map.has_key?(attrs, "longitude") do
+      # Helper function to safely convert to float
+      to_float = fn
+        %Decimal{} = decimal -> Decimal.to_float(decimal)
+        value when is_number(value) -> value
+        value -> value
+      end
+
       nearby_venues = find_nearby_duplicate_venues(
-        {Map.get(attrs, "latitude"), Map.get(attrs, "longitude")},
+        {
+          to_float.(Map.get(attrs, "latitude")),
+          to_float.(Map.get(attrs, "longitude"))
+        },
         Map.get(attrs, "name")
       )
 
       if Enum.any?(nearby_venues) do
--        {:error, :potential_duplicate, nearby_venues}
-+        {:error, :nearby_duplicates, nearby_venues}
+        {:error, :nearby_duplicates, nearby_venues}
       else
         do_create_venue(attrs)
       end
