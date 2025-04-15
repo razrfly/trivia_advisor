@@ -1062,30 +1062,41 @@ defmodule TriviaAdvisor.Locations do
 
   # Add images to city data
   defp add_city_images(cities) do
-    # Get city names for batch image fetching
-    city_names = Enum.map(cities, & &1.name)
-    city_images = TriviaAdvisor.Services.UnsplashService.get_city_images_batch(city_names)
+    # Get city IDs for querying
+    city_ids = Enum.map(cities, & &1.id)
+
+    # Get all cities with their unsplash galleries in a single query
+    query = from c in TriviaAdvisor.Locations.City,
+      where: c.id in ^city_ids,
+      select: {c.id, c.unsplash_gallery}
+
+    # Create a map of city_id => gallery
+    city_galleries = Repo.all(query) |> Map.new()
 
     # Add image URLs to each city
     Enum.map(cities, fn city ->
-      # Get image data from pre-fetched batch
-      image_data = Map.get(city_images, city.name, %{url: nil})
+      gallery = Map.get(city_galleries, city.id, %{})
 
-      # Extract image URL with backward compatibility
-      image_url = extract_image_url(image_data)
+      # Extract image URL from gallery - use the proper structure based on DB schema
+      image_url = case gallery do
+        nil -> nil
+        %{} = gallery ->
+          images = Map.get(gallery, "images", [])
+
+          if Enum.empty?(images) do
+            nil
+          else
+            # Use a random image from the gallery instead of always using current_index
+            # This ensures different cities show different images
+            random_index = :rand.uniform(length(images)) - 1
+            image = Enum.at(images, random_index, %{})
+            # The URL is stored in the "url" field of each image
+            Map.get(image, "url")
+          end
+      end
 
       Map.put(city, :image_url, image_url)
     end)
-  end
-
-  # Extract image URL from various possible formats
-  defp extract_image_url(image_data) do
-    cond do
-      is_map(image_data) && Map.has_key?(image_data, :url) -> image_data.url
-      is_map(image_data) && Map.has_key?(image_data, :image_url) -> image_data.image_url
-      is_binary(image_data) -> image_data
-      true -> nil
-    end
   end
 
   # Helper function to select cities from diverse countries

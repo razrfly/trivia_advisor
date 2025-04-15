@@ -67,12 +67,12 @@ defmodule TriviaAdvisor.TestFixtures do
   """
   def mock_popular_cities do
     [
-      %{id: "1", name: "London", country_name: "United Kingdom", venue_count: 120, image_url: "https://test.com/london.jpg", slug: "london"},
-      %{id: "2", name: "New York", country_name: "United States", venue_count: 87, image_url: "https://test.com/ny.jpg", slug: "new-york"},
-      %{id: "3", name: "Sydney", country_name: "Australia", venue_count: 45, image_url: "https://test.com/sydney.jpg", slug: "sydney"},
-      %{id: "4", name: "Berlin", country_name: "Germany", venue_count: 35, image_url: "https://test.com/berlin.jpg", slug: "berlin"},
-      %{id: "5", name: "Dublin", country_name: "Ireland", venue_count: 30, image_url: "https://test.com/dublin.jpg", slug: "dublin"},
-      %{id: "6", name: "Toronto", country_name: "Canada", venue_count: 28, image_url: "https://test.com/toronto.jpg", slug: "toronto"}
+      %{id: "1", name: "London", country_name: "United Kingdom", venue_count: 120, image_url: "https://images.unsplash.com/photo-1513635269975-59663e0ac1ad", slug: "london"},
+      %{id: "2", name: "New York", country_name: "United States", venue_count: 87, image_url: "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9", slug: "new-york"},
+      %{id: "3", name: "Sydney", country_name: "Australia", venue_count: 45, image_url: "https://images.unsplash.com/photo-1527915676329-fd5ec8a44d4b", slug: "sydney"},
+      %{id: "4", name: "Berlin", country_name: "Germany", venue_count: 35, image_url: "https://images.unsplash.com/photo-1599946347371-68eb71b16afc", slug: "berlin"},
+      %{id: "5", name: "Dublin", country_name: "Ireland", venue_count: 30, image_url: "https://images.unsplash.com/photo-1566096653784-304ec4a5d2c7", slug: "dublin"},
+      %{id: "6", name: "Toronto", country_name: "Canada", venue_count: 28, image_url: "https://images.unsplash.com/photo-1517935706615-2717063c2225", slug: "toronto"}
     ]
   end
 
