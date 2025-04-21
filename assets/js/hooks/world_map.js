@@ -126,10 +126,11 @@ const WorldMap = {
       .domain([MIN_VENUES, maxVenueCount])
       .range(["#90c2f6", "#1e40af"]); // Light blue to deep blue
     
-    // Set up the projection - we'll adjust this later to fit our countries
-    const projection = d3.geoNaturalEarth1()  // Changed back to NaturalEarth1 for better global view
-      .scale(width / 5.5)
-      .translate([width / 2, height / 1.8]);
+    // Set up the projection - using NaturalEarth but with adjustments to show more of Canada
+    const projection = d3.geoNaturalEarth1()
+      .scale(width / 6)
+      .center([-20, 20]) // Shift west and north to better show Canada
+      .translate([width / 2, height / 2]);
     
     // Create a path generator
     const path = d3.geoPath().projection(projection);
@@ -337,74 +338,6 @@ const WorldMap = {
               .attr("stroke", "#536480")
               .attr("stroke-width", 1);
           });
-          
-        // Add a legend
-        const legendWidth = 180;
-        const legendHeight = 15;
-        const legend = svg.append("g")
-          .attr("transform", `translate(${width - legendWidth - 20}, ${height - 40})`);
-          
-        // Create a gradient for the legend
-        const defs = svg.append("defs");
-        const gradientId = `legend-gradient-${Date.now()}`; // Use timestamp for uniqueness
-        const linearGradient = defs.append("linearGradient")
-          .attr("id", gradientId)
-          .attr("x1", "0%")
-          .attr("y1", "0%")
-          .attr("x2", "100%")
-          .attr("y2", "0%");
-          
-        // Add color stops to the gradient
-        linearGradient.append("stop")
-          .attr("offset", "0%")
-          .attr("stop-color", colorScale(MIN_VENUES)); // Start with color for minimum venue count
-          
-        linearGradient.append("stop")
-          .attr("offset", "50%")
-          .attr("stop-color", colorScale(Math.ceil(maxVenueCount * 0.5)));
-          
-        linearGradient.append("stop")
-          .attr("offset", "100%")
-          .attr("stop-color", colorScale(maxVenueCount));
-          
-        // Add the colored rectangle
-        legend.append("rect")
-          .attr("width", legendWidth)
-          .attr("height", legendHeight)
-          .style("fill", `url(#${gradientId})`) // Use unique gradient ID
-          .style("stroke", "#ccc")
-          .style("stroke-width", 0.5);
-          
-        // Add the legend title
-        legend.append("text")
-          .attr("x", 0)
-          .attr("y", -5)
-          .style("font-size", "10px")
-          .style("fill", "#666")
-          .text("Venue Count");
-          
-        // Add legend labels
-        legend.append("text")
-          .attr("x", 0)
-          .attr("y", legendHeight + 12)
-          .style("font-size", "10px")
-          .style("fill", "#666")
-          .text(`${MIN_VENUES}+`);
-          
-        legend.append("text")
-          .attr("x", legendWidth * 0.5)
-          .attr("y", legendHeight + 12)
-          .style("font-size", "10px")
-          .style("fill", "#666")
-          .text(`${Math.ceil(maxVenueCount * 0.5)}+`);
-          
-        legend.append("text")
-          .attr("x", legendWidth)
-          .attr("y", legendHeight + 12)
-          .style("font-size", "10px")
-          .style("text-anchor", "end")
-          .style("fill", "#666")
-          .text(`${maxVenueCount}+`);
           
         console.log("Map visualization complete");
       })
