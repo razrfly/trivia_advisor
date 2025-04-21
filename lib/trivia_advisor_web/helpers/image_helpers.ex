@@ -108,9 +108,11 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
 
         # Extract attribution
         attribution = if Map.has_key?(current_image, "attribution") do
-          current_image["attribution"]
+          # Ensure UTM parameters for photographer URL
+          attribution = current_image["attribution"]
+          ensure_utm_parameters(attribution)
         else
-          %{"photographer_name" => "Photographer", "photographer_url" => nil, "unsplash_url" => "https://unsplash.com"}
+          %{"photographer_name" => "Photographer", "unsplash_url" => "https://unsplash.com?utm_source=trivia_advisor&utm_medium=referral"}
         end
 
         {image_url, attribution}
@@ -121,8 +123,34 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
     else
       # If no gallery or no images, use fallback hardcoded image URL
       image_url = get_fallback_city_image(city.name)
-      {image_url, %{"photographer_name" => "Unsplash", "unsplash_url" => "https://unsplash.com"}}
+      {image_url, %{"photographer_name" => "Unsplash", "unsplash_url" => "https://unsplash.com?utm_source=trivia_advisor&utm_medium=referral"}}
     end
+  end
+
+  # Ensure UTM parameters are present for attribution URLs
+  defp ensure_utm_parameters(attribution) do
+    utm_params = "?utm_source=trivia_advisor&utm_medium=referral"
+
+    # Handle both string and atom keys
+    photographer_url = Map.get(attribution, "photographer_url") || Map.get(attribution, :photographer_url)
+    unsplash_url = Map.get(attribution, "unsplash_url") || Map.get(attribution, :unsplash_url)
+
+    # Only update URLs if they exist and don't already have UTM params
+    updated_attribution = attribution
+
+    updated_attribution = if photographer_url && not String.contains?(photographer_url, "utm_source") do
+      Map.put(updated_attribution, "photographer_url", "#{photographer_url}#{utm_params}")
+    else
+      updated_attribution
+    end
+
+    updated_attribution = if unsplash_url && not String.contains?(unsplash_url, "utm_source") do
+      Map.put(updated_attribution, "unsplash_url", "#{unsplash_url}#{utm_params}")
+    else
+      updated_attribution
+    end
+
+    updated_attribution
   end
 
   @doc """
