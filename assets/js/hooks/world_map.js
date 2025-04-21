@@ -67,24 +67,38 @@ const WorldMap = {
       return;
     }
     
+    // Minimum venue count to display a country - setting a lower threshold
+    const MIN_VENUES = 1;  // Lowered from 10 to 1
+    
     // Parse the venue data from the data attribute
     let venuesByCountry;
     try {
       venuesByCountry = JSON.parse(this.el.dataset.venues);
-      console.log("Parsed venues data:", venuesByCountry.length, "countries");
       
-      // Debug: Log all countries and their codes for verification
+      console.log("Total countries with venues:", venuesByCountry.length);
+      
+      // Count countries with 10+ venues (for reference)
+      const countriesWith10Plus = venuesByCountry.filter(c => c.venue_count >= 10).length;
+      console.log(`Countries with 10+ venues: ${countriesWith10Plus}`);
+      
+      // Count countries with 1+ venues
+      const countriesWith1Plus = venuesByCountry.filter(c => c.venue_count >= 1).length;
+      console.log(`Countries with 1+ venues: ${countriesWith1Plus}`);
+      
+      // Filter to only countries with minimum venue count
+      venuesByCountry = venuesByCountry.filter(country => country.venue_count >= MIN_VENUES);
+      
+      console.log(`Showing countries with ${MIN_VENUES}+ venues:`, venuesByCountry.length, "countries");
+      
+      if (venuesByCountry.length === 0) {
+        console.error("No countries meet the minimum venue threshold! Showing all countries instead.");
+        // Fallback - reparse all venues
+        venuesByCountry = JSON.parse(this.el.dataset.venues);
+      }
+      
       venuesByCountry.forEach(country => {
         console.log(`Country: ${country.country_name}, Code: ${country.country_code}, Venues: ${country.venue_count}`);
       });
-      
-      // Specifically look for Australia in the data
-      const australiaData = venuesByCountry.find(c => c.country_name === "Australia" || c.country_code === "AU");
-      if (australiaData) {
-        console.log("FOUND AUSTRALIA IN DATA:", australiaData);
-      } else {
-        console.error("AUSTRALIA NOT FOUND IN DATA!");
-      }
     } catch (e) {
       console.error("Error parsing venues data:", e);
       return;
@@ -109,11 +123,11 @@ const WorldMap = {
     // This will make countries with fewer venues more visible
     const colorScale = d3.scalePow()
       .exponent(0.4) // Use a power scale with exponent < 1 to emphasize lower values
-      .domain([0, maxVenueCount])
-      .range(["#f1f5f9", "#1e40af"]); // Light gray to deep blue
+      .domain([MIN_VENUES, maxVenueCount])
+      .range(["#90c2f6", "#1e40af"]); // Light blue to deep blue
     
-    // Set up the projection
-    const projection = d3.geoNaturalEarth1()
+    // Set up the projection - we'll adjust this later to fit our countries
+    const projection = d3.geoNaturalEarth1()  // Changed back to NaturalEarth1 for better global view
       .scale(width / 5.5)
       .translate([width / 2, height / 1.8]);
     
@@ -131,11 +145,14 @@ const WorldMap = {
     
     // Create a map of country codes to venue counts for easy lookup
     const countryData = {};
+    const countryCodes = new Set(); // Set of country codes with venues
+    
     venuesByCountry.forEach(d => {
       countryData[d.country_code] = {
         name: d.country_name,
         count: d.venue_count
       };
+      countryCodes.add(d.country_code); // Add to our set of countries with venues
     });
     
     // Load world map data (using TopoJSON)
@@ -144,6 +161,7 @@ const WorldMap = {
         console.log("World map data loaded successfully");
         // Convert TopoJSON to GeoJSON
         const countries = topojson.feature(world, world.objects.countries);
+        console.log(`Total countries in world map data: ${countries.features.length}`);
         
         // Create a map of country ids to names for tooltip display
         const countryNames = {};
@@ -157,26 +175,17 @@ const WorldMap = {
           countryIds[d.properties.name].push(d.id);
         });
         
-        // Debug: Log all country IDs and names
-        console.log("All country IDs from map data:");
-        Object.entries(countryNames).forEach(([id, name]) => {
-          console.log(`ID: ${id}, Name: ${name}`);
-        });
-        
-        // Debug: Check specifically for Australia
-        const australiaIds = countryIds["Australia"] || [];
-        if (australiaIds.length > 0) {
-          console.log("Australia IDs in map data:", australiaIds);
-        } else {
-          console.error("Australia not found in map data!");
-          
-          // Try to find Australia by approximate name match
-          const possibleMatches = Object.entries(countryNames)
-            .filter(([_, name]) => name.includes("Austral") || name === "Oceania")
-            .map(([id, name]) => ({id, name}));
-          
-          console.log("Possible Australia matches:", possibleMatches);
-        }
+        // Create a direct mapping for specific countries of interest
+        const directCountryMapping = {
+          "Australia": "AU",
+          "United States of America": "US",
+          "United States": "US",
+          "United Kingdom": "GB",
+          "Ireland": "IE",
+          "Canada": "CA",
+          "New Zealand": "NZ",
+          "South Africa": "ZA"
+        };
         
         // Create a tooltip
         const tooltip = d3.select("body").append("div")
@@ -190,23 +199,71 @@ const WorldMap = {
           .style("font-size", "12px")
           .style("opacity", 0);
         
-        // Create a direct mapping for specific countries of interest
-        const directCountryMapping = {
-          "Australia": "AU",
-          "United States of America": "US",
-          "United States": "US",
-          "United Kingdom": "GB",
-          "Ireland": "IE",
-          "Canada": "CA",
-          "New Zealand": "NZ",
-          "South Africa": "ZA"
-        };
+        // Add a map background in very light blue to represent oceans
+        svg.insert("rect", ":first-child")
+          .attr("width", width)
+          .attr("height", height)
+          .attr("fill", "#f0f7ff")
+          .attr("rx", 8)
+          .attr("ry", 8);
         
-        // Draw the countries
-        g.selectAll("path")
+        // First, render all countries in a very light color
+        g.selectAll(".country-base")
           .data(countries.features)
           .enter()
           .append("path")
+          .attr("class", "country-base")
+          .attr("d", path)
+          .attr("fill", "#e6eef8")  // Very light blue/gray
+          .attr("stroke", "#cfd8e3")
+          .attr("stroke-width", 0.5);
+        
+        // Filter out countries that don't have enough venues
+        const countriesToShow = countries.features.filter(d => {
+          // Get the country name
+          const countryName = d.properties.name;
+          
+          // Try direct name mapping first
+          let code = directCountryMapping[countryName];
+          
+          // If not found, try ID mapping
+          if (!code) {
+            code = this.getCountryCodeFromId(d.id);
+          }
+          
+          // Special case for Australia
+          if (countryName === "Australia" || countryName.includes("Austral")) {
+            code = "AU";
+          }
+          
+          // Only keep countries that have enough venue data
+          return countryData[code] && countryData[code].count >= MIN_VENUES;
+        });
+        
+        console.log(`Filtered from ${countries.features.length} countries to ${countriesToShow.length} countries with ${MIN_VENUES}+ venues`);
+        
+        // If no countries match our criteria after filtering, display an error message
+        if (countriesToShow.length === 0) {
+          console.error("No countries meet the filter criteria for venues!");
+          container.append("div")
+            .style("position", "absolute")
+            .style("top", "50%")
+            .style("left", "50%")
+            .style("transform", "translate(-50%, -50%)")
+            .style("padding", "20px")
+            .style("background-color", "rgba(255,255,255,0.8)")
+            .style("border-radius", "8px")
+            .style("text-align", "center")
+            .html(`<h3 style="color: #666;">No countries with ${MIN_VENUES}+ venues found</h3>`);
+          return;
+        }
+          
+        // Draw only the countries with sufficient venues
+        g.selectAll(".country-highlight")
+          .data(countriesToShow)
+          .enter()
+          .append("path")
+          .attr("class", "country-highlight")
           .attr("d", path)
           .attr("fill", d => {
             // Get the country name
@@ -220,31 +277,17 @@ const WorldMap = {
               code = this.getCountryCodeFromId(d.id);
             }
             
-            // Debug info for Australia
-            if (countryName === "Australia" || countryName.includes("Austral")) {
-              console.log("Australia path check:", {
-                id: d.id, 
-                name: countryName, 
-                directCode: directCountryMapping[countryName],
-                idMappedCode: this.getCountryCodeFromId(d.id),
-                finalCode: code,
-                hasVenueData: !!countryData[code],
-                venueCount: countryData[code]?.count
-              });
-            }
-            
             // Special case for Australia
             if (countryName === "Australia" || countryName.includes("Austral")) {
-              // Force Australia to use AU code
-              return countryData["AU"] ? colorScale(Math.max(1, countryData["AU"].count)) : "#f1f5f9";
+              code = "AU";
             }
             
-            // Use the country code to get the venue count
-            // Make any country with at least 1 venue have some color
-            return countryData[code] ? colorScale(Math.max(1, countryData[code].count)) : "#f1f5f9";
+            // At this point we know the country has venue data (from our filter)
+            return colorScale(Math.max(MIN_VENUES, countryData[code].count));
           })
-          .attr("stroke", "#cfd8e3")
-          .attr("stroke-width", 0.5)
+          .attr("stroke", "#536480")
+          .attr("stroke-width", 1)
+          .attr("stroke-linejoin", "round")
           .on("mouseover", function(event, d) {
             // Get the country name
             const countryName = d.properties.name;
@@ -281,7 +324,7 @@ const WorldMap = {
             // Highlight the country
             d3.select(this)
               .attr("stroke", "#4f46e5")
-              .attr("stroke-width", 1.5);
+              .attr("stroke-width", 2);
           })
           .on("mouseout", function() {
             // Hide tooltip
@@ -291,8 +334,8 @@ const WorldMap = {
             
             // Reset country styling
             d3.select(this)
-              .attr("stroke", "#cfd8e3")
-              .attr("stroke-width", 0.5);
+              .attr("stroke", "#536480")
+              .attr("stroke-width", 1);
           });
           
         // Add a legend
@@ -314,15 +357,11 @@ const WorldMap = {
         // Add color stops to the gradient
         linearGradient.append("stop")
           .attr("offset", "0%")
-          .attr("stop-color", colorScale(0));
-          
-        linearGradient.append("stop")
-          .attr("offset", "20%")
-          .attr("stop-color", colorScale(1)); // Show what even 1 venue looks like
+          .attr("stop-color", colorScale(MIN_VENUES)); // Start with color for minimum venue count
           
         linearGradient.append("stop")
           .attr("offset", "50%")
-          .attr("stop-color", colorScale(Math.ceil(maxVenueCount * 0.25)));
+          .attr("stop-color", colorScale(Math.ceil(maxVenueCount * 0.5)));
           
         linearGradient.append("stop")
           .attr("offset", "100%")
@@ -350,21 +389,14 @@ const WorldMap = {
           .attr("y", legendHeight + 12)
           .style("font-size", "10px")
           .style("fill", "#666")
-          .text("0");
-          
-        legend.append("text")
-          .attr("x", legendWidth * 0.2)
-          .attr("y", legendHeight + 12)
-          .style("font-size", "10px")
-          .style("fill", "#666")
-          .text("1+");
+          .text(`${MIN_VENUES}+`);
           
         legend.append("text")
           .attr("x", legendWidth * 0.5)
           .attr("y", legendHeight + 12)
           .style("font-size", "10px")
           .style("fill", "#666")
-          .text(`${Math.ceil(maxVenueCount * 0.25)}+`);
+          .text(`${Math.ceil(maxVenueCount * 0.5)}+`);
           
         legend.append("text")
           .attr("x", legendWidth)
@@ -459,12 +491,8 @@ const WorldMap = {
       832: "JE"   // Jersey
     };
     
-    // Log every ID lookup for debugging
-    console.log(`Looking up country code for ID: ${id}, Result: ${countryMap[id]}`);
-    
     // For Australia specifically, let's try different formats
     if (id === '36' || id === 36 || String(id) === "36") {
-      console.log("Australia ID direct match found!");
       return "AU";
     }
     
