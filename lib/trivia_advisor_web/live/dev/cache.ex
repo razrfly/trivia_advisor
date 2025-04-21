@@ -64,7 +64,7 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
     # This function selectively clears only the cache entries for latest venues
     # The key format is "latest_venues:limit:X" where X is the limit
     # We'll try to clear entries with common limits
-    [4, 24]
+    [4, 24, 72]
     |> Enum.each(fn limit ->
       key = "latest_venues:limit:#{limit}"
       case :ets.lookup(:trivia_advisor_cache, key) do
@@ -74,6 +74,17 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
         _entry ->
           # Key found, delete it
           :ets.delete(:trivia_advisor_cache, key)
+      end
+
+      # Also clear diverse latest venues cache
+      diverse_key = "diverse_latest_venues:limit:#{limit}"
+      case :ets.lookup(:trivia_advisor_cache, diverse_key) do
+        [] ->
+          # Key not found, do nothing
+          nil
+        _entry ->
+          # Key found, delete it
+          :ets.delete(:trivia_advisor_cache, diverse_key)
       end
     end)
   end
