@@ -112,7 +112,7 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
           "photographer_name" => "Fallback Image",
           "photographer_username" => "trivia_advisor",
           "photographer_url" => nil,
-          "unsplash_url" => "https://unsplash.com"
+          "unsplash_url" => "https://unsplash.com?utm_source=trivia_advisor&utm_medium=referral"
         },
         "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601()
       }
@@ -152,7 +152,7 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
                     "attribution" => %{
                       "photographer_name" => get_in(result, ["user", "name"]),
                       "photographer_username" => get_in(result, ["user", "username"]),
-                      "photographer_url" => get_in(result, ["user", "links", "html"]),
+                      "photographer_url" => "#{get_in(result, ["user", "links", "html"])}?utm_source=trivia_advisor&utm_medium=referral",
                       "unsplash_url" => "#{get_in(result, ["links", "html"])}?utm_source=trivia_advisor&utm_medium=referral"
                     },
                     "fetched_at" => DateTime.utc_now() |> DateTime.to_iso8601()

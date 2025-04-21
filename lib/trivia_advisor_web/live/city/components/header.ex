@@ -36,15 +36,15 @@ defmodule TriviaAdvisorWeb.CityLive.Components.Header do
           <%= if @city.attribution do %>
             <p class="mt-1 text-xs opacity-80">
               Photo by
-              <%= if Map.get(@city.attribution, "photographer_url") do %>
-                <a href={Map.get(@city.attribution, :photographer_url) || Map.get(@city.attribution, "photographer_url")} target="_blank" rel="noopener" class="hover:underline">
-                  <%= Map.get(@city.attribution, :photographer_name) || Map.get(@city.attribution, "photographer_name") %>
+              <%= if get_photographer_url(@city.attribution) do %>
+                <a href={get_photographer_url(@city.attribution)} target="_blank" rel="noopener" class="hover:underline">
+                  <%= get_photographer_name(@city.attribution) %>
                 </a>
               <% else %>
-                <%= Map.get(@city.attribution, :photographer_name) || Map.get(@city.attribution, "photographer_name") %>
+                <%= get_photographer_name(@city.attribution) %>
               <% end %>
-              <%= if Map.get(@city.attribution, :unsplash_url) || Map.get(@city.attribution, "unsplash_url") do %>
-                on <a href={Map.get(@city.attribution, :unsplash_url) || Map.get(@city.attribution, "unsplash_url")} target="_blank" rel="noopener" class="hover:underline">Unsplash</a>
+              <%= if get_unsplash_url(@city.attribution) do %>
+                on <a href={get_unsplash_url(@city.attribution)} target="_blank" rel="noopener" class="hover:underline">Unsplash</a>
               <% end %>
             </p>
           <% end %>
@@ -52,5 +52,18 @@ defmodule TriviaAdvisorWeb.CityLive.Components.Header do
       </div>
     </div>
     """
+  end
+
+  # Helper functions to get attribution data in a consistent format
+  defp get_photographer_name(attribution) do
+    Map.get(attribution, :photographer_name) || Map.get(attribution, "photographer_name")
+  end
+
+  defp get_photographer_url(attribution) do
+    Map.get(attribution, :photographer_url) || Map.get(attribution, "photographer_url")
+  end
+
+  defp get_unsplash_url(attribution) do
+    Map.get(attribution, :unsplash_url) || Map.get(attribution, "unsplash_url")
   end
 end
