@@ -1045,6 +1045,69 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
+  Get the most recently created venues.
+
+  Unlike get_featured_venues, this function explicitly sorts venues by insertion date
+  to ensure the newest venues are returned.
+
+  ## Options
+    * `:limit` - maximum number of venues to return (default: 24)
+    * `:force_refresh` - whether to force a cache refresh (default: false)
+
+  ## Examples
+
+      iex> get_latest_venues(limit: 10)
+      [%Venue{}, ...]
+  """
+  def get_latest_venues(opts \\ []) do
+    require Logger
+
+    limit = Keyword.get(opts, :limit, 24)
+    force_refresh = Keyword.get(opts, :force_refresh, false)
+
+    # Create a cache key based on options
+    cache_key = "latest_venues:limit:#{limit}"
+
+    # Try to get from cache first (unless force_refresh is true)
+    case force_refresh do
+      true ->
+        Logger.info("Forcing refresh of latest venues cache")
+        fetch_and_cache_latest_venues(limit, cache_key)
+      false ->
+        case TriviaAdvisor.Cache.get(cache_key) do
+          nil ->
+            Logger.info("Cache miss for latest venues (#{cache_key})")
+            fetch_and_cache_latest_venues(limit, cache_key)
+          cached_venues ->
+            Logger.info("Cache hit for latest venues (#{cache_key})")
+            cached_venues
+        end
+    end
+  end
+
+  defp fetch_and_cache_latest_venues(limit, cache_key) do
+    venues = fetch_latest_venues(limit)
+
+    # Cache for only 1 hour during testing (3600 seconds)
+    # We're using a shorter cache time than normal to ensure we see updates
+    TriviaAdvisor.Cache.put(cache_key, venues, ttl: 3600)
+
+    venues
+  end
+
+  defp fetch_latest_venues(limit) do
+    # Query for venues ordered by inserted_at timestamp (newest first)
+    latest_venues_query =
+      from v in Venue,
+      preload: [:city, city: :country, events: [:performer]],
+      order_by: [desc: v.inserted_at],
+      limit: ^limit,
+      select: v
+
+    Repo.all(latest_venues_query)
+  end
+
+  @doc """
   Get popular cities based on venue counts with geographic clustering.
 
   This function finds the most popular cities by venue count, while preventing nearby

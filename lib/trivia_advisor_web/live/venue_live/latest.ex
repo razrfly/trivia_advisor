@@ -4,8 +4,8 @@ defmodule TriviaAdvisorWeb.VenueLive.Latest do
 
   @impl true
   def mount(_params, _session, socket) do
-    # Get more venues for this page - using the existing function but with higher limit
-    latest_venues = TriviaAdvisor.Locations.get_featured_venues(limit: 24)
+    # Get more venues for this page using the new get_latest_venues function with force_refresh
+    latest_venues = TriviaAdvisor.Locations.get_latest_venues(limit: 24, force_refresh: true)
 
     # Group venues by week (based on inserted_at timestamp)
     venues_by_week = group_venues_by_week(latest_venues)
