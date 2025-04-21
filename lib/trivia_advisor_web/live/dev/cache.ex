@@ -5,117 +5,43 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, page_title: "Cache Management")}
+    {:ok, assign(socket,
+      page_title: "Cache Management",
+      cache_cleared: false,
+      latest_venues_cleared: false
+    )}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-      <h1 class="text-2xl font-bold text-gray-900 mb-6">Image Cache Management</h1>
+    <div class="container mx-auto px-4 py-8 md:px-8">
+      <h1 class="text-3xl font-bold mb-6">Cache Management</h1>
 
-      <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
-        <div class="p-6">
-          <h2 class="text-lg font-medium text-gray-900 mb-4">Clear Cache</h2>
-          <p class="text-gray-600 mb-4">Clear the Unsplash image cache to force fetching fresh images from the API.</p>
+      <div class="bg-white rounded-lg shadow-sm p-6 mb-6">
+        <h2 class="text-xl font-semibold mb-4">Latest Venues Cache</h2>
+        <p class="mb-4">Clear only the Latest Venues cache to force a fresh lookup of the most recently added venues.</p>
 
-          <div class="space-y-4">
-            <div>
-              <button
-                phx-click="clear-all-cache"
-                class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
-              >
-                Clear All Cache
-              </button>
-              <p class="mt-1 text-sm text-gray-500">Removes all cached images</p>
-            </div>
+        <button phx-click="clear-latest-venues-cache" class="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-4 rounded">
+          Clear Latest Venues Cache
+        </button>
 
-            <div class="mt-6">
-              <h3 class="text-md font-medium text-gray-900 mb-2">Clear City Image</h3>
-              <div class="flex gap-4">
-                <div>
-                  <form phx-submit="clear-city-cache" class="flex gap-2">
-                    <input
-                      type="text"
-                      name="city_name"
-                      placeholder="City name"
-                      required
-                      class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
-                    />
-                    <button
-                      type="submit"
-                      class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
-                      Clear
-                    </button>
-                  </form>
-                </div>
-              </div>
-            </div>
-
-            <div class="mt-6">
-              <h3 class="text-md font-medium text-gray-900 mb-2">Clear Venue Image</h3>
-              <div class="flex gap-4">
-                <div>
-                  <form phx-submit="clear-venue-cache" class="flex gap-2">
-                    <input
-                      type="text"
-                      name="venue_name"
-                      placeholder="Venue name"
-                      required
-                      class="shadow-sm focus:ring-indigo-500 focus:border-indigo-500 block w-full sm:text-sm border-gray-300 rounded-md"
-                    />
-                    <button
-                      type="submit"
-                      class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                    >
-                      Clear
-                    </button>
-                  </form>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <%= if @latest_venues_cleared do %>
+          <p class="mt-4 text-green-600 font-semibold">Latest Venues cache cleared successfully!</p>
+        <% end %>
       </div>
 
-      <div class="mt-8 bg-white rounded-lg shadow overflow-hidden">
-        <div class="p-6">
-          <h2 class="text-lg font-medium text-gray-900 mb-4">Popular Pages</h2>
-          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <a
-              href="/"
-              class="block p-4 border rounded-lg hover:bg-gray-50"
-            >
-              <h3 class="font-medium text-gray-900">Home</h3>
-              <p class="mt-1 text-sm text-gray-500">Return to the home page</p>
-            </a>
+      <div class="bg-white rounded-lg shadow-sm p-6">
+        <h2 class="text-xl font-semibold mb-4">Global Cache</h2>
+        <p class="mb-4">Warning: This will clear all cached data in the application. Use with caution!</p>
 
-            <a
-              href="/cities/london"
-              class="block p-4 border rounded-lg hover:bg-gray-50"
-            >
-              <h3 class="font-medium text-gray-900">London</h3>
-              <p class="mt-1 text-sm text-gray-500">View London city page</p>
-            </a>
+        <button phx-click="clear-all-cache" class="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded">
+          Clear All Cached Data
+        </button>
 
-            <a
-              href="/cities/new-york"
-              class="block p-4 border rounded-lg hover:bg-gray-50"
-            >
-              <h3 class="font-medium text-gray-900">New York</h3>
-              <p class="mt-1 text-sm text-gray-500">View New York city page</p>
-            </a>
-
-            <a
-              href="/venues/1"
-              class="block p-4 border rounded-lg hover:bg-gray-50"
-            >
-              <h3 class="font-medium text-gray-900">Pub Quiz Champion</h3>
-              <p class="mt-1 text-sm text-gray-500">View venue page</p>
-            </a>
-          </div>
-        </div>
+        <%= if @cache_cleared do %>
+          <p class="mt-4 text-green-600 font-semibold">Cache cleared successfully!</p>
+        <% end %>
       </div>
     </div>
     """
@@ -123,8 +49,33 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
 
   @impl true
   def handle_event("clear-all-cache", _params, socket) do
-    UnsplashService.clear_cache()
-    {:noreply, put_flash(socket, :info, "All image cache cleared successfully")}
+    TriviaAdvisor.Cache.clear()
+    {:noreply, assign(socket, cache_cleared: true)}
+  end
+
+  @impl true
+  def handle_event("clear-latest-venues-cache", _params, socket) do
+    # Clear only the latest venues cache entries
+    clear_latest_venues_cache()
+    {:noreply, assign(socket, latest_venues_cleared: true)}
+  end
+
+  defp clear_latest_venues_cache do
+    # This function selectively clears only the cache entries for latest venues
+    # The key format is "latest_venues:limit:X" where X is the limit
+    # We'll try to clear entries with common limits
+    [4, 24]
+    |> Enum.each(fn limit ->
+      key = "latest_venues:limit:#{limit}"
+      case :ets.lookup(:trivia_advisor_cache, key) do
+        [] ->
+          # Key not found, do nothing
+          nil
+        _entry ->
+          # Key found, delete it
+          :ets.delete(:trivia_advisor_cache, key)
+      end
+    end)
   end
 
   @impl true

@@ -4,13 +4,13 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
-    # Use real data with caching
-    featured_venues = TriviaAdvisor.Locations.get_featured_venues(limit: 4)
+    # Use real data with caching - replace featured_venues with latest_venues
+    latest_venues = TriviaAdvisor.Locations.get_latest_venues(limit: 4, force_refresh: true)
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
 
     {:ok, assign(socket,
       page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
-      featured_venues: featured_venues,
+      featured_venues: latest_venues,
       popular_cities: popular_cities
     )}
   end
