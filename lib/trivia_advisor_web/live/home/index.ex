@@ -4,8 +4,8 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
-    # Use real data with caching - replace featured_venues with latest_venues
-    latest_venues = TriviaAdvisor.Locations.get_latest_venues(limit: 4, force_refresh: true)
+    # Use diverse latest venues function to show venues from different countries
+    latest_venues = TriviaAdvisor.Locations.get_diverse_latest_venues(limit: 4, force_refresh: true)
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
 
     {:ok, assign(socket,

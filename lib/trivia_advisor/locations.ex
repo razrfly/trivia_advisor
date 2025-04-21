@@ -1108,6 +1108,99 @@ defmodule TriviaAdvisor.Locations do
   end
 
   @doc """
+  Get the most recently created venues with country diversity.
+
+  This function ensures venues from multiple countries are included in the results
+  by first selecting the newest venue from each country, then filling any
+  remaining slots with the newest venues overall.
+
+  ## Options
+    * `:limit` - maximum number of venues to return (default: 4)
+    * `:force_refresh` - whether to force a cache refresh (default: false)
+
+  ## Examples
+
+      iex> get_diverse_latest_venues(limit: 4)
+      [%Venue{}, ...]
+  """
+  def get_diverse_latest_venues(opts \\ []) do
+    require Logger
+
+    limit = Keyword.get(opts, :limit, 4)
+    force_refresh = Keyword.get(opts, :force_refresh, false)
+
+    # Create a cache key based on options
+    cache_key = "diverse_latest_venues:limit:#{limit}"
+
+    # Try to get from cache first (unless force_refresh is true)
+    case force_refresh do
+      true ->
+        Logger.info("Forcing refresh of diverse latest venues cache")
+        fetch_and_cache_diverse_venues(limit, cache_key)
+      false ->
+        case TriviaAdvisor.Cache.get(cache_key) do
+          nil ->
+            Logger.info("Cache miss for diverse latest venues (#{cache_key})")
+            fetch_and_cache_diverse_venues(limit, cache_key)
+          cached_venues ->
+            Logger.info("Cache hit for diverse latest venues (#{cache_key})")
+            cached_venues
+        end
+    end
+  end
+
+  defp fetch_and_cache_diverse_venues(limit, cache_key) do
+    venues = fetch_diverse_latest_venues(limit)
+
+    # Cache for only 1 hour during testing (3600 seconds)
+    TriviaAdvisor.Cache.put(cache_key, venues, ttl: 3600)
+
+    venues
+  end
+
+  defp fetch_diverse_latest_venues(limit) do
+    # Step 1: Get the newest venue from each country (country-diverse set)
+    country_diverse_query = from v in Venue,
+      join: city in assoc(v, :city),
+      join: country in assoc(city, :country),
+      distinct: country.id,
+      order_by: [
+        asc: country.id,        # Group by country
+        desc: v.inserted_at     # Newest first within each country
+      ],
+      preload: [:city, city: :country, events: [:performer]],
+      select: v
+
+    country_diverse_venues = Repo.all(country_diverse_query)
+
+    # If we have enough venues, take up to the limit
+    if length(country_diverse_venues) >= limit do
+      # Take only what we need, prioritizing newer venues
+      country_diverse_venues
+      |> Enum.sort_by(&(&1.inserted_at), {:desc, DateTime})
+      |> Enum.take(limit)
+    else
+      # We need to supplement with more venues to reach the limit
+      existing_ids = Enum.map(country_diverse_venues, & &1.id)
+      remaining = limit - length(country_diverse_venues)
+
+      # Get additional newest venues, excluding ones we already have
+      additional_venues_query =
+        from v in Venue,
+        where: v.id not in ^existing_ids,
+        preload: [:city, city: :country, events: [:performer]],
+        order_by: [desc: v.inserted_at],
+        limit: ^remaining,
+        select: v
+
+      additional_venues = Repo.all(additional_venues_query)
+
+      # Combine the lists
+      country_diverse_venues ++ additional_venues
+    end
+  end
+
+  @doc """
   Get popular cities based on venue counts with geographic clustering.
 
   This function finds the most popular cities by venue count, while preventing nearby
