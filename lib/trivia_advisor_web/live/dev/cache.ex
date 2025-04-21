@@ -60,6 +60,24 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
     {:noreply, assign(socket, latest_venues_cleared: true)}
   end
 
+  @impl true
+  def handle_event("clear-city-cache", %{"city_name" => city_name}, socket) when city_name != "" do
+    UnsplashService.clear_cache("city", city_name)
+    {:noreply, put_flash(socket, :info, "Cache for city '#{city_name}' cleared successfully")}
+  end
+
+  @impl true
+  def handle_event("clear-venue-cache", %{"venue_name" => venue_name}, socket) when venue_name != "" do
+    UnsplashService.clear_cache("venue", venue_name)
+    {:noreply, put_flash(socket, :info, "Cache for venue '#{venue_name}' cleared successfully")}
+  end
+
+  @impl true
+  def handle_event(event, params, socket) do
+    Logger.warning("Unhandled event: #{event}, params: #{inspect(params)}")
+    {:noreply, socket}
+  end
+
   defp clear_latest_venues_cache do
     # This function selectively clears only the cache entries for latest venues
     # The key format is "latest_venues:limit:X" where X is the limit
@@ -87,23 +105,5 @@ defmodule TriviaAdvisorWeb.DevLive.Cache do
           :ets.delete(:trivia_advisor_cache, diverse_key)
       end
     end)
-  end
-
-  @impl true
-  def handle_event("clear-city-cache", %{"city_name" => city_name}, socket) when city_name != "" do
-    UnsplashService.clear_cache("city", city_name)
-    {:noreply, put_flash(socket, :info, "Cache for city '#{city_name}' cleared successfully")}
-  end
-
-  @impl true
-  def handle_event("clear-venue-cache", %{"venue_name" => venue_name}, socket) when venue_name != "" do
-    UnsplashService.clear_cache("venue", venue_name)
-    {:noreply, put_flash(socket, :info, "Cache for venue '#{venue_name}' cleared successfully")}
-  end
-
-  @impl true
-  def handle_event(event, params, socket) do
-    Logger.warning("Unhandled event: #{event}, params: #{inspect(params)}")
-    {:noreply, socket}
   end
 end
