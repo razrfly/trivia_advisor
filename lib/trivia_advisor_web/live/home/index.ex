@@ -1,12 +1,16 @@
 defmodule TriviaAdvisorWeb.HomeLive.Index do
   use TriviaAdvisorWeb, :live_view
   alias TriviaAdvisorWeb.Components.UI.{CitySearch, VenueCard, CityCard}
+  alias TriviaAdvisorWeb.Components.WorldMapComponent
 
   @impl true
   def mount(_params, _session, socket) do
     # Use diverse latest venues function to show venues from different countries
     latest_venues = TriviaAdvisor.Locations.get_diverse_latest_venues(limit: 4, force_refresh: true)
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
+
+    # Trigger venue statistics calculation
+    TriviaAdvisor.VenueStatistics.schedule_refresh()
 
     {:ok, assign(socket,
       page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",
@@ -191,25 +195,19 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
       <!-- Map Preview Section -->
       <section class="bg-gray-50 py-16">
         <div class="container mx-auto px-6 sm:px-8 md:px-12 lg:px-16 xl:px-20">
-          <div class="grid gap-8 md:grid-cols-2">
-            <div class="flex flex-col justify-center">
-              <h2 class="mb-4 text-3xl font-bold tracking-tight text-gray-900">Find Trivia Nights on the Map</h2>
-              <p class="mb-6 text-lg text-gray-600">
-                Easily discover trivia venues near you or in any area you're interested in visiting. Our interactive map makes finding your next quiz night simple.
-              </p>
-              <div>
-                <a href="#" class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-5 py-3 text-base font-medium text-white hover:bg-indigo-700">
-                  Open Map View
-                </a>
-              </div>
+          <h2 class="text-3xl font-bold tracking-tight text-gray-900 text-center mb-8">Our Global Presence</h2>
+          <div class="grid gap-8 md:grid-cols-1">
+            <div>
+              <.live_component module={WorldMapComponent} id="homepage-map" />
             </div>
-            <div class="overflow-hidden rounded-lg shadow-md">
-              <div class="aspect-w-16 aspect-h-9 h-full w-full bg-gray-200">
-                <!-- Placeholder for map -->
-                <div class="flex h-full w-full items-center justify-center">
-                  <p class="text-gray-500">Interactive Map Preview</p>
-                </div>
-              </div>
+            <div class="text-center mt-4">
+              <p class="text-gray-600 mb-4">
+                Explore trivia venues across the globe. Our community spans multiple countries
+                and is growing every day.
+              </p>
+              <a href={~p"/venues/latest"} class="inline-flex items-center justify-center rounded-md bg-indigo-600 px-5 py-3 text-base font-medium text-white hover:bg-indigo-700">
+                Explore All Venues
+              </a>
             </div>
           </div>
         </div>
