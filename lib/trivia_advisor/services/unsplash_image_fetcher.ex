@@ -122,7 +122,8 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
   # Private helpers
 
   defp fetch_with_backoff(url, type, name, attempt) do
-    max_attempts = 3
+    # Increased max attempts since we have a higher rate limit in production
+    max_attempts = 5
 
     if attempt > max_attempts do
       Logger.error("Max retry attempts reached for #{type}: #{name}")
@@ -130,6 +131,7 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
     else
       case HTTPoison.get(url, [], [follow_redirect: true]) do
         {:ok, %{status_code: 200, body: body}} ->
+          # Success case - process the results
           case Jason.decode(body) do
             {:ok, data} ->
               # Get the results
@@ -171,8 +173,9 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
 
         {:ok, %{status_code: 403, body: body}} ->
           if String.contains?(body, "Rate Limit Exceeded") do
-            # Implement exponential backoff
-            backoff_time = :math.pow(3, attempt) * 1000 |> round()
+            # Use shorter backoff time for production rate limit (5000/hour)
+            # 1.5 seconds in first attempt, 3s in second, etc.
+            backoff_time = attempt * 1500
             Logger.warning("Unsplash API rate limit exceeded for #{type} #{name}. Retrying in #{backoff_time/1000} seconds (attempt #{attempt}/#{max_attempts})")
 
             # Sleep for the backoff time
@@ -186,8 +189,9 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
           end
 
         {:ok, %{status_code: 429}} ->
-          # 429 Too Many Requests - implement backoff
-          backoff_time = :math.pow(3, attempt) * 1000 |> round()
+          # 429 Too Many Requests - implement shorter backoff
+          # 2 seconds in first attempt, 4s in second, etc.
+          backoff_time = attempt * 2000
           Logger.warning("Unsplash API rate limit exceeded (429) for #{type} #{name}. Retrying in #{backoff_time/1000} seconds (attempt #{attempt}/#{max_attempts})")
 
           Process.sleep(backoff_time)
