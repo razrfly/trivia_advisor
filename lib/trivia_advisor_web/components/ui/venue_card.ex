@@ -352,13 +352,36 @@ defmodule TriviaAdvisorWeb.Components.UI.VenueCard do
   # Gets the currency for a country based on country code.
   @spec get_country_currency(String.t()) :: String.t()
   defp get_country_currency(country_code) do
-    # Try to use the Countries library to get currency code
-    country_data = Countries.get(country_code)
-    if country_data && Map.has_key?(country_data, :currency_code) do
-      country_data.currency_code
-    else
-      # Just return GBP as fallback
-      "GBP"
+    currency_code =
+      case Countries.get(country_code) do
+        nil ->
+          # Country not found, use default
+          "GBP"
+        country_data when is_map(country_data) ->
+          if Map.has_key?(country_data, :currency_code) &&
+             is_binary(country_data.currency_code) &&
+             country_data.currency_code != "" do
+            country_data.currency_code
+          else
+            # No currency code or invalid one, use default
+            "GBP"
+          end
+        _ ->
+          # Any other unexpected result, use default
+          "GBP"
+      end
+
+    # Verify the currency is valid for the Money library
+    # Use a safe approach with try/rescue
+    try do
+      # This will raise an error if the currency doesn't exist
+      # We're not actually using the result, just validating the currency
+      Money.new(0, currency_code)
+      currency_code
+    rescue
+      _ ->
+        # If any error occurs with the currency, fall back to GBP
+        "GBP"
     end
   end
 
