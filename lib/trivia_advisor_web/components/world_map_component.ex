@@ -23,18 +23,40 @@ defmodule TriviaAdvisorWeb.Components.WorldMapComponent do
   end
 
   @impl true
-  def update(assigns, socket) do
-    venues_by_country = TriviaAdvisor.VenueStatistics.venues_by_country()
-    venues_count = TriviaAdvisor.VenueStatistics.count_active_venues()
-    countries_count = TriviaAdvisor.VenueStatistics.count_countries_with_venues()
+  def update(%{refresh_stats: true}, socket) do
+    # Force refresh the statistics when explicitly requested
+    stats = TriviaAdvisor.VenueStatistics.get_snapshot()
 
     socket =
       socket
-      |> assign(:id, assigns.id)
-      |> assign(:venues_by_country, venues_by_country)
-      |> assign(:venues_count, venues_count)
-      |> assign(:countries_count, countries_count)
+      |> assign(:venues_by_country, stats.venues_by_country)
+      |> assign(:venues_count, stats.venues_count)
+      |> assign(:countries_count, stats.countries_count)
+      |> assign(:stats_loaded, true)
 
     {:ok, socket}
+  end
+
+  @impl true
+  def update(assigns, socket) do
+    # Only fetch stats on initial load or if explicitly requested
+    socket = assign(socket, :id, assigns.id)
+
+    if socket.assigns[:stats_loaded] do
+      # Stats already loaded, don't reload on every update
+      {:ok, socket}
+    else
+      # Initial load, fetch stats once
+      stats = TriviaAdvisor.VenueStatistics.get_snapshot()
+
+      socket =
+        socket
+        |> assign(:venues_by_country, stats.venues_by_country)
+        |> assign(:venues_count, stats.venues_count)
+        |> assign(:countries_count, stats.countries_count)
+        |> assign(:stats_loaded, true)
+
+      {:ok, socket}
+    end
   end
 end

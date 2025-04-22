@@ -23,6 +23,12 @@ FROM ${BUILDER_IMAGE} as builder
 # install build dependencies
 RUN apt-get update -y && apt-get install -y build-essential git \
     imagemagick \
+    curl \
+    && apt-get clean && rm -f /var/lib/apt/lists/*_*
+
+# Install Node.js and npm
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
     && apt-get clean && rm -f /var/lib/apt/lists/*_*
 
 # prepare build dir
@@ -51,6 +57,9 @@ COPY priv priv
 COPY lib lib
 
 COPY assets assets
+
+# Install npm dependencies
+RUN cd assets && npm install
 
 # compile assets
 RUN mix assets.deploy

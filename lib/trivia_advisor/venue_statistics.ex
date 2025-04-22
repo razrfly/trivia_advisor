@@ -5,7 +5,7 @@ defmodule TriviaAdvisor.VenueStatistics do
 
   import Ecto.Query, warn: false
   alias TriviaAdvisor.Repo
-  alias TriviaAdvisor.Locations.{Venue, City, Country}
+  alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Cache
 
   # Cache key for active venues count
@@ -137,8 +137,52 @@ defmodule TriviaAdvisor.VenueStatistics do
   def schedule_refresh do
     # For the prototype, we'll just directly refresh the cache
     # In production, we'd use Oban to schedule a background job
-    fetch_and_cache_active_venues_count()
-    fetch_and_cache_venues_by_country()
+    # Implementation with Oban would look like:
+    # %{} |> TriviaAdvisor.Workers.RefreshVenueStatisticsWorker.new() |> Oban.insert()
+
+    # For now, do it asynchronously with Task:
+    Task.start(fn ->
+      fetch_and_cache_active_venues_count()
+      fetch_and_cache_venues_by_country()
+    end)
+
     :ok
+  end
+
+  @doc """
+  Get a complete snapshot of all venue statistics in a single call.
+  Returns a map with venues_count, countries_count, and venues_by_country.
+
+  ## Options
+    * `:force_refresh` - whether to force a cache refresh (default: false)
+
+  ## Examples
+
+      iex> get_snapshot()
+      %{
+        venues_count: 1042,
+        countries_count: 9,
+        venues_by_country: [
+          %{country_code: "GB", country_name: "United Kingdom", venue_count: 532},
+          # ...
+        ]
+      }
+
+  """
+  def get_snapshot(opts \\ []) do
+    force_refresh = Keyword.get(opts, :force_refresh, false)
+
+    # Get venues by country first (most complex query)
+    venues_by_country_data = venues_by_country(force_refresh: force_refresh)
+
+    # Get or calculate other stats
+    venues_count = count_active_venues(force_refresh: force_refresh)
+    countries_count = Enum.count(venues_by_country_data)
+
+    %{
+      venues_count: venues_count,
+      countries_count: countries_count,
+      venues_by_country: venues_by_country_data
+    }
   end
 end
