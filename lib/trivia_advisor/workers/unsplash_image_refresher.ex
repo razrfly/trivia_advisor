@@ -2,7 +2,7 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   @moduledoc """
   Oban worker that refreshes Unsplash images for countries and cities.
 
-  Uses rate limiting to avoid hitting Unsplash API limits.
+  Optimized for Unsplash's production rate limit of 5,000 requests per hour.
   Stores image galleries in the database.
   """
 
@@ -25,14 +25,23 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   @weekly_refresh 14 * 24 * 60 * 60  # 14 days instead of 7 days
   @monthly_refresh 60 * 24 * 60 * 60  # 60 days instead of 30 days
 
+  # Rate limit configuration
+  @production_rate_limit 5000  # Requests per hour in production
+  @req_buffer_percent 0.8      # Use 80% of allowed requests to be safe
+  @requests_per_location 1     # Each location typically uses 1 API request
+
+  # Batch sizing
+  @max_countries_per_batch 27  # Process all countries in one batch (we have 27 total)
+  @max_cities_per_batch 200    # Process cities in larger batches (we have ~1455 total)
+
   @impl Oban.Worker
   def perform(%Oban.Job{args: %{"action" => "refresh"}}) do
-    # This job is triggered daily and schedules individual refresh jobs
+    # This job is triggered weekly and schedules consolidated refresh jobs
     schedule_country_refresh()
     schedule_city_refresh()
 
-    # Schedule the next daily job
-    schedule_daily_refresh()
+    # Schedule the next weekly job
+    schedule_weekly_refresh()
     :ok
   end
 
@@ -40,146 +49,146 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   def perform(%Oban.Job{args: %{"type" => "country", "names" => names, "unique_key" => _unique_key}}) do
     Logger.info("Processing refresh job for #{length(names)} countries")
 
-    run_country_refresh(names)
+    # Process all countries with rate limiting
+    process_locations_with_rate_limiting("country", names)
 
     :ok
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: %{"type" => "city", "country" => country, "names" => city_names, "unique_key" => _unique_key}}) do
-    Logger.info("Processing refresh job for #{length(city_names)} cities in #{country}")
+  def perform(%Oban.Job{args: %{"type" => "city", "batch_index" => batch_index, "names" => city_names, "unique_key" => _unique_key}}) do
+    Logger.info("Processing refresh job for batch #{batch_index} with #{length(city_names)} cities")
 
-    for city_name <- city_names do
-      # Query all cities with the given name in the specified country
-      cities =
-        from(c in TriviaAdvisor.Locations.City,
-          join: country_record in assoc(c, :country),
-          where: c.name == ^city_name and country_record.name == ^country)
-        |> Repo.all()
-
-      case cities do
-        [] ->
-          Logger.warning("City not found: #{city_name} in #{country}")
-
-        cities ->
-          Enum.each(cities, fn city ->
-            if needs_refresh?("city", city) do
-              Logger.info("Fetching new images for city: #{city_name} (ID: #{city.id})")
-              UnsplashImageFetcher.fetch_and_store_city_images(city_name)
-            else
-              Logger.info("Skipping refresh for city: #{city_name} (ID: #{city.id}) - not due for refresh yet")
-            end
-          end)
-      end
-    end
+    # Process cities with rate limiting
+    process_locations_with_rate_limiting("city", city_names)
 
     :ok
   end
 
+  # Process locations with built-in rate limiting
+  defp process_locations_with_rate_limiting(type, names) do
+    # Calculate a reasonable pause between API calls to stay within rate limits
+    # Using 5000 requests/hour = ~1.4 requests/second, so we'll aim for ~1 request/second
+    pause_ms = 1000
+
+    # Process each location with a pause between to avoid rate limiting
+    for name <- names do
+      case type do
+        "country" ->
+          country = get_country_by_name(name)
+          if country && needs_refresh?("country", country) do
+            Logger.info("Fetching new images for country: #{name}")
+            UnsplashImageFetcher.fetch_and_store_country_images(name)
+            # Pause to respect rate limits
+            Process.sleep(pause_ms)
+          else
+            if country do
+              Logger.info("Skipping refresh for country: #{name} - not due for refresh yet")
+            else
+              Logger.warning("Country not found: #{name}")
+            end
+          end
+
+        "city" ->
+          # Query all cities with the given name
+          cities =
+            from(c in TriviaAdvisor.Locations.City,
+              where: c.name == ^name)
+            |> Repo.all()
+
+          case cities do
+            [] ->
+              Logger.warning("City not found: #{name}")
+
+            cities ->
+              Enum.each(cities, fn city ->
+                if needs_refresh?("city", city) do
+                  Logger.info("Fetching new images for city: #{name} (ID: #{city.id})")
+                  UnsplashImageFetcher.fetch_and_store_city_images(name)
+                  # Pause to respect rate limits
+                  Process.sleep(pause_ms)
+                else
+                  Logger.info("Skipping refresh for city: #{name} (ID: #{city.id}) - not due for refresh yet")
+                end
+              end)
+          end
+      end
+    end
+  end
+
   @doc """
   Schedule refresh of all country image galleries.
-  This should be called periodically (e.g., daily or weekly) to refresh the galleries.
+  Since we have a high request limit (5000/hour), we can process all countries in one job.
   """
   def schedule_country_refresh() do
     countries = fetch_all_country_names()
+    countries_count = length(countries)
 
-    Logger.info("Scheduling refresh for #{length(countries)} country galleries with venues")
+    Logger.info("Scheduling consolidated refresh for #{countries_count} country galleries")
 
-    # Schedule a job to refresh country images with small batches
-    batches = countries |> Enum.chunk_every(10) # Process in batches of 10
+    # Create a unique key for this batch
+    unique_key = "country_consolidated_#{DateTime.utc_now() |> Calendar.strftime("%Y%m%d")}"
 
-    # Log all batches to help debug
-    Logger.debug("Country batches to be scheduled: #{inspect(batches)}")
+    args = %{
+      type: "country",
+      names: countries,
+      unique_key: unique_key
+    }
 
-    batches
+    case args
+      |> __MODULE__.new()
+      |> Oban.insert() do
+      {:ok, job} ->
+        Logger.info("Scheduled consolidated country refresh job #{job.id} for #{countries_count} countries")
+      {:error, error} ->
+        Logger.error("Failed to schedule country refresh: #{inspect(error)}")
+    end
+  end
+
+  @doc """
+  Schedule refresh of all city image galleries.
+  With the 5000/hour rate limit, we can use significantly larger batches.
+  """
+  def schedule_city_refresh() do
+    all_cities = fetch_all_city_names()
+    cities_count = length(all_cities)
+
+    Logger.info("Scheduling consolidated refresh for #{cities_count} cities")
+
+    # Process in larger batches of up to @max_cities_per_batch cities
+    all_cities
+    |> Enum.chunk_every(@max_cities_per_batch)
     |> Enum.with_index()
     |> Enum.each(fn {batch, index} ->
-      # Stagger jobs by 30 minutes to avoid overlapping
-      schedule_in = index * 30 * 60
+      # Add a 1-hour delay between batches to ensure we stay within rate limits
+      schedule_in = index * 60 * 60
 
-      # Ensure we're not scheduling empty batches
-      if Enum.empty?(batch) do
-        Logger.warning("Skipping empty country batch at index #{index}")
-      else
-        # Create a unique key for this specific batch to prevent duplicates
-        unique_batch_key = "country_batch_#{index}_#{Enum.join(batch, "_")}"
+      # Create a unique key for this batch
+      unique_key = "city_batch_#{index}_#{DateTime.utc_now() |> Calendar.strftime("%Y%m%d")}"
 
-        args = %{
-          type: "country",
-          names: batch,
-          unique_key: unique_batch_key  # Add unique key to args instead of using :id
-        }
+      args = %{
+        "type" => "city",
+        "batch_index" => index,
+        "names" => batch,
+        "unique_key" => unique_key
+      }
 
-        case args
-          |> __MODULE__.new(schedule_in: schedule_in)
-          |> Oban.insert() do
-          {:ok, job} ->
-            Logger.info("Scheduled country batch job #{job.id} for #{inspect(batch)} in #{div(schedule_in, 60)} minutes")
-          {:error, error} ->
-            Logger.error("Failed to schedule country batch: #{inspect(error)}")
-        end
+      case args
+        |> new(schedule_in: schedule_in)
+        |> Oban.insert() do
+        {:ok, job} ->
+          Logger.info("Scheduled job #{job.id} to refresh batch #{index} with #{length(batch)} cities in #{div(schedule_in, 60)} minutes")
+        {:error, error} ->
+          Logger.error("Failed to schedule city batch #{index}: #{inspect(error)}")
       end
     end)
   end
 
   @doc """
-  Schedule refresh of all city image galleries.
-  This should be called periodically (e.g., daily or weekly) to refresh the galleries.
+  Schedule a weekly refresh job for all countries and cities.
+  This creates a recurring job that will run weekly at the specified time.
   """
-  def schedule_city_refresh() do
-    cities_by_country = fetch_all_cities_with_country()
-    total_cities = cities_by_country |> Enum.map(fn {_, cities} -> length(cities) end) |> Enum.sum()
-    country_count = map_size(cities_by_country)
-
-    Logger.info("Scheduling Unsplash image refresh for #{total_cities} cities in #{country_count} countries")
-
-    cities_by_country
-    |> Enum.with_index()
-    |> Enum.each(fn {{country, cities}, country_index} ->
-      chunk_size = 10
-
-      Logger.debug("Scheduling batches for #{length(cities)} cities in #{country}")
-
-      cities
-      |> Enum.chunk_every(chunk_size)
-      |> Enum.with_index()
-      |> Enum.each(fn {batch, batch_index} ->
-        # Increase this delay from 30 minutes to 60 minutes
-        # This gives more time between batches to avoid rate limiting
-        schedule_in = country_index * 60 * 60 + batch_index * 10 * 60 # 60 min between countries, 10 min between batches
-
-        # Skip empty batches
-        if Enum.empty?(batch) do
-          Logger.warning("Skipping empty city batch at index #{batch_index} for #{country}")
-        else
-          # Create a unique identifier for this job
-          unique_batch_key = "city_batch_#{country}_#{batch_index}_#{Enum.join(batch, "_")}"
-
-          args = %{
-            "type" => "city",
-            "names" => batch,
-            "country" => country,
-            "unique_key" => unique_batch_key
-          }
-
-          case args
-            |> new(schedule_in: schedule_in)
-            |> Oban.insert() do
-            {:ok, job} ->
-              Logger.info("Scheduled job #{job.id} to refresh #{length(batch)} cities in #{country} in #{div(schedule_in, 60)} minutes")
-            {:error, error} ->
-              Logger.error("Failed to schedule city batch for #{country}: #{inspect(error)}")
-          end
-        end
-      end)
-    end)
-  end
-
-  @doc """
-  Schedule a daily refresh job for all countries and cities.
-  This creates a recurring job that will run daily at the specified time.
-  """
-  def schedule_daily_refresh do
+  def schedule_weekly_refresh do
     # Create a job that runs weekly at 1:00 AM UTC on Monday
     try do
       %{action: "refresh"}
@@ -206,7 +215,7 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
 
     args = %{
       action: "refresh",
-      unique_key: unique_key  # Use uniqueness within the args
+      unique_key: unique_key
     }
 
     case args
@@ -226,12 +235,7 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   Returns cities grouped by country that have venues.
   """
   def fetch_all_cities_with_country_public do
-    cities_by_country = fetch_all_cities_with_country()
-
-    # Call fetch_all_city_names to make it used (for backward compatibility)
-    _all_city_names = fetch_all_city_names()
-
-    cities_by_country
+    fetch_all_cities_with_country()
   end
 
   # Private functions
@@ -269,11 +273,14 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
     )
   end
 
-  # Keep this function for backward compatibility
-  # credo:disable-for-next-line Credo.Check.Warning.UnusedPrivateFunction
+  # Return all unique city names (not grouped by country)
   defp fetch_all_city_names do
-    fetch_all_cities_with_country()
-    |> Enum.flat_map(fn {_, cities} -> cities end)
+    query = from c in TriviaAdvisor.Locations.City,
+      join: v in assoc(c, :venues),
+      distinct: true,
+      select: c.name
+
+    Repo.all(query)
   end
 
   # Check if a location needs to be refreshed based on venue count and last refresh time
@@ -354,22 +361,5 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   # Helper to get a country by name
   defp get_country_by_name(name) do
     Repo.get_by(TriviaAdvisor.Locations.Country, name: name)
-  end
-
-  defp run_country_refresh(country_names) do
-    Enum.each(country_names, fn name ->
-      country = get_country_by_name(name)
-
-      if country && needs_refresh?("country", country) do
-        Logger.info("Fetching new images for country: #{name}")
-        UnsplashImageFetcher.fetch_and_store_country_images(name)
-      else
-        if country do
-          Logger.info("Skipping refresh for country: #{name} - not due for refresh yet")
-        else
-          Logger.warning("Country not found: #{name}")
-        end
-      end
-    end)
   end
 end
