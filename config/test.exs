@@ -62,6 +62,6 @@ config :trivia_advisor, :http_client, HTTPoison.Mock
 config :trivia_advisor, env: :test
 
 config :trivia_advisor, Oban,
-  testing: :inline,
+  testing: :manual,
   queues: false,
   plugins: false

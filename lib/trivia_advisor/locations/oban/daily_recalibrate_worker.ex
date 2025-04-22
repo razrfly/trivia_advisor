@@ -86,6 +86,7 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
       |> Enum.each(fn limit ->
         [50, 30]
         |> Enum.each(fn distance ->
+          # Cache each combination directly without scheduling a job
           cache_city_combination(limit: limit, distance_threshold: distance, diverse_countries: diverse)
         end)
       end)
@@ -183,7 +184,7 @@ defmodule TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker do
   defp calculate_avg_coordinates(city_id) do
     # Query to get average latitude and longitude
     query = from v in Venue,
-            where: v.city_id == ^city_id and not is_nil(v.latitude) and not is_nil(v.longitude),
+            where: v.city_id == ^city_id and is_nil(v.latitude) == false and is_nil(v.longitude) == false,
             select: {
               fragment("AVG(CAST(? AS FLOAT))", v.latitude),
               fragment("AVG(CAST(? AS FLOAT))", v.longitude)
