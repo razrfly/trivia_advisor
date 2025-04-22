@@ -9,8 +9,7 @@ defmodule TriviaAdvisorWeb.HomeLive.Index do
     latest_venues = TriviaAdvisor.Locations.get_diverse_latest_venues(limit: 4, force_refresh: true)
     popular_cities = TriviaAdvisor.Locations.get_popular_cities(limit: 6, diverse_countries: true)
 
-    # Trigger venue statistics calculation
-    TriviaAdvisor.VenueStatistics.schedule_refresh()
+    # We're no longer refreshing venue statistics here since it's handled by the worker
 
     {:ok, assign(socket,
       page_title: "TriviaAdvisor - Find the Best Pub Quizzes Near You",

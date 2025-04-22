@@ -33,7 +33,8 @@ config :trivia_advisor, Oban,
        {"0 6 * * *", TriviaAdvisor.Scraping.Oban.PubquizIndexJob}, # Run at 6 AM daily
        {"0 2 * * *", TriviaAdvisor.Locations.Oban.DailyRecalibrateWorker}, # Run at 2 AM daily
        {"0 1 * * *", TriviaAdvisor.Workers.UnsplashImageRefresher, args: %{"action" => "refresh"}}, # Run at 1 AM daily
-       {"0 7 * * *", TriviaAdvisor.Workers.SitemapWorker} # Run at 7 AM daily
+       {"0 7 * * *", TriviaAdvisor.Workers.SitemapWorker}, # Run at 7 AM daily
+       {"0 3 * * *", TriviaAdvisor.Workers.VenueStatisticsWorker} # Run at 3 AM daily
      ]},
     {Oban.Plugins.Pruner, max_age: 604800}  # 7 days in seconds
   ]
