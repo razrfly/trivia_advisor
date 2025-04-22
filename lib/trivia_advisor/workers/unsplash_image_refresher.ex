@@ -25,6 +25,10 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   @weekly_refresh 14 * 24 * 60 * 60  # 14 days instead of 7 days
   @monthly_refresh 60 * 24 * 60 * 60  # 60 days instead of 30 days
 
+  # Rate limit configuration
+  @production_rate_limit 5000  # Requests per hour in production
+  @req_buffer_percent 0.8      # Use 80% of allowed requests to be safe
+
   # Batch sizing
   @max_cities_per_batch 200    # Process cities in larger batches (we have ~1455 total)
 
@@ -62,8 +66,9 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   # Process locations with built-in rate limiting
   defp process_locations_with_rate_limiting(type, names) do
     # Calculate a reasonable pause between API calls to stay within rate limits
-    # Using 5000 requests/hour = ~1.4 requests/second, so we'll aim for ~1 request/second
-    pause_ms = 1000
+    # Using production rate limit with buffer to ensure we stay within limits
+    pause_ms =
+      trunc(3_600_000 / (@production_rate_limit * @req_buffer_percent))
 
     # Process each location with a pause between to avoid rate limiting
     for name <- names do
@@ -95,16 +100,38 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
               Logger.warning("City not found: #{name}")
 
             cities ->
-              Enum.each(cities, fn city ->
-                if needs_refresh?("city", city) do
-                  Logger.info("Fetching new images for city: #{name} (ID: #{city.id})")
-                  UnsplashImageFetcher.fetch_and_store_city_images(name)
-                  # Pause to respect rate limits
-                  Process.sleep(pause_ms)
-                else
-                  Logger.info("Skipping refresh for city: #{name} (ID: #{city.id}) - not due for refresh yet")
+              # Check if any city needs a refresh
+              needs_refresh = Enum.any?(cities, fn city -> needs_refresh?("city", city) end)
+
+              if needs_refresh do
+                # Fetch images once for this city name
+                Logger.info("Fetching new images for city: #{name} (#{length(cities)} matching records)")
+                case UnsplashImageFetcher.fetch_city_images(name) do
+                  {:ok, images} ->
+                    # Create gallery data
+                    gallery = %{
+                      "images" => images,
+                      "current_index" => 0,
+                      "last_refreshed_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+                    }
+
+                    # Update all cities with the same name
+                    Enum.each(cities, fn city ->
+                      Logger.info("Updating gallery for city: #{name} (ID: #{city.id})")
+                      {:ok, _} = city
+                        |> TriviaAdvisor.Locations.City.changeset(%{unsplash_gallery: gallery})
+                        |> Repo.update()
+                    end)
+
+                  {:error, reason} ->
+                    Logger.error("Failed to fetch images for city #{name}: #{inspect(reason)}")
                 end
-              end)
+
+                # Pause to respect rate limits
+                Process.sleep(pause_ms)
+              else
+                Logger.info("Skipping refresh for all #{length(cities)} instances of city: #{name} - not due for refresh yet")
+              end
           end
       end
     end

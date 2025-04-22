@@ -37,17 +37,19 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
   """
   @spec fetch_and_store_city_images(String.t()) :: {:ok, map()} | {:error, atom()}
   def fetch_and_store_city_images(city_name) do
-    Logger.info("Fetching images for city: #{city_name}")
+    Logger.info("Fetching and storing images for city: #{city_name}")
     try do
       # Get city images from Unsplash
-      images = fetch_city_images(city_name)
-
-      # Store the gallery in the database
-      create_gallery("city", city_name, images)
+      case fetch_city_images(city_name) do
+        {:ok, images} ->
+          # Store the gallery in the database
+          create_gallery("city", city_name, images)
+        error -> error
+      end
     rescue
       e ->
-        Logger.error("Error fetching images for city #{city_name}: #{inspect(e)}")
-        {:error, :fetch_failed}
+        Logger.error("Error storing images for city #{city_name}: #{inspect(e)}")
+        {:error, :store_failed}
     end
   end
 
@@ -250,27 +252,36 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
     end
   end
 
-  # Fetch images for a city from Unsplash
-  @spec fetch_city_images(String.t()) :: list(map())
-  defp fetch_city_images(city_name) do
-    # Look up the city to get the country for a more specific search
-    city =
-      from(c in City,
-        where: c.name == ^city_name,
-        preload: [:country])
-      |> Repo.one()
+  @doc """
+  Fetch images for a city from Unsplash.
+  This function fetches images but does not store them in the database.
+  Returns {:ok, images_list} or {:error, reason}.
+  """
+  @spec fetch_city_images(String.t()) :: {:ok, list(map())} | {:error, atom()}
+  def fetch_city_images(city_name) do
+    Logger.info("Fetching images for city: #{city_name}")
+    try do
+      # Look up the city to get the country for a more specific search
+      city =
+        from(c in City,
+          where: c.name == ^city_name,
+          preload: [:country])
+        |> Repo.one()
 
-    search_term = if city && city.country do
-      # Use city and country name for better search results
-      "#{city_name} #{city.country.name} city"
-    else
-      # Fallback to just the city name
-      "#{city_name} city"
-    end
+      search_term = if city && city.country do
+        # Use city and country name for better search results
+        "#{city_name} #{city.country.name} city"
+      else
+        # Fallback to just the city name
+        "#{city_name} city"
+      end
 
-    case fetch_unsplash_images("city", search_term) do
-      {:ok, images} -> images
-      {:error, _reason} -> []
+      # Return the result of fetch_unsplash_images
+      fetch_unsplash_images("city", search_term)
+    rescue
+      e ->
+        Logger.error("Error fetching images for city #{city_name}: #{inspect(e)}")
+        {:error, :fetch_failed}
     end
   end
 
