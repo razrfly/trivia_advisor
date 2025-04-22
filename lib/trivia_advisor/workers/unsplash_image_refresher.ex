@@ -25,13 +25,7 @@ defmodule TriviaAdvisor.Workers.UnsplashImageRefresher do
   @weekly_refresh 14 * 24 * 60 * 60  # 14 days instead of 7 days
   @monthly_refresh 60 * 24 * 60 * 60  # 60 days instead of 30 days
 
-  # Rate limit configuration
-  @production_rate_limit 5000  # Requests per hour in production
-  @req_buffer_percent 0.8      # Use 80% of allowed requests to be safe
-  @requests_per_location 1     # Each location typically uses 1 API request
-
   # Batch sizing
-  @max_countries_per_batch 27  # Process all countries in one batch (we have 27 total)
   @max_cities_per_batch 200    # Process cities in larger batches (we have ~1455 total)
 
   @impl Oban.Worker
