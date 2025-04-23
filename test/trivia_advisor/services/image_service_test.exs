@@ -1,5 +1,6 @@
 defmodule TriviaAdvisor.Services.ImageServiceTest do
   use TriviaAdvisor.DataCase
+  import Mock
 
   alias TriviaAdvisor.Services.ImageService
 
