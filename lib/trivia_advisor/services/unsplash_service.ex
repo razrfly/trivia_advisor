@@ -135,16 +135,20 @@ defmodule TriviaAdvisor.Services.UnsplashService do
   def get_city_images_batch(city_names) when is_list(city_names) do
     # Get all cities from database in a single query
     query = from c in City,
-      where: c.name in ^city_names,
-      select: {c.name, c.unsplash_gallery}
+      where: c.name in ^city_names
 
-    # Create a map of city_name => gallery
-    db_results = Repo.all(query) |> Map.new()
+    # Get all records in one query
+    cities = Repo.all(query)
+
+    # Create a map of city_name => record for quick access
+    city_records = Enum.reduce(cities, %{}, fn city, acc ->
+      Map.put(acc, city.name, city)
+    end)
 
     # Process each city name and build the result map
     city_names
     |> Enum.reduce(%{}, fn city_name, acc ->
-      case Map.get(db_results, city_name) do
+      case Map.get(city_records, city_name) do
         nil ->
           # City not in database, schedule fetching and return nil for now
           Task.start(fn ->
@@ -153,27 +157,32 @@ defmodule TriviaAdvisor.Services.UnsplashService do
           end)
           Map.put(acc, city_name, %{url: nil, image_url: nil})
 
-        gallery when is_nil(gallery) or gallery == %{} ->
-          # Gallery not present, schedule fetching and return nil for now
-          Task.start(fn ->
-            # Try to fetch in background but don't wait for result
-            _ = get_city_image(city_name)
-          end)
-          Map.put(acc, city_name, %{url: nil, image_url: nil})
+        city ->
+          gallery = city.unsplash_gallery
 
-        gallery ->
-          # Extract image URL from gallery
-          images = Map.get(gallery, "images", [])
-          current_index = Map.get(gallery, "current_index", 0)
+          cond do
+            is_nil(gallery) || gallery == %{} ->
+              # Gallery not present, schedule fetching and return nil for now
+              Task.start(fn ->
+                # Try to fetch in background but don't wait for result
+                _ = get_city_image(city_name)
+              end)
+              Map.put(acc, city_name, %{url: nil, image_url: nil})
 
-          if Enum.empty?(images) do
-            Map.put(acc, city_name, %{url: nil, image_url: nil})
-          else
-            # Get current image URL
-            current_index = min(current_index, length(images) - 1)
-            image = Enum.at(images, current_index)
-            url = if(is_nil(image), do: nil, else: image["url"])
-            Map.put(acc, city_name, %{url: url, image_url: url})
+            is_nil(Map.get(gallery, "images")) || Enum.empty?(Map.get(gallery, "images", [])) ->
+              # No images in gallery
+              Map.put(acc, city_name, %{url: nil, image_url: nil})
+
+            true ->
+              # Get images and calculate the current index based on time and entity ID
+              images = Map.get(gallery, "images")
+              current_index = get_hourly_image_index(city.id, length(images))
+
+              # Get current image URL
+              image = Enum.at(images, current_index)
+              url = if(is_nil(image), do: nil, else: image["url"])
+
+              Map.put(acc, city_name, %{url: url, image_url: url})
           end
       end
     end)
@@ -284,62 +293,73 @@ defmodule TriviaAdvisor.Services.UnsplashService do
 
   # Private functions
 
-  defp get_image_from_db("country", country_name) do
-    query = from c in Country,
-      where: c.name == ^country_name,
-      select: c.unsplash_gallery
+  @doc """
+  Calculate the current image index based on time and entity ID.
+  This provides a deterministic but time-varying index that changes hourly
+  and provides variety between different entities.
+  """
+  def get_hourly_image_index(entity_id, total_images \\ 15) do
+    # Get current hour (0-23)
+    current_hour = DateTime.utc_now().hour
 
-    case Repo.one(query) do
-      nil ->
-        {:error, :not_found}
-      gallery when is_nil(gallery) ->
-        {:error, :no_gallery}
-      gallery ->
-        # Get the current image from the gallery
-        images = Map.get(gallery, "images", [])
-        current_index = Map.get(gallery, "current_index", 0)
+    # Get day of year (1-366) for variety between days
+    day_of_year = Date.day_of_year(Date.utc_today())
 
-        if Enum.empty?(images) do
-          {:error, :no_images}
-        else
-          # Use the current index to get the right image
-          current_index = min(current_index, length(images) - 1)
-          image = Enum.at(images, current_index)
+    # Mix entity ID to create variety between different entities
+    # Use a prime number multiplier to increase "randomness"
+    entity_factor = rem(entity_id * 7, total_images)
 
-          # Format the response for compatibility with existing code
-          {:ok, %{
-            image_url: image["url"],
-            attribution: image["attribution"]
-          }}
-        end
-    end
+    # Calculate the index - wrapping around if needed
+    rem(current_hour + day_of_year + entity_factor, total_images)
   end
 
-  defp get_image_from_db("city", city_name) do
-    query = from c in City,
-      where: c.name == ^city_name,
-      select: c.unsplash_gallery
+  defp get_image_from_db(type, name) do
+    # Normalize name to ensure consistency
+    name = String.trim(name)
 
-    case Repo.one(query) do
-      nil ->
-        {:error, :not_found}
-      gallery when is_nil(gallery) ->
+    # Find the record in the database
+    record = case type do
+      "city" ->
+        Repo.get_by(City, name: name)
+      "country" ->
+        Repo.get_by(Country, name: name)
+      _ ->
+        nil
+    end
+
+    if is_nil(record) do
+      {:error, :not_found}
+    else
+      gallery = Map.get(record, :unsplash_gallery)
+
+      if is_nil(gallery) || gallery == %{} || is_nil(Map.get(gallery, "images")) || Enum.empty?(Map.get(gallery, "images")) do
         {:error, :no_gallery}
-      gallery ->
-        # Get the current image from the gallery
-        images = Map.get(gallery, "images", [])
-        current_index = Map.get(gallery, "current_index", 0)
+      else
+        # Get image data from the gallery using hourly rotation
+        images = Map.get(gallery, "images")
 
-        if Enum.empty?(images) do
-          {:error, :no_images}
+        # Get entity ID from record for use in rotation
+        entity_id = record.id
+
+        # Calculate the current index based on time and entity ID
+        current_index = get_hourly_image_index(entity_id, length(images))
+
+        # Get the current image
+        current_image = Enum.at(images, current_index)
+
+        # Return the image data
+        url = Map.get(current_image, "url")
+        attribution = Map.get(current_image, "attribution")
+
+        # Format the response based on type
+        result = if type == "country" do
+          %{image_url: url, attribution: attribution}
         else
-          # Use the current index to get the right image
-          current_index = min(current_index, length(images) - 1)
-          image = Enum.at(images, current_index)
-
-          # Return the image URL for compatibility with existing code
-          {:ok, image["url"]}
+          %{url: url, attribution: attribution, image_url: url}
         end
+
+        {:ok, result}
+      end
     end
   end
 
@@ -348,21 +368,23 @@ defmodule TriviaAdvisor.Services.UnsplashService do
 
   # Type-specific implementations
   defp rotate_db_image("country", country_name, _format_fn) do
+    # For backwards compatibility
     rotate_db_image("country", country_name, fn image ->
       %{image_url: image["url"], attribution: image["attribution"]}
     end)
   end
 
   defp rotate_db_image("city", city_name, _format_fn) do
+    # For backwards compatibility
     rotate_db_image("city", city_name, fn image -> image["url"] end)
   end
 
   # Generic implementation
   defp rotate_db_image(type, name, format_fn) when type in ["country", "city"] do
-    # Get the model and record
-    {model, record} = case type do
-      "country" -> {Country, Repo.get_by(Country, name: name)}
-      "city" -> {City, Repo.get_by(City, name: name)}
+    # Get the record
+    record = case type do
+      "country" -> Repo.get_by(Country, name: name)
+      "city" -> Repo.get_by(City, name: name)
     end
 
     if is_nil(record) do
@@ -374,27 +396,23 @@ defmodule TriviaAdvisor.Services.UnsplashService do
         {:error, :no_gallery}
       else
         images = Map.get(gallery, "images", [])
-        current_index = Map.get(gallery, "current_index", 0)
 
         if Enum.empty?(images) do
           {:error, :no_images}
         else
-          # Calculate the next index (wrap around if needed)
-          next_index = rem(current_index + 1, length(images))
+          # Force a "rotation" by using a different hour than the current one
+          next_hour = rem(DateTime.utc_now().hour + 1, 24)
+          day_of_year = Date.day_of_year(Date.utc_today())
+          entity_factor = rem(record.id * 7, length(images))
 
-          # Update the gallery with the new index
-          updated_gallery = Map.put(gallery, "current_index", next_index)
+          # Calculate next index as if it were the next hour
+          next_index = rem(next_hour + day_of_year + entity_factor, length(images))
 
-          # Update the database using appropriate changeset function
-          case Repo.update(apply(model, :changeset, [record, %{unsplash_gallery: updated_gallery}])) do
-            {:ok, _updated} ->
-              # Return the new current image
-              new_image = Enum.at(updated_gallery["images"], next_index)
-              {:ok, format_fn.(new_image)}
-            {:error, changeset} ->
-              Logger.error("Failed to update #{type} gallery: #{inspect(changeset.errors)}")
-              {:error, :update_failed}
-          end
+          # Get the image at the forced "next hour" index
+          new_image = Enum.at(images, next_index)
+
+          # Return the result formatted appropriately
+          {:ok, format_fn.(new_image)}
         end
       end
     end

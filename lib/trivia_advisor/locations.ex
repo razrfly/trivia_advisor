@@ -1457,6 +1457,4 @@ defmodule TriviaAdvisor.Locations do
         fallback
     end
   end
-
-  # The unused function select_diverse_venues/2 has been removed
 end
