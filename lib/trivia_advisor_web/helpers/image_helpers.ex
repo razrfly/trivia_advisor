@@ -84,6 +84,7 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
   @doc """
   Gets a city image URL from Unsplash or fallbacks.
   Returns a tuple with {image_url, attribution_map}.
+  Rotates images based on the current hour without updating the database.
   """
   def get_city_image_with_attribution(city) do
     # Default image URL if none is found
@@ -95,11 +96,17 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
        is_list(city.unsplash_gallery["images"]) &&
        length(city.unsplash_gallery["images"]) > 0 do
 
-      # Get the current index or default to 0
-      current_index = Map.get(city.unsplash_gallery, "current_index", 0)
+      # Get all available images
+      images = city.unsplash_gallery["images"]
+      total_images = length(images)
+
+      # Calculate which image to show based on current hour
+      # This will rotate images hourly without needing to update the database
+      current_hour = DateTime.utc_now().hour
+      image_index = rem(current_hour, total_images)
 
       # Get the current image safely
-      current_image = Enum.at(city.unsplash_gallery["images"], current_index) ||
+      current_image = Enum.at(city.unsplash_gallery["images"], image_index) ||
                       List.first(city.unsplash_gallery["images"])
 
       if current_image && Map.has_key?(current_image, "url") do
