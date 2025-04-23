@@ -7,7 +7,6 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
   require Logger
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.{City, Country}
-  import Ecto.Query
 
   @max_images 10 # Number of images to store per location
 
@@ -65,18 +64,17 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
         {:ok, generate_fallback_images(name)}
 
       access_key ->
-        # Customize search query based on type
-        query = case type do
-          "city" -> "#{name} city"
-          "country" -> "#{name} landscape picturesque"
-          _ -> name
-        end
+        # Use simple search query - just the name itself
+        query = name
 
-        # Use search endpoint instead of random for more relevant results
-        # Reduce per_page from 30 to 15 to reduce the likelihood of hitting rate limits
+        # Use search endpoint with random page for variety
         url = "https://api.unsplash.com/search/photos?query=#{URI.encode(query)}&orientation=landscape&per_page=15&client_id=#{access_key}"
 
-        Logger.info("Fetching images from Unsplash for #{type}: #{name}")
+        # Add random page parameter to get different results each time
+        page = :rand.uniform(5)
+        url = "#{url}&page=#{page}"
+
+        Logger.info("Fetching images from Unsplash for #{type}: #{name} with query: '#{query}' (page #{page})")
 
         # Try to fetch with backoff on rate limiting
         fetch_with_backoff(url, type, name, 1)
@@ -254,33 +252,18 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
 
   @doc """
   Fetch images for a city from Unsplash.
-  This function fetches images but does not store them in the database.
-  Returns {:ok, images_list} or {:error, reason}.
+  If country_name is provided, it will be used to improve search relevance.
   """
-  @spec fetch_city_images(String.t()) :: {:ok, list(map())} | {:error, atom()}
-  def fetch_city_images(city_name) do
+  @spec fetch_city_images(String.t(), String.t() | nil) :: {:ok, list(map())} | {:error, atom()}
+  def fetch_city_images(city_name, _country_name \\ nil) do
     Logger.info("Fetching images for city: #{city_name}")
+
     try do
-      # Look up the city to get the country for a more specific search
-      city =
-        from(c in City,
-          where: c.name == ^city_name,
-          preload: [:country])
-        |> Repo.one()
-
-      search_term = if city && city.country do
-        # Use city and country name for better search results
-        "#{city_name} #{city.country.name} city"
-      else
-        # Fallback to just the city name
-        "#{city_name} city"
-      end
-
-      # Return the result of fetch_unsplash_images
-      fetch_unsplash_images("city", search_term)
+      # Just use the city name as is - simple and robust
+      fetch_unsplash_images("city", city_name)
     rescue
       e ->
-        Logger.error("Error fetching images for city #{city_name}: #{inspect(e)}")
+        Logger.error("Error fetching city images for #{city_name}: #{inspect(e)}")
         {:error, :fetch_failed}
     end
   end
@@ -288,10 +271,8 @@ defmodule TriviaAdvisor.Services.UnsplashImageFetcher do
   # Fetch images for a country from Unsplash
   @spec fetch_country_images(String.t()) :: list(map())
   defp fetch_country_images(country_name) do
-    # Search term with country name and landmarks for better results
-    search_term = "#{country_name} landmarks landscape"
-
-    case fetch_unsplash_images("country", search_term) do
+    # Just use the country name as is - simple and robust
+    case fetch_unsplash_images("country", country_name) do
       {:ok, images} -> images
       {:error, _reason} -> []
     end

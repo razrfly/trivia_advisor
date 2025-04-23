@@ -36,6 +36,7 @@ defmodule TriviaAdvisorWeb.Router do
     # Admin route for image cache management (only in dev)
     if Mix.env() == :dev do
       live "/dev/cache", DevLive.Cache, :index
+      get "/dev/unsplash-test", UnsplashTestController, :index
     end
   end
 
