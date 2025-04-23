@@ -105,7 +105,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Components.MainContent do
               <div class="flex items-center space-x-4 rounded-lg border p-4 transition hover:bg-gray-50">
                 <div class="h-16 w-16 flex-shrink-0 overflow-hidden rounded-md">
                   <img
-                    src={venue_info.venue.hero_image_url || get_venue_image(venue_info.venue) || "https://placehold.co/100x100?text=#{venue_info.venue.name}"}
+                    src={get_venue_image(venue_info.venue)}
                     alt={venue_info.venue.name}
                     class="h-full w-full object-cover"
                   />

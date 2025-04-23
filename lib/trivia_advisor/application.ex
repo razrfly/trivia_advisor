@@ -24,6 +24,8 @@ defmodule TriviaAdvisor.Application do
       {Finch, name: TriviaAdvisor.Finch},
       # Start the Unsplash service for image caching
       TriviaAdvisor.Services.UnsplashService,
+      # Start the ImageCache for ETS-based image storage
+      TriviaAdvisor.Services.ImageCache,
       # Start Google Places service for venue image fetching
       {TriviaAdvisor.Services.GooglePlacesService, []},
       # Start Google Place Image Store service
