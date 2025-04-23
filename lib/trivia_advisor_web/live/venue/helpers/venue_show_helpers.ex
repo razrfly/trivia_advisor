@@ -252,7 +252,10 @@ defmodule TriviaAdvisorWeb.Live.Venue.Helpers.VenueShowHelpers do
 
   def return_default_image(venue \\ nil) do
     # Use the venue_image helper instead of the removed fallback function
-    TriviaAdvisorWeb.Helpers.ImageHelpers.get_venue_image(venue)
+    case venue do
+      nil -> "/images/default-venue.jpg"
+      _   -> TriviaAdvisorWeb.Helpers.ImageHelpers.get_venue_image(venue)
+    end
   end
 
   # Format distance for display

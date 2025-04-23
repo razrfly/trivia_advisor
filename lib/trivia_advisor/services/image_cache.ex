@@ -56,7 +56,18 @@ defmodule TriviaAdvisor.Services.ImageCache do
   @impl true
   def init(_) do
     # Create ETS table for caching
-    :ets.new(@table_name, [:named_table, :set, :protected, read_concurrency: true])
+    case :ets.whereis(@table_name) do
+      :undefined ->
+        :ets.new(@table_name, [
+          :named_table,
+          :set,
+          :protected,
+          read_concurrency: true,
+          write_concurrency: true
+        ])
+      tid when is_reference(tid) ->
+        :ets.give_away(tid, self(), nil)
+    end
     {:ok, %{}}
   end
 
@@ -287,17 +298,31 @@ defmodule TriviaAdvisor.Services.ImageCache do
   end
 
   defp fallback_to_city_image(venue) do
-    # Try to get city from venue
-    city = case is_map(venue) && Map.has_key?(venue, :city) && venue.city do
-      true -> venue.city
-      _ -> nil
-    end
+    # Check if we're inside the GenServer process to avoid recursive calls
+    if self() == Process.whereis(__MODULE__) do
+      # Already inside the server - call the private helper directly
+      city = case is_map(venue) && Map.has_key?(venue, :city) && venue.city do
+        true -> venue.city
+        _ -> nil
+      end
 
-    case city do
-      nil -> nil
-      city ->
-        {url, _} = get_city_image_with_attribution(city)
-        url
+      case city do
+        nil -> default_image_url()
+        city ->
+          case fetch_city_image_from_database(city) do
+            {:ok, url, _attr} -> url
+            :error -> default_image_url()
+          end
+      end
+    else
+      # External caller - safe to use public API
+      case is_map(venue) && Map.has_key?(venue, :city) && venue.city do
+        true ->
+          {url, _} = get_city_image_with_attribution(venue.city)
+          url
+        _ ->
+          default_image_url()
+      end
     end
   end
 
