@@ -1,0 +1,171 @@
+<div class="container mx-auto px-4 py-8"
+     id="unsplash-tester"
+     data-api-key={@unsplash_api_key}>
+  <h1 class="text-3xl font-bold mb-6">Unsplash Search Term Tester</h1>
+  
+  <div class="mb-6">
+    <p class="text-lg mb-4">
+      This page allows you to test different search terms for the Unsplash API using our top cities by venue count.
+      Try different search patterns to see which ones produce the best images.
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 mb-8">
+    <div class="bg-white shadow-md rounded-lg p-6">
+      <h2 class="text-xl font-semibold mb-4">Search Term Templates</h2>
+      
+      <div class="grid gap-4 mb-8">
+        <div id="search-templates" class="grid grid-cols-2 md:grid-cols-3 gap-2">
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name}">Basic name</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} city">City</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} skyline">Skyline</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} landmarks">Landmarks</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} streets">Streets</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} {country_name}">With country</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} {country_name} city">City with country</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} architecture">Architecture</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} downtown">Downtown</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} urban landscape">Urban landscape</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} attractions">Attractions</button>
+          <button class="template-btn bg-blue-100 p-2 rounded hover:bg-blue-200" data-template="{city_name} city view">City view</button>
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <h3 class="font-medium mb-2">Custom Search Term</h3>
+        <div class="flex">
+          <input type="text" id="custom-search-term" class="border rounded p-2 flex-grow" placeholder="Enter custom search term...">
+          <button id="apply-custom-term" class="ml-2 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Apply</button>
+        </div>
+        <p class="text-sm text-gray-500 mt-1">
+          Use &#123;city_name&#125; and &#123;country_name&#125; as placeholders in your custom term
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+    <%= for city <- @top_cities do %>
+      <div class="city-card bg-white shadow-md rounded-lg overflow-hidden">
+        <div class="bg-gray-100 p-4">
+          <h2 class="text-xl font-semibold"><%= city.name %>, <%= city.country_name %></h2>
+          <p class="text-gray-600"><%= city.venue_count %> venues</p>
+          <div class="mt-2">
+            <div class="flex">
+              <input type="text" class="search-term-input border rounded p-2 flex-grow" 
+                     data-city-name={city.name} 
+                     data-country-name={city.country_name}
+                     value={"#{city.name} city"}>
+              <button class="search-btn ml-2 bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">Search</button>
+            </div>
+          </div>
+        </div>
+        <div class="results-container p-4 h-[300px] overflow-y-auto flex flex-col items-center justify-center text-center">
+          <p class="text-gray-500">Click "Search" to see results</p>
+        </div>
+      </div>
+    <% end %>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const unsplashApiKey = document.getElementById('unsplash-tester').getAttribute('data-api-key');
+    
+    // Set up event listeners for template buttons
+    document.querySelectorAll('.template-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const template = this.getAttribute('data-template');
+        document.querySelectorAll('.search-term-input').forEach(input => {
+          const cityName = input.getAttribute('data-city-name');
+          const countryName = input.getAttribute('data-country-name');
+          input.value = template
+            .replace('{city_name}', cityName)
+            .replace('{country_name}', countryName);
+        });
+      });
+    });
+
+    // Set up event listener for custom term
+    document.getElementById('apply-custom-term').addEventListener('click', function() {
+      const customTerm = document.getElementById('custom-search-term').value;
+      document.querySelectorAll('.search-term-input').forEach(input => {
+        const cityName = input.getAttribute('data-city-name');
+        const countryName = input.getAttribute('data-country-name');
+        input.value = customTerm
+          .replace('{city_name}', cityName)
+          .replace('{country_name}', countryName);
+      });
+    });
+
+    // Set up search functionality
+    document.querySelectorAll('.search-btn').forEach(btn => {
+      btn.addEventListener('click', function() {
+        const card = this.closest('.city-card');
+        const input = card.querySelector('.search-term-input');
+        const resultsContainer = card.querySelector('.results-container');
+        const searchQuery = input.value;
+        
+        resultsContainer.innerHTML = '<p class="text-gray-500">Loading...</p>';
+        fetchUnsplashImages(searchQuery, resultsContainer);
+      });
+    });
+    
+    // Function to fetch images from Unsplash
+    function fetchUnsplashImages(query, resultsContainer) {
+      const page = Math.floor(Math.random() * 5) + 1;
+      const url = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query)}&page=${page}&per_page=5&orientation=landscape&client_id=${unsplashApiKey}`;
+      
+      fetch(url)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+          return response.json();
+        })
+        .then(data => {
+          displayResults(data, resultsContainer, query);
+        })
+        .catch(error => {
+          resultsContainer.innerHTML = `<p class="text-red-500">Error: ${error.message}</p>`;
+        });
+    }
+    
+    // Function to display the results
+    function displayResults(data, container, query) {
+      if (!data.results || data.results.length === 0) {
+        container.innerHTML = '<p class="text-gray-500">No results found</p>';
+        return;
+      }
+      
+      let html = `
+        <div class="w-full">
+          <div class="mb-2">
+            <p class="text-sm text-gray-700">Search: "${query}" (Page: ${data.total_pages > 0 ? 'Random of ' + data.total_pages : 'N/A'})</p>
+            <p class="text-sm text-gray-700">Total results: ${data.total}</p>
+          </div>
+          <div class="image-grid grid grid-cols-1 gap-3">
+      `;
+      
+      data.results.forEach(image => {
+        html += `
+          <div class="image-item mb-3">
+            <img src="${image.urls.small}" alt="${image.alt_description || 'Unsplash image'}" class="w-full h-40 object-cover rounded">
+            <div class="text-xs text-gray-500 mt-1">
+              <div>Likes: ${image.likes}</div>
+              <div class="truncate">Description: ${image.description || image.alt_description || 'No description'}</div>
+              <div>By <a href="${image.user.links.html}" target="_blank" class="text-blue-500 hover:underline">${image.user.name}</a></div>
+            </div>
+          </div>
+        `;
+      });
+      
+      html += `
+          </div>
+        </div>
+      `;
+      
+      container.innerHTML = html;
+    }
+  });
+</script> 
