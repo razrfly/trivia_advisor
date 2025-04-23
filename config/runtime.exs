@@ -37,6 +37,10 @@ end
 config :trivia_advisor, :mapbox,
   access_token: System.get_env("MAPBOX_ACCESS_TOKEN")
 
+# Add Unsplash API key in runtime config
+config :trivia_advisor,
+  unsplash_api_key: System.get_env("UNSPLASH_ACCESS_KEY")
+
 if config_env() == :prod do
   database_url =
     System.get_env("DATABASE_URL") ||

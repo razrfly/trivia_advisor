@@ -92,82 +92,8 @@ defmodule TriviaAdvisorWeb.Live.Venue.Helpers.VenueShowHelpers do
 
   # Get venue image - updated to use the new ImageUrlHelper
   def get_venue_image(venue) do
-    alias TriviaAdvisor.Helpers.ImageUrlHelper
-
-    try do
-      # Check for events with hero_image
-      {_event, event_image_url} =
-        try do
-          if venue.events && Enum.any?(venue.events) do
-            event = List.first(venue.events)
-
-            image_url = if event && event.hero_image && event.hero_image.file_name do
-              try do
-                # Use helper to generate URL
-                ImageUrlHelper.get_image_url({event.hero_image.file_name, event}, TriviaAdvisor.Uploaders.HeroImage, :original)
-              rescue
-                e ->
-                  Logger.error("Error processing hero image URL: #{Exception.message(e)}")
-                  nil
-              end
-            else
-              nil
-            end
-
-            {event, image_url}
-          else
-            {nil, nil}
-          end
-        rescue
-          _ -> {nil, nil}
-        end
-
-      # Check for stored Google Place images (now stored in Waffle)
-      stored_place_image = if is_map(venue) && Map.get(venue, :google_place_images) && is_list(venue.google_place_images) && Enum.any?(venue.google_place_images) do
-        try do
-          # Get the first image from stored place images
-          first_image = List.first(venue.google_place_images)
-          if is_map(first_image) && Map.has_key?(first_image, "local_path") && is_binary(first_image["local_path"]) do
-            ImageUrlHelper.ensure_full_url(first_image["local_path"])
-          else
-            nil
-          end
-        rescue
-          _ -> nil
-        end
-      end
-
-      # Check for hero_image_url in metadata
-      metadata_image = if is_map(venue) && Map.has_key?(venue, :metadata) && is_map(venue.metadata) do
-        venue.metadata["hero_image_url"] ||
-        venue.metadata["hero_image"] ||
-        venue.metadata["image_url"] ||
-        venue.metadata["image"]
-      end
-
-      # Check if venue has a field for hero_image directly
-      venue_image = if is_map(venue) do
-        Map.get(venue, :hero_image_url) ||
-        Map.get(venue, :hero_image) ||
-        Map.get(venue, :image_url) ||
-        Map.get(venue, :image)
-      end
-
-      # Use the first available image or fall back to placeholder
-      image_url = event_image_url || stored_place_image || metadata_image || venue_image
-
-      if is_binary(image_url) do
-        # Use helper to ensure it's a full URL
-        ImageUrlHelper.ensure_full_url(image_url)
-      else
-        # If no valid image URL is found, return a default image URL
-        "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
-      end
-    rescue
-      e ->
-        Logger.error("Error getting venue image: #{inspect(e)}")
-        "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
-    end
+    # Use the enhanced ImageHelpers implementation that provides Unsplash fallbacks
+    TriviaAdvisorWeb.Helpers.ImageHelpers.get_venue_image(venue)
   end
 
   # Helper to get entry fee cents from venue events
@@ -319,17 +245,14 @@ defmodule TriviaAdvisorWeb.Live.Venue.Helpers.VenueShowHelpers do
       image = Enum.at(all_images, position)
       if is_binary(image), do: image, else: return_default_image(venue)
     else
-      # If no image exists for this position, use a default image
+      # If no image exists for this position, use our enhanced fallback image
       return_default_image(venue)
     end
   end
 
   def return_default_image(venue \\ nil) do
-    if venue && is_map(venue) && Map.has_key?(venue, :name) && is_binary(venue.name) do
-      "https://placehold.co/600x400?text=#{URI.encode(venue.name)}"
-    else
-      "#{TriviaAdvisorWeb.Endpoint.url()}/images/default-venue-thumb.jpg"
-    end
+    # Use the venue_image helper instead of the removed fallback function
+    TriviaAdvisorWeb.Helpers.ImageHelpers.get_venue_image(venue)
   end
 
   # Format distance for display

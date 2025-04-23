@@ -30,7 +30,7 @@ defmodule TriviaAdvisorWeb.CityLive.Components.VenueList do
               <div class="relative h-48">
                 <a href={~p"/venues/#{venue.slug}"}>
                   <img
-                    src={venue.hero_image_url || get_venue_image(venue)}
+                    src={get_venue_image(venue)}
                     alt={venue.name}
                     class="h-full w-full object-cover"
                   />

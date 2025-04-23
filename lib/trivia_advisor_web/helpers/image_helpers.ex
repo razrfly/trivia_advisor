@@ -3,15 +3,16 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
   Helper functions for handling images across views.
   """
   alias TriviaAdvisor.Helpers.ImageUrlHelper
+  alias TriviaAdvisor.Services.ImageCache
   require Logger
 
   @doc """
   Gets a suitable image URL for a venue.
-  Tries several potential sources in order of preference.
+  First checks for direct venue image sources, then falls back to API via cache.
   """
   def get_venue_image(venue) do
     try do
-      # Check for events with hero_image
+      # First check for events with hero_image
       event_image =
         try do
           if venue.events && Enum.any?(venue.events) do
@@ -65,77 +66,43 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
         Map.get(venue, :image)
       end
 
-      # Use the first available image or fall back to placeholder
+      # Use the first available image or fall back to the ImageCache/API
       image_url = event_image || google_place_image || metadata_image || venue_image
 
       if is_binary(image_url) do
         # Use helper to ensure it's a full URL
         ImageUrlHelper.ensure_full_url(image_url)
       else
-        "/images/default-venue.jpg"
+        # Fall back to the Unsplash API via cache
+        ImageCache.get_venue_image(venue)
       end
     rescue
       e ->
         Logger.error("Error getting venue image: #{inspect(e)}")
+        # Fallback to default
         "/images/default-venue.jpg"
     end
   end
 
   @doc """
-  Gets a city image URL from Unsplash or fallbacks.
-  Returns a tuple with {image_url, attribution_map}.
-  Rotates images based on the current hour without updating the database.
+  Gets a city image URL with attribution.
+  Uses data from city records or Unsplash API via cache.
   """
   def get_city_image_with_attribution(city) do
-    # Default image URL if none is found
-    default_image_url = "/images/default_city.jpg"
-
-    if city.unsplash_gallery &&
-       is_map(city.unsplash_gallery) &&
-       Map.has_key?(city.unsplash_gallery, "images") &&
-       is_list(city.unsplash_gallery["images"]) &&
-       length(city.unsplash_gallery["images"]) > 0 do
-
-      # Get all available images
-      images = city.unsplash_gallery["images"]
-      total_images = length(images)
-
-      # Calculate which image to show based on current hour
-      # This will rotate images hourly without needing to update the database
-      current_hour = DateTime.utc_now().hour
-      image_index = rem(current_hour, total_images)
-
-      # Get the current image safely
-      current_image = Enum.at(city.unsplash_gallery["images"], image_index) ||
-                      List.first(city.unsplash_gallery["images"])
-
-      if current_image && Map.has_key?(current_image, "url") do
-        # Extract the image URL
-        image_url = current_image["url"]
-
-        # Extract attribution
-        attribution = if Map.has_key?(current_image, "attribution") do
-          # Ensure UTM parameters for photographer URL
-          attribution = current_image["attribution"]
-          ensure_utm_parameters(attribution)
-        else
-          %{"photographer_name" => "Photographer", "unsplash_url" => "https://unsplash.com?utm_source=trivia_advisor&utm_medium=referral"}
-        end
-
-        {image_url, attribution}
-      else
-        # Fallback to default if no URL in the gallery
+    try do
+      # Use the ImageCache to handle city images (from DB or API)
+      ImageCache.get_city_image_with_attribution(city)
+    rescue
+      e ->
+        Logger.error("Error getting city image: #{inspect(e)}")
+        # Fallback default image
+        default_image_url = "/images/default_city.jpg"
         {default_image_url, %{"photographer_name" => "Default Image"}}
-      end
-    else
-      # If no gallery or no images, use fallback hardcoded image URL
-      image_url = get_fallback_city_image(city.name)
-      {image_url, %{"photographer_name" => "Unsplash", "unsplash_url" => "https://unsplash.com?utm_source=trivia_advisor&utm_medium=referral"}}
     end
   end
 
-  # Ensure UTM parameters are present for attribution URLs
-  defp ensure_utm_parameters(attribution) do
+  # Function to ensure UTM parameters are added to attribution URLs
+  def ensure_utm_parameters(attribution) do
     utm_params = "?utm_source=trivia_advisor&utm_medium=referral"
 
     # Handle both string and atom keys
@@ -159,27 +126,4 @@ defmodule TriviaAdvisorWeb.Helpers.ImageHelpers do
 
     updated_attribution
   end
-
-  @doc """
-  Gets a fallback city image based on common city names.
-  """
-  def get_fallback_city_image(name) when is_binary(name) do
-    cond do
-      String.contains?(String.downcase(name), "london") ->
-        "https://images.unsplash.com/photo-1533929736458-ca588d08c8be?q=80&w=2000"
-      String.contains?(String.downcase(name), "new york") ->
-        "https://images.unsplash.com/photo-1496442226666-8d4d0e62e6e9?q=80&w=2000"
-      String.contains?(String.downcase(name), "sydney") ->
-        "https://images.unsplash.com/photo-1506973035872-a4ec16b8e8d9?q=80&w=2000"
-      String.contains?(String.downcase(name), "melbourne") ->
-        "https://images.unsplash.com/photo-1545044846-351ba102b6d5?q=80&w=2000"
-      String.contains?(String.downcase(name), "paris") ->
-        "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?q=80&w=2000"
-      String.contains?(String.downcase(name), "tokyo") ->
-        "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=2000"
-      true ->
-        "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?q=80&w=2000" # Default urban image
-    end
-  end
-  def get_fallback_city_image(_), do: "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?q=80&w=2000"
 end
