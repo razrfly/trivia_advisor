@@ -57,7 +57,7 @@ defmodule TriviaAdvisor.Locations.Venue do
   def soft_delete_changeset(venue, attrs) do
     venue
     |> cast(attrs, [:deleted_at, :deleted_by, :merged_into_id])
-    |> validate_required([:deleted_at])
+    |> validate_required([:deleted_at, :deleted_by])
   end
 
   # Handle cleaning up image files when google_place_images is set to empty

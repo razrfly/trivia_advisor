@@ -382,11 +382,12 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
   end
 
   defp build_secondary_attrs(secondary) do
-    # Take all non-nil values from secondary
-    [:name, :address, :postcode, :phone, :website, :facebook, :instagram]
+    # Take all non-nil values from secondary, including image arrays
+    [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :google_place_images]
     |> Enum.reduce(%{}, fn field, attrs ->
       case Map.get(secondary, field) do
         nil -> attrs
+        [] when field == :google_place_images -> attrs  # Skip empty image arrays
         value -> Map.put(attrs, field, value)
       end
     end)
@@ -394,22 +395,36 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
 
   defp build_combined_attrs(primary, secondary) do
     # Prefer non-nil values, with preference for more complete data
-    [:name, :address, :postcode, :phone, :website, :facebook, :instagram]
+    [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :google_place_images]
     |> Enum.reduce(%{}, fn field, attrs ->
       primary_value = Map.get(primary, field)
       secondary_value = Map.get(secondary, field)
 
-      case choose_better_value(primary_value, secondary_value) do
+      case choose_better_value(primary_value, secondary_value, field) do
         ^primary_value -> attrs  # No change needed
         better_value -> Map.put(attrs, field, better_value)
       end
     end)
   end
 
-  defp choose_better_value(nil, secondary), do: secondary
-  defp choose_better_value(primary, nil), do: primary
-  defp choose_better_value(primary, secondary) do
-    # Prefer longer/more complete values
+  defp choose_better_value(nil, secondary, _field), do: secondary
+  defp choose_better_value(primary, nil, _field), do: primary
+  defp choose_better_value(primary, secondary, :google_place_images) do
+    # For images, combine both arrays and deduplicate by URL
+    primary_images = primary || []
+    secondary_images = secondary || []
+
+    # Combine and deduplicate images
+    combined = (primary_images ++ secondary_images)
+    |> Enum.uniq_by(&(&1))  # Remove exact duplicates
+
+    case combined do
+      [] -> primary  # Keep original if somehow no images
+      images -> images
+    end
+  end
+  defp choose_better_value(primary, secondary, _field) do
+    # Prefer longer/more complete values for text fields
     if String.length(to_string(secondary)) > String.length(to_string(primary)) do
       secondary
     else
@@ -561,8 +576,8 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       action_type: "not_duplicate",
       primary_venue_id: venue1_id,
       secondary_venue_id: venue2_id,
-      performed_by: options[:performed_by] || "system",
-      notes: options[:notes],
+      performed_by: Map.get(options, :performed_by, "system"),
+      notes: Map.get(options, :notes),
       metadata: %{
         marked_at: DateTime.utc_now(),
         reason: "manually_reviewed"
@@ -572,5 +587,17 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     %VenueMergeLog{}
     |> VenueMergeLog.changeset(attrs)
     |> Repo.insert()
+    |> case do
+      {:ok, log} -> {:ok, log}
+      {:error, %Ecto.Changeset{errors: errors}} ->
+        # Check if this is a unique constraint violation
+        if Keyword.has_key?(errors, :primary_venue_id) do
+          # Pair already marked as not duplicate - return success with existing log
+          {:ok, :already_exists}
+        else
+          {:error, errors}
+        end
+      {:error, error} -> {:error, error}
+    end
   end
 end

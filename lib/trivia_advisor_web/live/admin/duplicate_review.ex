@@ -2,7 +2,6 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   use TriviaAdvisorWeb, :live_view
 
   alias TriviaAdvisor.Locations
-  alias TriviaAdvisor.Services.VenueDuplicateDetector
   alias TriviaAdvisor.Services.VenueMergeService
 
   @impl true
@@ -89,7 +88,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   # Load duplicate pairs from the database view with filtering, sorting, and pagination
-  defp load_duplicate_pairs(filter_type \\ "all", sort_by \\ "name", page \\ 1) do
+  defp load_duplicate_pairs(filter_type, sort_by, page) do
     offset = (page - 1) * 10
 
     # Build WHERE clause based on filter
@@ -148,7 +147,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   # Count duplicate pairs for pagination
-  defp count_duplicate_pairs(filter_type \\ "all") do
+  defp count_duplicate_pairs(filter_type) do
     where_clause = case filter_type do
       "name_postcode_duplicate" -> "WHERE duplicate_type = 'name_postcode_duplicate'"
       "name_city_duplicate" -> "WHERE duplicate_type = 'name_city_duplicate'"
