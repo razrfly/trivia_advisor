@@ -559,14 +559,30 @@ defmodule TriviaAdvisor.Locations do
   """
   @spec get_duplicate_venue_groups() :: [map()]
   def get_duplicate_venue_groups do
-    query = "SELECT * FROM potential_duplicate_venues ORDER BY duplicate_count DESC"
+    query = "SELECT * FROM potential_duplicate_venues ORDER BY duplicate_type, venue1_name"
 
-    case Repo.query(query) do
-      {:ok, %{rows: rows, columns: columns}} ->
-        Enum.map(rows, fn row ->
-          Enum.zip(columns, row) |> Enum.into(%{})
-        end)
-      {:error, _} -> []
+    try do
+      case Repo.query(query) do
+        {:ok, %{rows: rows, columns: columns}} ->
+          Enum.map(rows, fn row ->
+            Enum.zip(columns, row) |> Enum.into(%{})
+          end)
+        {:error, error} ->
+          require Logger
+          Logger.error("Error querying duplicate venues: #{inspect(error)}")
+          []
+      end
+    rescue
+      error in Postgrex.Error ->
+        if error.postgres && error.postgres.code == "42P01" do
+          # 42P01 is the Postgres error code for "undefined_table"
+          require Logger
+          Logger.warning("The potential_duplicate_venues view does not exist. " <>
+                     "Please run migrations or execute the create_duplicate_view mix task.")
+          []
+        else
+          reraise error, __STACKTRACE__
+        end
     end
   end
 

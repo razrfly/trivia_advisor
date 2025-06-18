@@ -45,6 +45,10 @@ defmodule TriviaAdvisorWeb.Router do
     pipe_through [:browser, :oban_auth]
 
     oban_dashboard "/oban"
+
+    # Duplicate venue management
+    live "/venues/duplicates", TriviaAdvisorWeb.Live.Admin.DuplicateReview, :index
+    live "/venues/duplicates/:venue1_id/:venue2_id", TriviaAdvisorWeb.Live.Admin.DuplicateReview, :show
   end
 
   # Other scopes may use custom stacks.

@@ -42,7 +42,7 @@ defmodule Mix.Tasks.CreateDuplicateView do
       END as duplicate_type
     FROM venues v1
     JOIN venues v2 ON (
-      v1.name = v2.name
+      lower(trim(v1.name)) = lower(trim(v2.name))
       AND v1.id < v2.id
       AND v1.deleted_at IS NULL
       AND v2.deleted_at IS NULL
