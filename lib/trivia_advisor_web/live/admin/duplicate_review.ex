@@ -54,10 +54,10 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   def handle_event("merge_venues", %{"primary_id" => primary_id, "secondary_id" => secondary_id}, socket) do
-    primary_venue = Locations.get_venue!(primary_id)
-    secondary_venue = Locations.get_venue!(secondary_id)
+    primary_id = String.to_integer(primary_id)
+    secondary_id = String.to_integer(secondary_id)
 
-    case VenueMergeService.merge_venues(primary_venue, secondary_venue, %{performed_by: "admin_user"}) do
+    case VenueMergeService.merge_venues(primary_id, secondary_id, %{performed_by: "admin_user"}) do
       {:ok, _result} ->
         {:noreply,
          socket
@@ -73,6 +73,9 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
 
   def handle_event("reject_duplicate", %{"venue1_id" => venue1_id, "venue2_id" => venue2_id}, socket) do
     # Create a log entry to track that these venues are not duplicates
+    venue1_id = String.to_integer(venue1_id)
+    venue2_id = String.to_integer(venue2_id)
+
     case VenueMergeService.create_not_duplicate_log(venue1_id, venue2_id, %{performed_by: "admin_user"}) do
       {:ok, _log} ->
         {:noreply,
