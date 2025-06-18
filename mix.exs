@@ -87,7 +87,8 @@ defmodule TriviaAdvisor.MixProject do
       {:ex_cldr_calendars, "~> 2.1.0"},
       {:sitemapper, "~> 0.9"},
       {:mock, "~> 0.3.7", only: :test},
-      {:json_ld, "~> 0.3"}
+      {:json_ld, "~> 0.3"},
+      {:ecto_soft_delete, "~> 2.1"}
     ]
   end
 
