@@ -20,6 +20,10 @@ defmodule TriviaAdvisor.Locations.Venue do
     field :metadata, :map
     field :google_place_images, {:array, :map}, default: []
 
+    # Soft delete and merge tracking fields
+    field :deleted_by, :string
+    field :merged_into_id, :integer
+
     belongs_to :city, TriviaAdvisor.Locations.City
     has_many :events, TriviaAdvisor.Events.Event
 
@@ -32,7 +36,7 @@ defmodule TriviaAdvisor.Locations.Venue do
   @doc false
   def changeset(venue, attrs) do
     venue
-    |> cast(attrs, [:name, :address, :latitude, :longitude, :place_id, :phone, :website, :facebook, :instagram, :city_id, :postcode, :metadata, :google_place_images])
+    |> cast(attrs, [:name, :address, :latitude, :longitude, :place_id, :phone, :website, :facebook, :instagram, :city_id, :postcode, :metadata, :google_place_images, :deleted_at, :deleted_by, :merged_into_id])
     |> validate_required([:name, :address, :latitude, :longitude, :city_id])
     |> validate_number(:latitude, greater_than_or_equal_to: -90, less_than_or_equal_to: 90)
     |> validate_number(:longitude, greater_than_or_equal_to: -180, less_than_or_equal_to: 180)
@@ -105,7 +109,7 @@ defmodule TriviaAdvisor.Locations.Venue do
   end
 
   defp slug_exists?(slug) do
-    case Repo.get_by(__MODULE__, slug: slug) do
+    case Repo.get_by(__MODULE__, slug: slug, deleted_at: nil) do
       nil -> false
       _ -> true
     end
