@@ -456,9 +456,9 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     primary_images = primary || []
     secondary_images = secondary || []
 
-    # Combine and deduplicate images
+    # Combine and deduplicate images by URL to avoid near-duplicates
     combined = (primary_images ++ secondary_images)
-    |> Enum.uniq_by(&(&1))  # Remove exact duplicates
+    |> Enum.uniq_by(&Map.get(&1, "url"))  # Deduplicate by URL, not entire map
 
     case combined do
       [] -> primary  # Keep original if somehow no images
