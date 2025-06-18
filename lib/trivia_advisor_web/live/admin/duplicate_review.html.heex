@@ -146,7 +146,8 @@
               <% end %>
               
               <!-- Page numbers -->
-              <%= for page_num <- max(1, @current_page - 2)..min(ceil(@total_pairs / @per_page), @current_page + 2) do %>
+              <% total_pages = div(@total_pairs + @per_page - 1, @per_page) %>
+              <%= for page_num <- max(1, @current_page - 2)..min(total_pages, @current_page + 2) do %>
                 <%= if page_num == @current_page do %>
                   <span class="bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
                     <%= page_num %>
@@ -162,7 +163,7 @@
               <% end %>
               
               <!-- Next button -->
-              <%= if @current_page < ceil(@total_pairs / @per_page) do %>
+              <%= if @current_page < total_pages do %>
                 <.link 
                   navigate={~p"/admin/venues/duplicates?#{%{filter_type: @filter_type, sort_by: @sort_by, page: @current_page + 1}}"}
                   class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
@@ -221,11 +222,27 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
       <!-- Venue 1 -->
       <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-xl font-bold text-gray-900 mb-4">Venue A (ID: <%= @venue1.id %>)</h2>
+        <h2 class="text-xl font-bold text-gray-900 mb-4">
+          Venue A (ID: <%= @venue1.id %>)
+          <.link href={~p"/venues/#{@venue1.slug}"} target="_blank" class="ml-2 text-blue-600 hover:text-blue-800 text-sm font-normal">
+            <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+            </svg>
+            View Page
+          </.link>
+        </h2>
         <dl class="space-y-3">
           <div>
             <dt class="text-sm font-medium text-gray-500">Name</dt>
             <dd class="text-lg text-gray-900"><%= @venue1.name %></dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Images</dt>
+            <dd class="text-gray-900">
+              <span class={length(@venue1.google_place_images) > 0 && "font-semibold text-green-600" || "text-gray-500"}>
+                <%= length(@venue1.google_place_images) %> images
+              </span>
+            </dd>
           </div>
           <div>
             <dt class="text-sm font-medium text-gray-500">Address</dt>
@@ -256,11 +273,27 @@
 
       <!-- Venue 2 -->
       <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-xl font-bold text-gray-900 mb-4">Venue B (ID: <%= @venue2.id %>)</h2>
+        <h2 class="text-xl font-bold text-gray-900 mb-4">
+          Venue B (ID: <%= @venue2.id %>)
+          <.link href={~p"/venues/#{@venue2.slug}"} target="_blank" class="ml-2 text-blue-600 hover:text-blue-800 text-sm font-normal">
+            <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+            </svg>
+            View Page
+          </.link>
+        </h2>
         <dl class="space-y-3">
           <div>
             <dt class="text-sm font-medium text-gray-500">Name</dt>
             <dd class="text-lg text-gray-900"><%= @venue2.name %></dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Images</dt>
+            <dd class="text-gray-900">
+              <span class={length(@venue2.google_place_images) > 0 && "font-semibold text-green-600" || "text-gray-500"}>
+                <%= length(@venue2.google_place_images) %> images
+              </span>
+            </dd>
           </div>
           <div>
             <dt class="text-sm font-medium text-gray-500">Address</dt>
@@ -302,18 +335,18 @@
               phx-value-primary_id={@venue1.id} 
               phx-value-secondary_id={@venue2.id}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              onclick="return confirm('Merge Venue B into Venue A? This cannot be undone.')"
+              onclick="return confirm('Merge Venue B into Venue A?\n\n• Events will move to Venue A\n• Images will be combined (no duplicates)\n• Venue B will be soft-deleted\n• This cannot be undone')"
             >
-              Keep A, Merge B into A
+              ⬅️ Keep A, Merge B into A
             </button>
             <button 
               phx-click="merge_venues" 
               phx-value-primary_id={@venue2.id} 
               phx-value-secondary_id={@venue1.id}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              onclick="return confirm('Merge Venue A into Venue B? This cannot be undone.')"
+              onclick="return confirm('Merge Venue A into Venue B?\n\n• Events will move to Venue B\n• Images will be combined (no duplicates)\n• Venue A will be soft-deleted\n• This cannot be undone')"
             >
-              Keep B, Merge A into B
+              ➡️ Keep B, Merge A into B
             </button>
           </div>
         </div>
