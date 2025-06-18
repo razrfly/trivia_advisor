@@ -56,11 +56,11 @@ defmodule Mix.Tasks.SyncDbNew do
 
       # Step 4: Re-run migrations after import to apply our new schema changes
       Logger.info("Re-applying local migrations after production import...")
-      {_, 0} = System.cmd("mix", ["ecto.migrate"], into: IO.stream(:stdio, :line))
+      Mix.Task.rerun("ecto.migrate", [])
 
       # Step 5: Create the duplicate view after migrations are complete
       Logger.info("Creating duplicate detection view...")
-      {_, 0} = System.cmd("mix", ["create_duplicate_view"], into: IO.stream(:stdio, :line))
+      Mix.Task.rerun("create_duplicate_view", [])
 
       Logger.info("Database sync completed successfully!")
     rescue

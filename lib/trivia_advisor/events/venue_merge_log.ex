@@ -27,7 +27,7 @@ defmodule TriviaAdvisor.Events.VenueMergeLog do
     timestamps(type: :utc_datetime)
   end
 
-  @valid_actions ~w(merge preview rollback)
+  @valid_actions ~w(merge preview rollback not_duplicate)
 
   @doc false
   def changeset(venue_merge_log, attrs) do

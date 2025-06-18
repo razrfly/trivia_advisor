@@ -144,7 +144,9 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
     opts = normalize_options(opts)
 
     # Don't compare venue with itself
-    if venue1.id == venue2.id, do: false
+    if venue1.id == venue2.id do
+      false
+    else
 
     # Calculate overall similarity
     similarity = calculate_similarity_score(venue1, venue2, opts)
@@ -161,12 +163,13 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
                      venue1.place_id && venue2.place_id &&
                      venue1.place_id == venue2.place_id
 
-    # Decision logic
-    cond do
-      place_id_match -> true
-      meets_name_threshold and strong_location_match -> true
-      similarity >= @default_name_threshold -> true
-      true -> false
+      # Decision logic
+      cond do
+        place_id_match -> true
+        meets_name_threshold and strong_location_match -> true
+        similarity >= opts[:name_threshold] -> true
+        true -> false
+      end
     end
   end
 
@@ -284,8 +287,8 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
 
       # Calculate distance in kilometers using Haversine formula
       distance_km = haversine_distance(
-        Decimal.to_float(lat1), Decimal.to_float(lon1),
-        Decimal.to_float(lat2), Decimal.to_float(lon2)
+        to_float(lat1), to_float(lon1),
+        to_float(lat2), to_float(lon2)
       )
 
       # Convert distance to similarity score (closer = higher score)
@@ -309,6 +312,10 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
 
     same_postcode or close_geography
   end
+
+  # Safe conversion to float for both Decimal and numeric types
+  defp to_float(%Decimal{} = d), do: Decimal.to_float(d)
+  defp to_float(n) when is_number(n), do: n
 
   # Haversine formula for calculating distance between two points on Earth
   defp haversine_distance(lat1, lon1, lat2, lon2) do

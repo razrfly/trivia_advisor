@@ -1,0 +1,335 @@
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  <%= if @live_action == :index do %>
+    <div class="mb-8">
+      <h1 class="text-3xl font-bold text-gray-900 mb-4">Duplicate Venues Management</h1>
+      <p class="text-gray-600">Review and manage suspected duplicate venue entries.</p>
+    </div>
+
+    <!-- Filters and Controls -->
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+      <div class="flex flex-wrap gap-4 items-center">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Filter by type:</label>
+          <select 
+            phx-change="filter" 
+            name="filter_type" 
+            class="border border-gray-300 rounded-md px-3 py-2 bg-white"
+            value={@filter_type}
+          >
+            <option value="all">All duplicates</option>
+            <option value="name_postcode_duplicate">Name + Postcode matches</option>
+            <option value="name_city_duplicate">Name + City matches</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Sort by:</label>
+          <select 
+            phx-change="sort" 
+            name="sort_by" 
+            class="border border-gray-300 rounded-md px-3 py-2 bg-white"
+            value={@sort_by}
+          >
+            <option value="name">Name</option>
+            <option value="created">Creation Date</option>
+            <option value="type">Duplicate Type</option>
+          </select>
+        </div>
+
+        <div class="flex-1 text-right">
+          <span class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium bg-blue-100 text-blue-800">
+            <%= @total_pairs %> total pairs, showing <%= length(@duplicate_pairs) %>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Duplicate Pairs List -->
+    <div class="bg-white shadow overflow-hidden rounded-lg">
+      <div class="px-4 py-5 sm:p-6">
+        <%= if length(@duplicate_pairs) > 0 do %>
+          <div class="space-y-4">
+            <%= for pair <- @duplicate_pairs do %>
+              <div class="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                <div class="flex items-center justify-between">
+                  <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Venue 1 -->
+                    <div class="space-y-1">
+                      <h3 class="text-lg font-medium text-gray-900"><%= pair.venue1_name %></h3>
+                      <p class="text-sm text-gray-500">ID: <%= pair.venue1_id %></p>
+                      <%= if pair.venue1_postcode do %>
+                        <p class="text-sm text-gray-600">Postcode: <%= pair.venue1_postcode %></p>
+                      <% end %>
+                      <p class="text-xs text-gray-400">Created: <%= Calendar.strftime(pair.venue1_created, "%Y-%m-%d") %></p>
+                    </div>
+
+                    <!-- Venue 2 -->
+                    <div class="space-y-1">
+                      <h3 class="text-lg font-medium text-gray-900"><%= pair.venue2_name %></h3>
+                      <p class="text-sm text-gray-500">ID: <%= pair.venue2_id %></p>
+                      <%= if pair.venue2_postcode do %>
+                        <p class="text-sm text-gray-600">Postcode: <%= pair.venue2_postcode %></p>
+                      <% end %>
+                      <p class="text-xs text-gray-400">Created: <%= Calendar.strftime(pair.venue2_created, "%Y-%m-%d") %></p>
+                    </div>
+                  </div>
+
+                  <!-- Actions -->
+                  <div class="flex flex-col space-y-2 ml-4">
+                    <.link 
+                      navigate={~p"/admin/venues/duplicates/#{pair.venue1_id}/#{pair.venue2_id}"}
+                      class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      Review Details
+                    </.link>
+                    
+                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                      <%= String.replace(pair.duplicate_type, "_", " ") |> String.capitalize() %>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+          </div>
+        <% else %>
+          <div class="text-center py-12">
+            <h3 class="text-lg font-medium text-gray-900 mb-2">No duplicate venues found</h3>
+            <p class="text-gray-500">All venues appear to be unique, or duplicates have been resolved.</p>
+          </div>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- Pagination -->
+    <%= if @total_pairs > @per_page do %>
+      <div class="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6 mt-6 rounded-lg shadow">
+        <div class="flex-1 flex justify-between sm:hidden">
+          <%= if @current_page > 1 do %>
+            <.link 
+              navigate={~p"/admin/venues/duplicates?#{%{filter_type: @filter_type, sort_by: @sort_by, page: @current_page - 1}}"}
+              class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+            >
+              Previous
+            </.link>
+          <% end %>
+          <%= if @current_page < ceil(@total_pairs / @per_page) do %>
+            <.link 
+              navigate={~p"/admin/venues/duplicates?#{%{filter_type: @filter_type, sort_by: @sort_by, page: @current_page + 1}}"}
+              class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+            >
+              Next
+            </.link>
+          <% end %>
+        </div>
+        <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+          <div>
+            <p class="text-sm text-gray-700">
+              Showing
+              <span class="font-medium"><%= (@current_page - 1) * @per_page + 1 %></span>
+              to
+              <span class="font-medium"><%= min(@current_page * @per_page, @total_pairs) %></span>
+              of
+              <span class="font-medium"><%= @total_pairs %></span>
+              results
+            </p>
+          </div>
+          <div>
+            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+              <!-- Previous button -->
+              <%= if @current_page > 1 do %>
+                <.link 
+                  navigate={~p"/admin/venues/duplicates?#{%{filter_type: @filter_type, sort_by: @sort_by, page: @current_page - 1}}"}
+                  class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                >
+                  Previous
+                </.link>
+              <% end %>
+              
+              <!-- Page numbers -->
+              <%= for page_num <- max(1, @current_page - 2)..min(ceil(@total_pairs / @per_page), @current_page + 2) do %>
+                <%= if page_num == @current_page do %>
+                  <span class="bg-blue-50 border-blue-500 text-blue-600 relative inline-flex items-center px-4 py-2 border text-sm font-medium">
+                    <%= page_num %>
+                  </span>
+                <% else %>
+                  <.link 
+                    navigate={~p"/admin/venues/duplicates?#{%{filter_type: @filter_type, sort_by: @sort_by, page: page_num}}"}
+                    class="bg-white border-gray-300 text-gray-500 hover:bg-gray-50 relative inline-flex items-center px-4 py-2 border text-sm font-medium"
+                  >
+                    <%= page_num %>
+                  </.link>
+                <% end %>
+              <% end %>
+              
+              <!-- Next button -->
+              <%= if @current_page < ceil(@total_pairs / @per_page) do %>
+                <.link 
+                  navigate={~p"/admin/venues/duplicates?#{%{filter_type: @filter_type, sort_by: @sort_by, page: @current_page + 1}}"}
+                  class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                >
+                  Next
+                </.link>
+              <% end %>
+            </nav>
+          </div>
+        </div>
+      </div>
+    <% end %>
+
+  <% else %>
+    <!-- Detailed Comparison View -->
+    <div class="mb-8">
+      <.link 
+        navigate={~p"/admin/venues/duplicates"}
+        class="inline-flex items-center text-blue-600 hover:text-blue-800 mb-4"
+      >
+        ← Back to duplicates list
+      </.link>
+      <h1 class="text-3xl font-bold text-gray-900">Compare Venues</h1>
+    </div>
+
+    <!-- Similarity Score -->
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+      <h2 class="text-lg font-medium text-gray-900 mb-4">Similarity Analysis</h2>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="text-center">
+          <div class="text-2xl font-bold text-blue-600"><%= @similarity_details.similarity_score %>%</div>
+          <div class="text-sm text-gray-500">Overall Score</div>
+        </div>
+                 <div class="text-center">
+           <div class={"text-lg font-semibold #{if @similarity_details.name_match, do: "text-green-600", else: "text-red-600"}"}>
+             <%= if @similarity_details.name_match, do: "✓", else: "✗" %>
+           </div>
+           <div class="text-sm text-gray-500">Name Match</div>
+         </div>
+         <div class="text-center">
+           <div class={"text-lg font-semibold #{if @similarity_details.postcode_match, do: "text-green-600", else: "text-red-600"}"}>
+             <%= if @similarity_details.postcode_match, do: "✓", else: "✗" %>
+           </div>
+           <div class="text-sm text-gray-500">Postcode Match</div>
+         </div>
+         <div class="text-center">
+           <div class={"text-lg font-semibold #{if @similarity_details.city_match, do: "text-green-600", else: "text-red-600"}"}>
+             <%= if @similarity_details.city_match, do: "✓", else: "✗" %>
+           </div>
+           <div class="text-sm text-gray-500">City Match</div>
+         </div>
+      </div>
+    </div>
+
+    <!-- Side-by-side Comparison -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+      <!-- Venue 1 -->
+      <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">Venue A (ID: <%= @venue1.id %>)</h2>
+        <dl class="space-y-3">
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Name</dt>
+            <dd class="text-lg text-gray-900"><%= @venue1.name %></dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Address</dt>
+            <dd class="text-gray-900">
+              <%= @venue1.address %><br>
+              <%= if @venue1.postcode do %><%= @venue1.postcode %><br><% end %>
+              <%= @venue1.city.name %>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Created</dt>
+            <dd class="text-gray-900"><%= Calendar.strftime(@venue1.inserted_at, "%Y-%m-%d %H:%M") %></dd>
+          </div>
+          <%= if @venue1.website do %>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Website</dt>
+            <dd class="text-gray-900"><%= @venue1.website %></dd>
+          </div>
+          <% end %>
+          <%= if @venue1.phone do %>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Phone</dt>
+            <dd class="text-gray-900"><%= @venue1.phone %></dd>
+          </div>
+          <% end %>
+        </dl>
+      </div>
+
+      <!-- Venue 2 -->
+      <div class="bg-white shadow rounded-lg p-6">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">Venue B (ID: <%= @venue2.id %>)</h2>
+        <dl class="space-y-3">
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Name</dt>
+            <dd class="text-lg text-gray-900"><%= @venue2.name %></dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Address</dt>
+            <dd class="text-gray-900">
+              <%= @venue2.address %><br>
+              <%= if @venue2.postcode do %><%= @venue2.postcode %><br><% end %>
+              <%= @venue2.city.name %>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Created</dt>
+            <dd class="text-gray-900"><%= Calendar.strftime(@venue2.inserted_at, "%Y-%m-%d %H:%M") %></dd>
+          </div>
+          <%= if @venue2.website do %>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Website</dt>
+            <dd class="text-gray-900"><%= @venue2.website %></dd>
+          </div>
+          <% end %>
+          <%= if @venue2.phone do %>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Phone</dt>
+            <dd class="text-gray-900"><%= @venue2.phone %></dd>
+          </div>
+          <% end %>
+        </dl>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="bg-white shadow rounded-lg p-6">
+      <h2 class="text-lg font-medium text-gray-900 mb-4">Actions</h2>
+      <div class="flex flex-wrap gap-4">
+        <div class="flex-1">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">Merge Venues</h3>
+          <div class="flex gap-2">
+            <button 
+              phx-click="merge_venues" 
+              phx-value-primary_id={@venue1.id} 
+              phx-value-secondary_id={@venue2.id}
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              onclick="return confirm('Merge Venue B into Venue A? This cannot be undone.')"
+            >
+              Keep A, Merge B into A
+            </button>
+            <button 
+              phx-click="merge_venues" 
+              phx-value-primary_id={@venue2.id} 
+              phx-value-secondary_id={@venue1.id}
+              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              onclick="return confirm('Merge Venue A into Venue B? This cannot be undone.')"
+            >
+              Keep B, Merge A into B
+            </button>
+          </div>
+        </div>
+        
+        <div class="flex-1">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">Not Duplicate</h3>
+          <button 
+            phx-click="reject_duplicate" 
+            phx-value-venue1_id={@venue1.id} 
+            phx-value-venue2_id={@venue2.id}
+            class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+          >
+            Mark as Not Duplicate
+          </button>
+        </div>
+      </div>
+    </div>
+  <% end %>
+</div> 

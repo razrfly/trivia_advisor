@@ -113,7 +113,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
   def merge_venues(primary_id, secondary_id, options \\ %{}) do
     options = Map.merge(@default_options, options)
 
-    if options.dry_run do
+    if Map.get(options, :dry_run) do
       preview_merge(primary_id, secondary_id, options)
     else
       perform_merge(primary_id, secondary_id, options)
@@ -300,10 +300,10 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       migrate_events_to_primary(secondary.id, primary_id)
     end)
     |> Multi.run(:merge_metadata, fn _repo, %{load_venues: {primary, secondary}} ->
-      merge_venue_metadata(primary, secondary, options.metadata_strategy)
+      merge_venue_metadata(primary, secondary, Map.get(options, :metadata_strategy))
     end)
     |> Multi.run(:soft_delete_secondary, fn _repo, %{load_venues: {_primary, secondary}} ->
-      soft_delete_venue(secondary, primary_id, options.performed_by)
+      soft_delete_venue(secondary, primary_id, Map.get(options, :performed_by))
     end)
     |> Multi.run(:create_log, fn _repo, changes ->
       create_merge_log(primary_id, secondary_id, changes, options)
@@ -425,7 +425,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       merged_into_id: merged_into_id
     }
 
-    changeset = Venue.changeset(venue, attrs)
+    changeset = Venue.soft_delete_changeset(venue, attrs)
     Repo.update(changeset)
   end
 
@@ -434,11 +434,11 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       action_type: "merge",
       primary_venue_id: primary_id,
       secondary_venue_id: secondary_id,
-      performed_by: options.performed_by,
-      notes: options.notes,
+      performed_by: Map.get(options, :performed_by),
+      notes: Map.get(options, :notes),
       metadata: %{
         events_migrated: changes[:migrate_events] || 0,
-        metadata_strategy: options.metadata_strategy,
+        metadata_strategy: Map.get(options, :metadata_strategy),
         changes_made: extract_changes_metadata(changes)
       }
     }
@@ -483,7 +483,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     %{
       events_migrated: length(events),
       metadata_conflicts: length(analyze_metadata_conflicts(primary, secondary)),
-      metadata_updated: options.metadata_strategy != :prefer_primary,
+      metadata_updated: Map.get(options, :metadata_strategy) != :prefer_primary,
       venue_soft_deleted: true
     }
   end
@@ -531,5 +531,46 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
         from(log in q, where: log.inserted_at >= ^start_date and log.inserted_at <= ^end_date)
       _, q -> q
     end)
+  end
+
+  @doc """
+  Creates a log entry to mark two venues as NOT duplicates.
+
+  This prevents the pair from appearing in future duplicate listings
+  by creating a "not_duplicate" log entry that can be referenced by
+  the duplicate detection system.
+
+  ## Parameters
+
+  * `venue1_id` - ID of the first venue
+  * `venue2_id` - ID of the second venue
+  * `options` - Map with performed_by and optional notes
+
+  ## Returns
+
+  Returns `{:ok, log_entry}` on success or `{:error, reason}` on failure.
+
+  ## Examples
+
+      iex> VenueMergeService.create_not_duplicate_log(123, 456, %{performed_by: "admin"})
+      {:ok, %VenueMergeLog{action_type: "not_duplicate", ...}}
+  """
+  @spec create_not_duplicate_log(venue_id(), venue_id(), %{performed_by: String.t(), notes: String.t() | nil}) :: {:ok, VenueMergeLog.t()} | {:error, any()}
+  def create_not_duplicate_log(venue1_id, venue2_id, options) do
+    attrs = %{
+      action_type: "not_duplicate",
+      primary_venue_id: venue1_id,
+      secondary_venue_id: venue2_id,
+      performed_by: options[:performed_by] || "system",
+      notes: options[:notes],
+      metadata: %{
+        marked_at: DateTime.utc_now(),
+        reason: "manually_reviewed"
+      }
+    }
+
+    %VenueMergeLog{}
+    |> VenueMergeLog.changeset(attrs)
+    |> Repo.insert()
   end
 end
