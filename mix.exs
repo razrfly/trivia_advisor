@@ -5,7 +5,7 @@ defmodule TriviaAdvisor.MixProject do
     [
       app: :trivia_advisor,
       version: "0.1.0",
-      elixir: "~> 1.14",
+      elixir: "~> 1.18",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
@@ -32,7 +32,7 @@ defmodule TriviaAdvisor.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-      {:phoenix, "~> 1.7.19"},
+      {:phoenix, "~> 1.7.21"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.10"},
       {:postgrex, ">= 0.0.0"},
@@ -70,7 +70,7 @@ defmodule TriviaAdvisor.MixProject do
       {:decimal, "~> 2.0"},
       {:waffle, "~> 1.1.7"},
       {:waffle_ecto, "~> 0.0.12"},
-      {:ex_aws, "~> 2.5"},
+      {:ex_aws, "~> 2.5.10"},
       {:ex_aws_s3, "~> 2.5"},
       {:sweet_xml, "~> 0.7"},
       {:mogrify, "~> 0.9.3"},
@@ -79,10 +79,10 @@ defmodule TriviaAdvisor.MixProject do
       {:oban, "~> 2.19"},
       {:oban_web, "~> 2.11"},
       {:plug, "~> 1.16"},
-      {:igniter, "~> 0.5", only: [:dev]},
-      {:sentry, "~> 10.8.1"},
+      {:igniter, "~> 0.6.7", only: [:dev]},
+      {:sentry, "~> 11.0"},
       {:hackney, "~> 1.8"},
-      {:ex_cldr, "~> 2.41.0"},
+      {:ex_cldr, "~> 2.42.0"},
       {:ex_cldr_dates_times, "~> 2.22.0"},
       {:ex_cldr_calendars, "~> 2.1.0"},
       {:sitemapper, "~> 0.9"},
