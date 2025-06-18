@@ -16,6 +16,12 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
     case get_venue_by_slug(slug) do
+      {:redirect, venue} ->
+        # This venue was merged, redirect to the primary venue
+        {:ok,
+          socket
+          |> redirect(to: "/venues/#{venue.slug}")}
+
       {:ok, venue} ->
         # Add hero_image_url to venue
         venue = Map.put(venue, :hero_image_url, get_venue_image(venue))
