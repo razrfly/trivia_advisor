@@ -252,6 +252,7 @@ defmodule TriviaAdvisor.Locations do
   end
 
   alias TriviaAdvisor.Locations.Venue
+  alias TriviaAdvisor.Services.VenueDuplicateDetector
 
   @doc """
   Returns the list of venues.
@@ -465,6 +466,186 @@ defmodule TriviaAdvisor.Locations do
   def change_venue(%Venue{} = venue, attrs \\ %{}) do
     Venue.changeset(venue, attrs)
   end
+
+  # =============================================================================
+  # Duplicate Detection Functions
+  # =============================================================================
+
+  @doc """
+  Finds potential duplicate venues for a given venue using fuzzy matching algorithms.
+
+  ## Parameters
+  - venue: The venue to find duplicates for
+  - opts: Optional configuration options
+
+  ## Options
+  - `:threshold` - Minimum similarity score (default: 0.8)
+  - `:exclude_soft_deleted` - Whether to exclude soft-deleted venues (default: true)
+
+  ## Examples
+
+      iex> find_potential_duplicates(venue)
+      [{0.95, %Venue{name: "The Crown"}}, {0.87, %Venue{name: "Crown Pub"}}]
+
+  Returns a list of tuples with {similarity_score, venue} ordered by similarity.
+  """
+  @spec find_potential_duplicates(Venue.t(), Keyword.t()) :: [{float(), Venue.t()}]
+  def find_potential_duplicates(%Venue{} = venue, opts \\ []) do
+    VenueDuplicateDetector.find_potential_duplicates(venue, opts)
+  end
+
+  @doc """
+  Checks if two venues are likely duplicates based on configurable similarity thresholds.
+
+  ## Parameters
+  - venue1: First venue to compare
+  - venue2: Second venue to compare
+  - opts: Optional configuration options
+
+  ## Options
+  - `:name_threshold` - Name similarity threshold (default: 0.85)
+  - `:location_threshold` - Location similarity threshold (default: 0.80)
+
+  ## Examples
+
+      iex> is_duplicate?(venue1, venue2)
+      true
+
+      iex> is_duplicate?(venue1, venue2, name_threshold: 0.9)
+      false
+
+  Returns true if venues are likely duplicates, false otherwise.
+  """
+  @spec is_duplicate?(Venue.t(), Venue.t(), Keyword.t()) :: boolean()
+  def is_duplicate?(%Venue{} = venue1, %Venue{} = venue2, opts \\ []) do
+    VenueDuplicateDetector.is_duplicate?(venue1, venue2, opts)
+  end
+
+  @doc """
+  Calculates similarity score between two venues.
+
+  ## Parameters
+  - venue1: First venue to compare
+  - venue2: Second venue to compare
+  - opts: Optional configuration options
+
+  ## Examples
+
+      iex> calculate_venue_similarity(venue1, venue2)
+      0.85
+
+  Returns a float similarity score between 0.0 and 1.0.
+  """
+  @spec calculate_venue_similarity(Venue.t(), Venue.t(), Keyword.t()) :: float()
+  def calculate_venue_similarity(%Venue{} = venue1, %Venue{} = venue2, opts \\ []) do
+    VenueDuplicateDetector.calculate_similarity_score(venue1, venue2, opts)
+  end
+
+  @doc """
+  Gets all duplicate venue groups from the database view.
+
+  Returns a list of duplicate venue groups with detailed information about each group.
+
+  ## Examples
+
+      iex> get_duplicate_venue_groups()
+      [
+        %{
+          "venue_ids" => [123, 456],
+          "details" => [%{"id" => 123, "name" => "The Crown"}, ...],
+          ...
+        }
+      ]
+  """
+  @spec get_duplicate_venue_groups() :: [map()]
+  def get_duplicate_venue_groups do
+    query = "SELECT * FROM potential_duplicate_venues ORDER BY duplicate_count DESC"
+
+    case Repo.query(query) do
+      {:ok, %{rows: rows, columns: columns}} ->
+        Enum.map(rows, fn row ->
+          Enum.zip(columns, row) |> Enum.into(%{})
+        end)
+      {:error, _} -> []
+    end
+  end
+
+  @doc """
+  Soft deletes a venue and marks it as merged into another venue.
+
+  ## Parameters
+  - venue: The venue to soft delete
+  - merged_into_id: ID of the venue this is being merged into
+  - deleted_by: String identifying who performed the merge
+
+  ## Examples
+
+      iex> soft_delete_venue(duplicate_venue, target_venue.id, "admin@example.com")
+      {:ok, %Venue{}}
+
+  Returns {:ok, venue} if successful, {:error, changeset} if failed.
+  """
+  @spec soft_delete_venue(Venue.t(), integer(), String.t()) :: {:ok, Venue.t()} | {:error, Ecto.Changeset.t()}
+  def soft_delete_venue(%Venue{} = venue, merged_into_id, deleted_by) when is_integer(merged_into_id) and is_binary(deleted_by) do
+    # Update the venue with merge information before soft deleting
+    venue
+    |> Venue.changeset(%{
+      merged_into_id: merged_into_id,
+      deleted_by: deleted_by
+    })
+    |> Repo.update()
+    |> case do
+      {:ok, updated_venue} ->
+        # Now soft delete using ecto_soft_delete
+        Repo.soft_delete(updated_venue)
+      error -> error
+    end
+  end
+
+  # Venue Merge Service Functions
+  # Delegate venue merge functions to the VenueMergeService
+
+  alias TriviaAdvisor.Services.VenueMergeService
+
+  @doc """
+  Merges two venues safely, combining their data and migrating all associations.
+
+  This delegates to VenueMergeService.merge_venues/3 for the actual implementation.
+
+  ## Examples
+
+      iex> merge_venues(123, 456, %{performed_by: "admin"})
+      {:ok, %{success: true, primary_venue_id: 123, ...}}
+  """
+  defdelegate merge_venues(primary_id, secondary_id, options \\ %{}), to: VenueMergeService
+
+  @doc """
+  Previews what would happen during a venue merge without making any changes.
+
+  This delegates to VenueMergeService.preview_merge/3 for the actual implementation.
+  """
+  defdelegate preview_merge(primary_id, secondary_id, options \\ %{}), to: VenueMergeService
+
+  @doc """
+  Rolls back a previous venue merge operation.
+
+  This delegates to VenueMergeService.rollback_merge/2 for the actual implementation.
+  """
+  defdelegate rollback_merge(log_id, options \\ %{}), to: VenueMergeService
+
+  @doc """
+  Determines which of two venues should be the primary in a merge.
+
+  This delegates to VenueMergeService.determine_primary_venue/2 for the actual implementation.
+  """
+  defdelegate determine_primary_venue(venue1_id, venue2_id), to: VenueMergeService
+
+  @doc """
+  Gets a list of all venue merge operations for audit purposes.
+
+  This delegates to VenueMergeService.list_merge_history/2 for the actual implementation.
+  """
+  defdelegate list_merge_history(filters \\ [], limit \\ 100), to: VenueMergeService
 
   def find_or_create_country(country_code) do
     case Repo.get_by(Country, code: country_code) do
