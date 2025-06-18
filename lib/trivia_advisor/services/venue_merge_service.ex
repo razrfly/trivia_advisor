@@ -27,6 +27,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
           notes: String.t() | nil,
           metadata_strategy: :prefer_primary | :prefer_secondary | :combine,
           event_strategy: :migrate_all | :selective,
+          field_overrides: list(atom()) | nil,
           dry_run: boolean()
         }
 
@@ -55,6 +56,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     notes: nil,
     metadata_strategy: :combine,
     event_strategy: :migrate_all,
+    field_overrides: nil,
     dry_run: false
   }
 
@@ -81,6 +83,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
   * `:notes` - Optional notes about the merge operation
   * `:metadata_strategy` - How to handle conflicting metadata (`:prefer_primary`, `:prefer_secondary`, `:combine`)
   * `:event_strategy` - How to handle events (`:migrate_all`, `:selective`)
+  * `:field_overrides` - List of fields to take from secondary venue regardless of strategy (e.g., `[:website, :phone]`)
   * `:dry_run` - If true, returns what would happen without making changes
 
   ## Returns
@@ -103,8 +106,9 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       # With custom strategy
       iex> options = %{
       ...>   performed_by: "admin",
-      ...>   metadata_strategy: :prefer_secondary,
-      ...>   notes: "Merging duplicate Crown pubs"
+      ...>   metadata_strategy: :prefer_primary,
+      ...>   field_overrides: [:website, :phone],
+      ...>   notes: "Merging duplicate Crown pubs, but keeping their updated website"
       ...> }
       iex> VenueMergeService.merge_venues(123, 456, options)
       {:ok, %{...}}
@@ -300,7 +304,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       migrate_events_to_primary(secondary.id, primary_id)
     end)
     |> Multi.run(:merge_metadata, fn _repo, %{load_venues: {primary, secondary}} ->
-      merge_venue_metadata(primary, secondary, Map.get(options, :metadata_strategy))
+              merge_venue_metadata(primary, secondary, Map.get(options, :metadata_strategy), options)
     end)
     |> Multi.run(:soft_delete_secondary, fn _repo, %{load_venues: {_primary, secondary}} ->
       soft_delete_venue(secondary, primary_id, Map.get(options, :performed_by))
@@ -389,7 +393,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
   end
 
   defp analyze_metadata_conflicts(primary, secondary) do
-    conflicting_fields = [:name, :address, :postcode, :phone, :website, :facebook, :instagram]
+    conflicting_fields = [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :slug]
 
     Enum.reduce(conflicting_fields, [], fn field, conflicts ->
       primary_value = Map.get(primary, field)
@@ -408,11 +412,11 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     not is_nil(value1) and not is_nil(value2) and value1 != value2
   end
 
-  defp merge_venue_metadata(primary, secondary, strategy) do
+  defp merge_venue_metadata(primary, secondary, strategy, options) do
     merged_attrs = case strategy do
-      :prefer_primary -> %{}
+      :prefer_primary -> build_override_attrs(secondary, options)
       :prefer_secondary -> build_secondary_attrs(secondary)
-      :combine -> build_combined_attrs(primary, secondary)
+      :combine -> build_combined_attrs(primary, secondary, options)
     end
 
     if map_size(merged_attrs) > 0 do
@@ -425,7 +429,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
 
   defp build_secondary_attrs(secondary) do
     # Take all non-nil values from secondary, including image arrays
-    [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :google_place_images]
+    [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :google_place_images, :slug]
     |> Enum.reduce(%{}, fn field, attrs ->
       case Map.get(secondary, field) do
         nil -> attrs
@@ -435,16 +439,43 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     end)
   end
 
-  defp build_combined_attrs(primary, secondary) do
+  defp build_override_attrs(secondary, options) do
+    # Only take specific fields from secondary when field_overrides is specified
+    field_overrides = Map.get(options, :field_overrides, []) || []
+
+    field_overrides
+    |> Enum.reduce(%{}, fn field, attrs ->
+      case Map.get(secondary, field) do
+        nil -> attrs
+        [] when field == :google_place_images -> attrs  # Skip empty image arrays
+        value -> Map.put(attrs, field, value)
+      end
+    end)
+  end
+
+    defp build_combined_attrs(primary, secondary, options) do
     # Prefer non-nil values, with preference for more complete data
-    [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :google_place_images]
+    field_overrides = Map.get(options, :field_overrides, []) || []
+
+    [:name, :address, :postcode, :phone, :website, :facebook, :instagram, :google_place_images, :slug]
     |> Enum.reduce(%{}, fn field, attrs ->
       primary_value = Map.get(primary, field)
       secondary_value = Map.get(secondary, field)
 
-      case choose_better_value(primary_value, secondary_value, field) do
-        ^primary_value -> attrs  # No change needed
-        better_value -> Map.put(attrs, field, better_value)
+      # If this field is in overrides, always use secondary value (if not nil)
+      if field in field_overrides and not is_nil(secondary_value) do
+        # Skip empty image arrays
+        if field == :google_place_images and secondary_value == [] do
+          attrs
+        else
+          Map.put(attrs, field, secondary_value)
+        end
+      else
+        # Use normal logic for non-overridden fields
+        case choose_better_value(primary_value, secondary_value, field) do
+          ^primary_value -> attrs  # No change needed
+          better_value -> Map.put(attrs, field, better_value)
+        end
       end
     end)
   end
@@ -465,6 +496,14 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
       images -> images
     end
   end
+  defp choose_better_value(primary, secondary, :slug) do
+    # Prefer better quality slugs - shorter is generally better for SEO
+    # Also prefer slugs without trailing numbers (which often indicate duplicates)
+    primary_score = calculate_slug_score(primary)
+    secondary_score = calculate_slug_score(secondary)
+
+    if secondary_score > primary_score, do: secondary, else: primary
+  end
   defp choose_better_value(primary, secondary, _field) do
     # Prefer longer/more complete values for text fields
     if String.length(to_string(secondary)) > String.length(to_string(primary)) do
@@ -474,7 +513,7 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     end
   end
 
-      defp soft_delete_venue(venue, merged_into_id, performed_by) do
+  defp soft_delete_venue(venue, merged_into_id, performed_by) do
     # Since ecto_soft_delete only handles deleted_at, we need to update other fields manually
     attrs = %{
       deleted_at: DateTime.utc_now(),
@@ -513,6 +552,32 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     }
   end
 
+  defp calculate_slug_score(slug) when is_nil(slug), do: 0
+  defp calculate_slug_score(slug) do
+    base_score = 5  # Base score for having a slug
+
+    # Prefer shorter slugs (within reason)
+    length_score = case String.length(slug) do
+      len when len <= 20 -> 3  # Short, clean slugs
+      len when len <= 35 -> 2  # Reasonable length
+      len when len <= 50 -> 1  # Getting long
+      _ -> 0  # Too long
+    end
+
+    # Penalize slugs with trailing numbers (often indicate duplicates)
+    number_penalty = if Regex.match?(~r/-\d+$/, slug), do: -2, else: 0
+
+    # Bonus for clean, readable slugs (no excessive dashes)
+    dash_penalty = case Regex.scan(~r/-/, slug) |> length() do
+      count when count <= 3 -> 0   # Normal number of dashes
+      count when count <= 6 -> -1  # Getting wordy
+      _ -> -2  # Too many dashes
+    end
+
+    # Ensure minimum score is 0
+    max(0, base_score + length_score + number_penalty + dash_penalty)
+  end
+
   defp calculate_venue_score(venue) do
     # Preload events for scoring
     venue = Repo.preload(venue, :events)
@@ -533,14 +598,29 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
     # Place ID bonus (5 points for having Google Place ID)
     place_id_score = if venue.place_id, do: 5, else: 0
 
-    base_score + data_score + event_score + recency_score + place_id_score
+    # Slug quality score (up to 10 points for better slugs)
+    slug_score = calculate_slug_score(venue.slug)
+
+    base_score + data_score + event_score + recency_score + place_id_score + slug_score
   end
 
-  defp calculate_estimated_changes(primary, secondary, events, options) do
+    defp calculate_estimated_changes(primary, secondary, events, options) do
+    field_overrides = Map.get(options, :field_overrides, []) || []
+    strategy = Map.get(options, :metadata_strategy, :combine)
+
+    # Calculate which fields would actually change
+    metadata_changes = case strategy do
+      :prefer_primary -> build_override_attrs(secondary, options)
+      :prefer_secondary -> build_secondary_attrs(secondary)
+      :combine -> build_combined_attrs(primary, secondary, options)
+    end
+
     %{
       events_migrated: length(events),
       metadata_conflicts: length(analyze_metadata_conflicts(primary, secondary)),
-      metadata_updated: Map.get(options, :metadata_strategy) != :prefer_primary,
+      metadata_updated: map_size(metadata_changes) > 0,
+      field_overrides_applied: field_overrides,
+      fields_that_will_change: Map.keys(metadata_changes),
       venue_soft_deleted: true
     }
   end
