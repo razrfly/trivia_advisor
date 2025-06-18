@@ -119,13 +119,14 @@ defmodule TriviaAdvisor.Sitemap do
     end)
   end
 
-  # Returns a stream of all venues
+  # Returns a stream of all venues (excluding soft-deleted venues)
   defp venue_urls do
     # Join venues with events and event_sources to get the latest last_seen_at
-    # for each venue in a single query
+    # for each venue in a single query, excluding soft-deleted venues
     query = from v in Venue,
       left_join: e in Event, on: e.venue_id == v.id,
       left_join: es in EventSource, on: es.event_id == e.id,
+      where: is_nil(v.deleted_at),
       group_by: [v.id, v.slug, v.updated_at],
       select: %{
         id: v.id,

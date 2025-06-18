@@ -298,7 +298,17 @@ defmodule TriviaAdvisor.Locations do
 
   """
   def get_venue_by_slug(slug) when is_binary(slug) do
-    Repo.get_by(Venue, slug: slug)
+    from(v in Venue, where: v.slug == ^slug and is_nil(v.deleted_at))
+    |> Repo.one()
+  end
+
+  @doc """
+  Gets a venue by slug, including soft-deleted ones.
+  Used for handling redirects when venues have been merged.
+  """
+  def get_venue_by_slug_with_deleted(slug) when is_binary(slug) do
+    from(v in Venue, where: v.slug == ^slug and not is_nil(v.deleted_at))
+    |> Repo.one()
   end
 
   @doc """

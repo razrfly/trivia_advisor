@@ -8,15 +8,30 @@ defmodule TriviaAdvisorWeb.Live.Venue.Helpers.VenueShowHelpers do
   # Helper functions
   def get_venue_by_slug(slug) do
     try do
-      # Try to get venue from database using slug
-      venue = Locations.get_venue_by_slug(slug)
-      |> Locations.load_venue_relations()
-      |> TriviaAdvisor.Repo.preload(city: :country)
-
-      if venue do
-        {:ok, venue}
-      else
-        {:error, :not_found}
+      # First try to get active (non-deleted) venue
+      case Locations.get_venue_by_slug(slug) do
+        nil ->
+          # Check if this is a soft-deleted venue that was merged
+          case Locations.get_venue_by_slug_with_deleted(slug) do
+            %{deleted_at: deleted_at, merged_into_id: merged_id} when not is_nil(deleted_at) and not is_nil(merged_id) ->
+              # This venue was merged, get the primary venue
+              try do
+                primary_venue = Locations.get_venue!(merged_id)
+                loaded_venue = primary_venue
+                |> Locations.load_venue_relations()
+                |> TriviaAdvisor.Repo.preload(city: :country)
+                {:redirect, loaded_venue}
+              rescue
+                _ -> {:error, :not_found}
+              end
+            _ ->
+              {:error, :not_found}
+          end
+        venue ->
+          loaded_venue = venue
+          |> Locations.load_venue_relations()
+          |> TriviaAdvisor.Repo.preload(city: :country)
+          {:ok, loaded_venue}
       end
     rescue
       e ->
