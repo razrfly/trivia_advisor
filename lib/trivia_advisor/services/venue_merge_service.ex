@@ -338,12 +338,54 @@ defmodule TriviaAdvisor.Services.VenueMergeService do
   end
 
   defp migrate_events_to_primary(secondary_id, primary_id) do
-    query = from(e in Event, where: e.venue_id == ^secondary_id)
+    # Get all events from secondary venue
+    secondary_events = from(e in Event, where: e.venue_id == ^secondary_id) |> Repo.all()
 
-    case Repo.update_all(query, set: [venue_id: primary_id, updated_at: DateTime.utc_now()]) do
-      {count, _} -> {:ok, count}
-      error -> {:error, error}
+    # Get existing events from primary venue to check for conflicts
+    existing_primary_events = from(e in Event,
+      where: e.venue_id == ^primary_id,
+      select: {e.day_of_week, e.start_time}
+    ) |> Repo.all() |> MapSet.new()
+
+    # Split events into those that can be migrated vs those that conflict
+    {migratable_events, conflicting_events} =
+      Enum.split_with(secondary_events, fn event ->
+        not MapSet.member?(existing_primary_events, {event.day_of_week, event.start_time})
+      end)
+
+    # Migrate non-conflicting events
+    migrated_count = if length(migratable_events) > 0 do
+      migratable_ids = Enum.map(migratable_events, & &1.id)
+      query = from(e in Event, where: e.id in ^migratable_ids)
+
+      case Repo.update_all(query, set: [venue_id: primary_id, updated_at: DateTime.utc_now()]) do
+        {count, _} -> count
+        _ -> 0
+      end
+    else
+      0
     end
+
+    # Delete conflicting events from secondary venue
+    # (Primary venue events take precedence)
+    deleted_count = if length(conflicting_events) > 0 do
+      conflicting_ids = Enum.map(conflicting_events, & &1.id)
+      query = from(e in Event, where: e.id in ^conflicting_ids)
+
+      case Repo.delete_all(query) do
+        {count, _} -> count
+        _ -> 0
+      end
+    else
+      0
+    end
+
+    # Log the conflict resolution if there were conflicts
+    if deleted_count > 0 do
+      Logger.info("Venue merge: Deleted #{deleted_count} conflicting events from secondary venue #{secondary_id}, migrated #{migrated_count} events to primary venue #{primary_id}")
+    end
+
+    {:ok, migrated_count}
   end
 
   defp analyze_metadata_conflicts(primary, secondary) do
