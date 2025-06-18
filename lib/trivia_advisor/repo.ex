@@ -3,6 +3,8 @@ defmodule TriviaAdvisor.Repo do
     otp_app: :trivia_advisor,
     adapter: Ecto.Adapters.Postgres
 
+  use Ecto.SoftDelete.Repo
+
   require Logger
 
   @doc """

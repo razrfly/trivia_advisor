@@ -1,5 +1,6 @@
 defmodule TriviaAdvisor.Locations.Venue do
   use Ecto.Schema
+  import Ecto.SoftDelete.Schema
   import Ecto.Changeset
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Services.GooglePlaceImageStore
@@ -23,6 +24,7 @@ defmodule TriviaAdvisor.Locations.Venue do
     has_many :events, TriviaAdvisor.Events.Event
 
     timestamps(type: :utc_datetime)
+    soft_delete_schema()
   end
 
   @url_regex ~r/^https?:\/\/[^\s\/$.?#].[^\s]*$/i
