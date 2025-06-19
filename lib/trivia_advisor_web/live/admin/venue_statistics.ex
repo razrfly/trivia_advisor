@@ -73,43 +73,30 @@ defmodule TriviaAdvisorWeb.Live.Admin.VenueStatistics do
     # Get all sources first
     sources = Repo.all(Source)
 
-    # Get venue counts per source in a single query
-    venue_counts = from(s in Source,
-      left_join: v in Venue,
-        on: true,
-      left_join: e in Event,
-        on: e.venue_id == v.id,
-      left_join: es in EventSource,
-        on: es.event_id == e.id and es.source_id == s.id,
-      where: not is_nil(es.source_id),
-      group_by: s.id,
-      select: {s.id, count(v.id, :distinct)}
+    # Get venue counts per source - optimized to avoid Cartesian product
+    venue_counts = from(es in EventSource,
+      join: e in Event, on: e.id == es.event_id,
+      join: v in Venue, on: v.id == e.venue_id,
+      group_by: es.source_id,
+      select: {es.source_id, count(v.id, :distinct)}
     ) |> Repo.all() |> Map.new()
 
-    # Get active venue counts (last 30 days)
-    active_counts = from(s in Source,
-      left_join: v in Venue,
-        on: true,
-      left_join: e in Event,
-        on: e.venue_id == v.id,
-      left_join: es in EventSource,
-        on: es.event_id == e.id and es.source_id == s.id,
-      where: not is_nil(es.source_id) and es.last_seen_at >= ^thirty_days_ago,
-      group_by: s.id,
-      select: {s.id, count(v.id, :distinct)}
+    # Get active venue counts (last 30 days) - optimized
+    active_counts = from(es in EventSource,
+      join: e in Event, on: e.id == es.event_id,
+      join: v in Venue, on: v.id == e.venue_id,
+      where: es.last_seen_at >= ^thirty_days_ago,
+      group_by: es.source_id,
+      select: {es.source_id, count(v.id, :distinct)}
     ) |> Repo.all() |> Map.new()
 
-    # Get new venue counts (inserted in last 30 days)
-    new_counts = from(s in Source,
-      left_join: v in Venue,
-        on: true,
-      left_join: e in Event,
-        on: e.venue_id == v.id,
-      left_join: es in EventSource,
-        on: es.event_id == e.id and es.source_id == s.id,
-      where: not is_nil(es.source_id) and v.inserted_at >= ^thirty_days_ago,
-      group_by: s.id,
-      select: {s.id, count(v.id, :distinct)}
+    # Get new venue counts (inserted in last 30 days) - optimized
+    new_counts = from(es in EventSource,
+      join: e in Event, on: e.id == es.event_id,
+      join: v in Venue, on: v.id == e.venue_id,
+      where: v.inserted_at >= ^thirty_days_ago,
+      group_by: es.source_id,
+      select: {es.source_id, count(v.id, :distinct)}
     ) |> Repo.all() |> Map.new()
 
     # Calculate stale venues (total - active)
