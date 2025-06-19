@@ -2,6 +2,7 @@ defmodule TriviaAdvisor.Locations.Venue do
   use Ecto.Schema
   import Ecto.SoftDelete.Schema
   import Ecto.Changeset
+  import Ecto.Query
   alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Services.GooglePlaceImageStore
 
@@ -119,7 +120,11 @@ defmodule TriviaAdvisor.Locations.Venue do
   end
 
   defp slug_exists?(slug) do
-    case Repo.get_by(__MODULE__, slug: slug, deleted_at: nil) do
+    from(v in __MODULE__,
+      where: v.slug == ^slug and is_nil(v.deleted_at)
+    )
+    |> Repo.one()
+    |> case do
       nil -> false
       _ -> true
     end

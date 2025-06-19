@@ -45,32 +45,34 @@
         <div class="flex flex-wrap gap-4 items-center">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">Filter by confidence:</label>
-            <select 
-              phx-change="filter" 
-              name="filter_type" 
-              class="border border-gray-300 rounded-md px-3 py-2 bg-white"
-              value={@filter_type}
-            >
-              <option value="all">All confidence levels</option>
-              <option value="high_confidence">High confidence (90%+)</option>
-              <option value="medium_confidence">Medium confidence (75-89%)</option>
-              <option value="low_confidence">Low confidence (&lt;75%)</option>
-            </select>
+            <form phx-change="filter">
+              <select 
+                name="filter_type" 
+                class="border border-gray-300 rounded-md px-3 py-2 bg-white"
+                value={@filter_type}
+              >
+                <option value="all" selected={@filter_type == "all"}>All confidence levels</option>
+                <option value="high_confidence" selected={@filter_type == "high_confidence"}>High confidence (90%+)</option>
+                <option value="medium_confidence" selected={@filter_type == "medium_confidence"}>Medium confidence (75-89%)</option>
+                <option value="low_confidence" selected={@filter_type == "low_confidence"}>Low confidence (&lt;75%)</option>
+              </select>
+            </form>
           </div>
 
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">Sort by:</label>
-            <select 
-              phx-change="sort" 
-              name="sort_by" 
-              class="border border-gray-300 rounded-md px-3 py-2 bg-white"
-              value={@sort_by}
-            >
-              <option value="confidence">Confidence Score</option>
-              <option value="name">Name</option>
-              <option value="name_similarity">Name Similarity</option>
-              <option value="location_similarity">Location Similarity</option>
-            </select>
+            <form phx-change="sort">
+              <select 
+                name="sort_by" 
+                class="border border-gray-300 rounded-md px-3 py-2 bg-white"
+                value={@sort_by}
+              >
+                <option value="confidence" selected={@sort_by == "confidence"}>Confidence Score</option>
+                <option value="name" selected={@sort_by == "name"}>Name</option>
+                <option value="name_similarity" selected={@sort_by == "name_similarity"}>Name Similarity</option>
+                <option value="location_similarity" selected={@sort_by == "location_similarity"}>Location Similarity</option>
+              </select>
+            </form>
           </div>
 
           <div class="flex-1 flex items-center justify-end gap-4">
@@ -114,15 +116,74 @@
       </div>
     <% end %>
 
+    <!-- Batch Processing Controls -->
+    <%= if @view_type == "fuzzy" and length(@duplicate_pairs) > 0 do %>
+      <div class="bg-white shadow rounded-lg p-4 mb-6">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-4">
+            <label class="flex items-center">
+              <input 
+                type="checkbox" 
+                phx-click="toggle_select_all"
+                phx-value-checked={if @select_all, do: "true", else: "false"}
+                checked={@select_all}
+                class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              />
+              <span class="ml-2 text-sm font-medium text-gray-700">
+                Select All (<%= MapSet.size(@selected_pairs) %> selected)
+              </span>
+            </label>
+          </div>
+          
+          <div class="flex items-center gap-2">
+            <%= if MapSet.size(@selected_pairs) > 0 do %>
+              <button
+                phx-click="batch_merge"
+                onclick={"return confirm('Merge #{MapSet.size(@selected_pairs)} selected venue pairs? This cannot be undone.')"}
+                class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+              >
+                🔗 Merge Selected (<%= MapSet.size(@selected_pairs) %>)
+              </button>
+              
+              <button
+                phx-click="batch_reject"
+                onclick={"return confirm('Mark #{MapSet.size(@selected_pairs)} selected pairs as not duplicates?')"}
+                class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+              >
+                ❌ Reject Selected (<%= MapSet.size(@selected_pairs) %>)
+              </button>
+            <% else %>
+              <span class="text-sm text-gray-500">Select pairs to enable batch actions</span>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    <% end %>
+
     <!-- Duplicate Pairs List -->
     <div class="bg-white shadow overflow-hidden rounded-lg">
       <div class="px-4 py-5 sm:p-6">
         <%= if length(@duplicate_pairs) > 0 do %>
           <div class="space-y-4">
             <%= for pair <- @duplicate_pairs do %>
+              <% pair_id = "#{pair.venue1_id}-#{pair.venue2_id}" %>
               <div class="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
                 <div class="flex items-start justify-between">
-                  <div class="flex-1">
+                  <div class={"#{if @view_type == "fuzzy", do: "flex items-start gap-3", else: "flex-1"}"}>
+                    <%= if @view_type == "fuzzy" do %>
+                      <!-- Checkbox for batch selection -->
+                      <label class="flex items-center mt-1">
+                        <input 
+                          type="checkbox" 
+                          phx-click="toggle_pair_selection"
+                          phx-value-pair_id={pair_id}
+                          phx-value-checked={if MapSet.member?(@selected_pairs, pair_id), do: "true", else: "false"}
+                          checked={MapSet.member?(@selected_pairs, pair_id)}
+                          class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+                        />
+                      </label>
+                    <% end %>
+                    <div class="flex-1">
                     <!-- Score/Match Info Header -->
                     <div class="mb-3 flex items-center gap-4">
                       <%= if @view_type == "fuzzy" do %>
@@ -180,6 +241,7 @@
                           <p class="text-sm text-gray-600">Postcode: <%= pair.venue2_postcode %></p>
                         <% end %>
                       </div>
+                    </div>
                     </div>
                   </div>
 

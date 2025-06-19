@@ -40,7 +40,9 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     |> assign(:sort_by, sort_by)
     |> assign(:current_page, page)
     |> assign(:total_pairs, total_pairs)
-    |> assign(:per_page, 10)
+    |> assign(:per_page, 50)
+    |> assign(:selected_pairs, MapSet.new())
+    |> assign(:select_all, false)
   end
 
       defp apply_action(socket, :show, %{"venue1_id" => venue1_id, "venue2_id" => venue2_id}) do
@@ -277,9 +279,160 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     end
   end
 
+  # Batch processing event handlers
+  def handle_event("toggle_select_all", %{"checked" => checked}, socket) do
+    checked = checked == "true"
+
+    selected_pairs = if checked do
+      socket.assigns.duplicate_pairs
+      |> Enum.map(fn pair -> "#{pair.venue1_id}-#{pair.venue2_id}" end)
+      |> MapSet.new()
+    else
+      MapSet.new()
+    end
+
+    {:noreply,
+     socket
+     |> assign(:selected_pairs, selected_pairs)
+     |> assign(:select_all, checked)}
+  end
+
+  def handle_event("toggle_pair_selection", %{"pair_id" => pair_id, "checked" => checked}, socket) do
+    checked = checked == "true"
+    current_selected = socket.assigns.selected_pairs
+
+    new_selected = if checked do
+      MapSet.put(current_selected, pair_id)
+    else
+      MapSet.delete(current_selected, pair_id)
+    end
+
+    # Update select_all based on whether all visible pairs are selected
+    all_pairs_on_page = socket.assigns.duplicate_pairs
+                       |> Enum.map(fn pair -> "#{pair.venue1_id}-#{pair.venue2_id}" end)
+                       |> MapSet.new()
+
+    select_all = MapSet.subset?(all_pairs_on_page, new_selected)
+
+    {:noreply,
+     socket
+     |> assign(:selected_pairs, new_selected)
+     |> assign(:select_all, select_all)}
+  end
+
+  def handle_event("batch_merge", _params, socket) do
+    selected_pairs = socket.assigns.selected_pairs
+
+    if MapSet.size(selected_pairs) == 0 do
+      {:noreply, put_flash(socket, :error, "No pairs selected for batch merge")}
+    else
+      # Process each selected pair for merging
+      results = selected_pairs
+                |> Enum.map(&process_batch_merge/1)
+                |> Enum.reduce(%{success: 0, errors: []}, fn result, acc ->
+                  case result do
+                    {:ok, _} -> %{acc | success: acc.success + 1}
+                    {:error, error} -> %{acc | errors: [error | acc.errors]}
+                  end
+                end)
+
+      message = if length(results.errors) == 0 do
+        "Successfully merged #{results.success} venue pairs!"
+      else
+        "Merged #{results.success} pairs. #{length(results.errors)} errors occurred: #{Enum.join(results.errors, ", ")}"
+      end
+
+      flash_type = if length(results.errors) == 0, do: :info, else: :error
+
+      {:noreply,
+       socket
+       |> put_flash(flash_type, message)
+       |> assign(:selected_pairs, MapSet.new())
+       |> assign(:select_all, false)
+       |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: socket.assigns.sort_by, page: socket.assigns.current_page}}")}
+    end
+  end
+
+  def handle_event("batch_reject", _params, socket) do
+    selected_pairs = socket.assigns.selected_pairs
+
+    if MapSet.size(selected_pairs) == 0 do
+      {:noreply, put_flash(socket, :error, "No pairs selected for batch reject")}
+    else
+      # Process each selected pair for rejection
+      results = selected_pairs
+                |> Enum.map(&process_batch_reject/1)
+                |> Enum.reduce(%{success: 0, errors: []}, fn result, acc ->
+                  case result do
+                    {:ok, _} -> %{acc | success: acc.success + 1}
+                    {:error, error} -> %{acc | errors: [error | acc.errors]}
+                  end
+                end)
+
+      message = if length(results.errors) == 0 do
+        "Successfully rejected #{results.success} venue pairs!"
+      else
+        "Rejected #{results.success} pairs. #{length(results.errors)} errors occurred: #{Enum.join(results.errors, ", ")}"
+      end
+
+      flash_type = if length(results.errors) == 0, do: :info, else: :error
+
+      {:noreply,
+       socket
+       |> put_flash(flash_type, message)
+       |> assign(:selected_pairs, MapSet.new())
+       |> assign(:select_all, false)
+       |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: socket.assigns.sort_by, page: socket.assigns.current_page}}")}
+    end
+  end
+
+  # Private helper functions for batch processing
+  defp process_batch_merge(pair_id) do
+    [venue1_id, venue2_id] = String.split(pair_id, "-") |> Enum.map(&String.to_integer/1)
+
+    merge_options = %{
+      performed_by: "admin_user",
+      metadata_strategy: :prefer_primary,
+      field_overrides: [],
+      notes: "Batch merge operation"
+    }
+
+    case VenueMergeService.merge_venues(venue1_id, venue2_id, merge_options) do
+      {:ok, _result} -> {:ok, "Merged venues #{venue1_id} and #{venue2_id}"}
+      {:error, reason} -> {:error, "Failed to merge #{venue1_id}-#{venue2_id}: #{inspect(reason)}"}
+    end
+  end
+
+  defp process_batch_reject(pair_id) do
+    [venue1_id, venue2_id] = String.split(pair_id, "-") |> Enum.map(&String.to_integer/1)
+
+    # Find the fuzzy duplicate record for these venues
+    fuzzy_duplicate = TriviaAdvisor.Repo.one(
+      from fd in VenueFuzzyDuplicate,
+      where: (fd.venue1_id == ^venue1_id and fd.venue2_id == ^venue2_id) or
+             (fd.venue1_id == ^venue2_id and fd.venue2_id == ^venue1_id),
+      where: fd.status == "pending"
+    )
+
+    case fuzzy_duplicate do
+      nil -> {:error, "Duplicate record not found for #{venue1_id}-#{venue2_id}"}
+      duplicate ->
+        changeset = VenueFuzzyDuplicate.changeset(duplicate, %{
+          status: "rejected",
+          reviewed_at: DateTime.utc_now(),
+          reviewed_by: "admin_user"
+        })
+
+        case TriviaAdvisor.Repo.update(changeset) do
+          {:ok, _} -> {:ok, "Rejected pair #{venue1_id}-#{venue2_id}"}
+          {:error, reason} -> {:error, "Failed to reject #{venue1_id}-#{venue2_id}: #{inspect(reason)}"}
+        end
+    end
+  end
+
   # Load fuzzy duplicate pairs with confidence scoring, filtering, sorting, and pagination
   defp load_fuzzy_duplicate_pairs(filter_type, sort_by, page) do
-    offset = (page - 1) * 10
+    offset = (page - 1) * 50
 
     base_query = from fd in VenueFuzzyDuplicate,
       join: v1 in Locations.Venue, on: v1.id == fd.venue1_id,
@@ -322,7 +475,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
 
     # Apply pagination
     sorted_query
-    |> limit(10)
+    |> limit(50)
     |> offset(^offset)
     |> TriviaAdvisor.Repo.all()
   end
@@ -349,7 +502,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
 
   # Load simple duplicate pairs from SQL view (legacy system)
   defp load_simple_duplicate_pairs(page) do
-    offset = (page - 1) * 10
+    offset = (page - 1) * 50
 
     try do
       result = TriviaAdvisor.Repo.query!("""
@@ -369,7 +522,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
           ARRAY[duplicate_type] as match_criteria
         FROM potential_duplicate_venues
         ORDER BY venue1_name
-        LIMIT 10 OFFSET $1
+        LIMIT 50 OFFSET $1
       """, [offset])
 
       Enum.map(result.rows, fn row ->
