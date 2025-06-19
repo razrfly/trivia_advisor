@@ -15,6 +15,9 @@ defmodule TriviaAdvisor.Release do
     # Create duplicate detection view after migrations
     create_duplicate_view()
 
+    # Process fuzzy duplicates with AI detection after migrations
+    process_fuzzy_duplicates()
+
     # Run seeds after migrations
     seed()
   end
