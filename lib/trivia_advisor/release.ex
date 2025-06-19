@@ -79,15 +79,16 @@ defmodule TriviaAdvisor.Release do
 
     try do
       for repo <- repos() do
-        {:ok, _, _} = Ecto.Migrator.with_repo(repo, fn _repo ->
-          TriviaAdvisor.Repo.query!(sql)
+        {:ok, _, _} = Ecto.Migrator.with_repo(repo, fn repo ->
+          repo.query!(sql)
         end)
       end
 
       IO.puts("✅ potential_duplicate_venues view created successfully")
 
-      # Query and display duplicate count
-      result = TriviaAdvisor.Repo.query!("SELECT COUNT(*) as count FROM potential_duplicate_venues")
+      # Query and display duplicate count for the primary repo
+      primary_repo = hd(repos())
+      result = primary_repo.query!("SELECT COUNT(*) as count FROM potential_duplicate_venues")
       count = result.rows |> List.first() |> List.first()
 
       IO.puts("📊 Found #{count} duplicate venue pairs")
@@ -100,6 +101,56 @@ defmodule TriviaAdvisor.Release do
       e ->
         IO.puts("❌ Failed to create view: #{inspect(e)}")
         # Don't exit on error in production - log and continue
+    end
+  end
+
+  @doc """
+  Process all venues to find fuzzy duplicates using AI detection.
+  This replaces the simple SQL view with sophisticated duplicate detection.
+  """
+  def process_fuzzy_duplicates do
+    load_app()
+
+    IO.puts("🤖 Processing fuzzy duplicates with AI detection...")
+
+    try do
+      alias TriviaAdvisor.Services.FuzzyDuplicateProcessor
+
+      # Clear existing records and reprocess
+      options = [
+        clear_existing: true,
+        min_confidence: 0.70,
+        batch_size: 100
+      ]
+
+      result = FuzzyDuplicateProcessor.process_all_venues(options)
+
+      case result do
+        {:ok, stats} ->
+          IO.puts("✅ Fuzzy duplicate processing completed successfully")
+          IO.puts("📊 Processed #{stats.venues_processed} venues")
+          IO.puts("📊 Found #{stats.duplicates_found} potential duplicates")
+          IO.puts("📊 Stored #{stats.duplicates_stored} high-confidence pairs")
+
+          # Show statistics
+          final_stats = FuzzyDuplicateProcessor.get_statistics()
+          IO.puts("\n📈 FINAL STATISTICS:")
+          IO.puts("   Total pairs: #{final_stats[:total]}")
+          IO.puts("   High confidence (90%+): #{final_stats[:high_confidence]}")
+          IO.puts("   Medium confidence (75-89%): #{final_stats[:medium_confidence]}")
+          IO.puts("   Low confidence (<75%): #{final_stats[:low_confidence]}")
+          if final_stats[:avg_confidence] do
+            IO.puts("   Average confidence: #{Float.round(final_stats[:avg_confidence], 1)}%")
+          end
+
+          IO.puts("\n💡 Visit /admin/venues/duplicates to review and manage fuzzy duplicates")
+
+        error ->
+          IO.puts("❌ Error processing fuzzy duplicates: #{inspect(error)}")
+      end
+    rescue
+      e ->
+        IO.puts("❌ Error processing fuzzy duplicates: #{inspect(e)}")
     end
   end
 

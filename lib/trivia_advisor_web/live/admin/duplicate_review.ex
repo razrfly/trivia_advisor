@@ -2,7 +2,10 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   use TriviaAdvisorWeb, :live_view
 
   alias TriviaAdvisor.Locations
+  alias TriviaAdvisor.Locations.Venue
+  alias TriviaAdvisor.Locations.VenueFuzzyDuplicate
   alias TriviaAdvisor.Services.VenueMergeService
+  import Ecto.Query, warn: false
 
   @impl true
   def mount(_params, _session, socket) do
@@ -16,29 +19,43 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
 
   defp apply_action(socket, :index, params) do
     filter_type = params["filter_type"] || "all"
-    sort_by = params["sort_by"] || "name"
+    sort_by = params["sort_by"] || "confidence"
     page = String.to_integer(params["page"] || "1")
 
     socket
-    |> assign(:page_title, "Duplicate Venues")
-    |> assign(:duplicate_pairs, load_duplicate_pairs(filter_type, sort_by, page))
+    |> assign(:page_title, "Fuzzy Duplicate Venues")
+    |> assign(:duplicate_pairs, load_fuzzy_duplicate_pairs(filter_type, sort_by, page))
     |> assign(:filter_type, filter_type)
     |> assign(:sort_by, sort_by)
     |> assign(:current_page, page)
-    |> assign(:total_pairs, count_duplicate_pairs(filter_type))
+    |> assign(:total_pairs, count_fuzzy_duplicate_pairs(filter_type))
     |> assign(:per_page, 10)
   end
 
-  defp apply_action(socket, :show, %{"venue1_id" => venue1_id, "venue2_id" => venue2_id}) do
-    venue1 = Locations.get_venue!(venue1_id) |> TriviaAdvisor.Repo.preload(:city)
-    venue2 = Locations.get_venue!(venue2_id) |> TriviaAdvisor.Repo.preload(:city)
+      defp apply_action(socket, :show, %{"venue1_id" => venue1_id, "venue2_id" => venue2_id}) do
+    # Use Repo.get instead of get! to handle cases where venues were already merged/deleted
+    venue1 = TriviaAdvisor.Repo.get(Venue, venue1_id)
+    venue2 = TriviaAdvisor.Repo.get(Venue, venue2_id)
 
-    socket
-    |> assign(:page_title, "Compare Venues")
-    |> assign(:venue1, venue1)
-    |> assign(:venue2, venue2)
-    |> assign(:similarity_details, calculate_similarity_details(venue1, venue2))
-    |> assign(:field_overrides, [])
+    # If either venue is missing, clean up the orphaned duplicate records and redirect
+    if is_nil(venue1) or is_nil(venue2) do
+      cleanup_orphaned_duplicates(venue1_id, venue2_id)
+
+      socket
+      |> put_flash(:info, "This duplicate pair was already resolved - venues may have been merged or deleted.")
+      |> push_navigate(to: ~p"/admin/venues/duplicates")
+    else
+      # Preload city data for both venues
+      venue1 = TriviaAdvisor.Repo.preload(venue1, :city)
+      venue2 = TriviaAdvisor.Repo.preload(venue2, :city)
+
+      socket
+      |> assign(:page_title, "Compare Venues")
+      |> assign(:venue1, venue1)
+      |> assign(:venue2, venue2)
+      |> assign(:similarity_details, calculate_similarity_details(venue1, venue2))
+      |> assign(:field_overrides, [])
+    end
   end
 
   @impl true
@@ -103,117 +120,145 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     end
   end
 
+  def handle_event("reject_duplicate", %{"fuzzy_duplicate_id" => fuzzy_duplicate_id}, socket) do
+    fuzzy_duplicate_id = String.to_integer(fuzzy_duplicate_id)
+
+    case TriviaAdvisor.Repo.get(VenueFuzzyDuplicate, fuzzy_duplicate_id) do
+      nil ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Fuzzy duplicate not found")}
+
+      fuzzy_duplicate ->
+        changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
+          status: "rejected",
+          reviewed_at: DateTime.utc_now(),
+          reviewed_by: "admin_user"
+        })
+
+        case TriviaAdvisor.Repo.update(changeset) do
+          {:ok, _updated} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
+             |> push_navigate(to: ~p"/admin/venues/duplicates")}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+        end
+    end
+  end
+
   def handle_event("reject_duplicate", %{"venue1_id" => venue1_id, "venue2_id" => venue2_id}, socket) do
-    # Create a log entry to track that these venues are not duplicates
     venue1_id = String.to_integer(venue1_id)
     venue2_id = String.to_integer(venue2_id)
 
-    case VenueMergeService.create_not_duplicate_log(venue1_id, venue2_id, %{performed_by: "admin_user"}) do
-      {:ok, _log} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
-         |> push_navigate(to: ~p"/admin/venues/duplicates")}
+    # Find the fuzzy duplicate record for these venues
+    fuzzy_duplicate = TriviaAdvisor.Repo.one(
+      from fd in VenueFuzzyDuplicate,
+      where: (fd.venue1_id == ^venue1_id and fd.venue2_id == ^venue2_id) or
+             (fd.venue1_id == ^venue2_id and fd.venue2_id == ^venue1_id),
+      where: fd.status == "pending"
+    )
 
-      {:error, reason} ->
+    case fuzzy_duplicate do
+      nil ->
         {:noreply,
          socket
-         |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+         |> put_flash(:error, "Fuzzy duplicate not found")}
+
+      fuzzy_duplicate ->
+        changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
+          status: "rejected",
+          reviewed_at: DateTime.utc_now(),
+          reviewed_by: "admin_user"
+        })
+
+        case TriviaAdvisor.Repo.update(changeset) do
+          {:ok, _updated} ->
+            {:noreply,
+             socket
+             |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
+             |> push_navigate(to: ~p"/admin/venues/duplicates")}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+        end
     end
   end
 
-  # Load duplicate pairs from the database view with filtering, sorting, and pagination
-  defp load_duplicate_pairs(filter_type, sort_by, page) do
+  # Load fuzzy duplicate pairs with confidence scoring, filtering, sorting, and pagination
+  defp load_fuzzy_duplicate_pairs(filter_type, sort_by, page) do
     offset = (page - 1) * 10
 
-    # Build WHERE clause based on filter
-    where_clause = case filter_type do
-      "name_postcode_duplicate" -> "WHERE duplicate_type = 'name_postcode_duplicate'"
-      "name_city_duplicate" -> "WHERE duplicate_type = 'name_city_duplicate'"
-      _ -> ""
+    base_query = from fd in VenueFuzzyDuplicate,
+      join: v1 in Locations.Venue, on: v1.id == fd.venue1_id,
+      join: v2 in Locations.Venue, on: v2.id == fd.venue2_id,
+      where: fd.status == "pending",
+      where: is_nil(v1.deleted_at),
+      where: is_nil(v2.deleted_at),
+      select: %{
+        id: fd.id,
+        venue1_id: fd.venue1_id,
+        venue1_name: v1.name,
+        venue1_postcode: v1.postcode,
+        venue1_city_id: v1.city_id,
+        venue2_id: fd.venue2_id,
+        venue2_name: v2.name,
+        venue2_postcode: v2.postcode,
+        venue2_city_id: v2.city_id,
+        confidence_score: fd.confidence_score,
+        name_similarity: fd.name_similarity,
+        location_similarity: fd.location_similarity,
+        match_criteria: fd.match_criteria
+      }
+
+    # Apply confidence filter
+    filtered_query = case filter_type do
+      "high_confidence" -> from q in base_query, where: q.confidence_score >= 0.90
+      "medium_confidence" -> from q in base_query, where: q.confidence_score >= 0.75 and q.confidence_score < 0.90
+      "low_confidence" -> from q in base_query, where: q.confidence_score < 0.75
+      _ -> base_query
     end
 
-    # Build ORDER BY clause
-    order_clause = case sort_by do
-      "name" -> "ORDER BY venue1_name"
-      "created" -> "ORDER BY venue1_created DESC"
-      "type" -> "ORDER BY duplicate_type, venue1_name"
-      _ -> "ORDER BY venue1_name"
+    # Apply sorting
+    sorted_query = case sort_by do
+      "confidence" -> from q in filtered_query, order_by: [desc: q.confidence_score]
+      "name" -> from q in filtered_query, order_by: [asc: q.venue1_name]
+      "name_similarity" -> from q in filtered_query, order_by: [desc: q.name_similarity]
+      "location_similarity" -> from q in filtered_query, order_by: [desc: q.location_similarity]
+      _ -> from q in filtered_query, order_by: [desc: q.confidence_score]
     end
 
-    # Add exclusion for pairs marked as "not duplicate"
-    not_duplicate_clause = """
-    AND NOT EXISTS (
-      SELECT 1 FROM venue_merge_logs vml
-      WHERE vml.action_type = 'not_duplicate'
-      AND ((vml.primary_venue_id = venue1_id AND vml.secondary_venue_id = venue2_id)
-           OR (vml.primary_venue_id = venue2_id AND vml.secondary_venue_id = venue1_id))
-    )
-    """
-
-    # Combine all WHERE conditions
-    combined_where = case where_clause do
-      "" -> "WHERE 1=1 #{not_duplicate_clause}"
-      existing -> "#{existing} #{not_duplicate_clause}"
-    end
-
-    query = """
-    SELECT
-      venue1_id, venue1_name, venue1_postcode, venue1_city_id, venue1_created,
-      venue2_id, venue2_name, venue2_postcode, venue2_city_id, venue2_created,
-      duplicate_type
-    FROM potential_duplicate_venues
-    #{combined_where}
-    #{order_clause}
-    LIMIT 10 OFFSET #{offset}
-    """
-
-    case TriviaAdvisor.Repo.query(query) do
-      {:ok, %{rows: rows, columns: columns}} ->
-        Enum.map(rows, fn row ->
-          columns
-          |> Enum.zip(row)
-          |> Enum.into(%{})
-          |> Map.new(fn {k, v} -> {String.to_atom(k), v} end)
-        end)
-      {:error, _} ->
-        []
-    end
+    # Apply pagination
+    sorted_query
+    |> limit(10)
+    |> offset(^offset)
+    |> TriviaAdvisor.Repo.all()
   end
 
-  # Count duplicate pairs for pagination
-  defp count_duplicate_pairs(filter_type) do
-    where_clause = case filter_type do
-      "name_postcode_duplicate" -> "WHERE duplicate_type = 'name_postcode_duplicate'"
-      "name_city_duplicate" -> "WHERE duplicate_type = 'name_city_duplicate'"
-      _ -> ""
+  # Count fuzzy duplicate pairs for pagination
+  defp count_fuzzy_duplicate_pairs(filter_type) do
+    base_query = from fd in VenueFuzzyDuplicate,
+      join: v1 in Locations.Venue, on: v1.id == fd.venue1_id,
+      join: v2 in Locations.Venue, on: v2.id == fd.venue2_id,
+      where: fd.status == "pending",
+      where: is_nil(v1.deleted_at),
+      where: is_nil(v2.deleted_at)
+
+    # Apply confidence filter
+    filtered_query = case filter_type do
+      "high_confidence" -> from q in base_query, where: q.confidence_score >= 0.90
+      "medium_confidence" -> from q in base_query, where: q.confidence_score >= 0.75 and q.confidence_score < 0.90
+      "low_confidence" -> from q in base_query, where: q.confidence_score < 0.75
+      _ -> base_query
     end
 
-    # Add exclusion for pairs marked as "not duplicate"
-    not_duplicate_clause = """
-    AND NOT EXISTS (
-      SELECT 1 FROM venue_merge_logs vml
-      WHERE vml.action_type = 'not_duplicate'
-      AND ((vml.primary_venue_id = venue1_id AND vml.secondary_venue_id = venue2_id)
-           OR (vml.primary_venue_id = venue2_id AND vml.secondary_venue_id = venue1_id))
-    )
-    """
-
-    # Combine all WHERE conditions
-    combined_where = case where_clause do
-      "" -> "WHERE 1=1 #{not_duplicate_clause}"
-      existing -> "#{existing} #{not_duplicate_clause}"
-    end
-
-    query = """
-    SELECT COUNT(*) FROM potential_duplicate_venues
-    #{combined_where}
-    """
-
-    case TriviaAdvisor.Repo.query(query) do
-      {:ok, %{rows: [[count]]}} -> count
-      {:error, _} -> 0
-    end
+    TriviaAdvisor.Repo.aggregate(filtered_query, :count, :id)
   end
 
 
@@ -234,5 +279,14 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     city_score = if venue1.city_id == venue2.city_id, do: 30, else: 0
 
     name_score + postcode_score + city_score
+  end
+
+  # Clean up fuzzy duplicate records that reference non-existent venues
+  defp cleanup_orphaned_duplicates(venue1_id, venue2_id) do
+    from(fd in VenueFuzzyDuplicate,
+      where: (fd.venue1_id == ^venue1_id and fd.venue2_id == ^venue2_id) or
+             (fd.venue1_id == ^venue2_id and fd.venue2_id == ^venue1_id)
+    )
+    |> TriviaAdvisor.Repo.delete_all()
   end
 end
