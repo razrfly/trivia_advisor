@@ -202,12 +202,23 @@ defmodule TriviaAdvisor.Services.FuzzyDuplicateProcessor do
   defp process_venue_batch(venues, opts) do
     venues
     |> Enum.reduce(%{processed: 0, duplicates_found: 0, duplicates_stored: 0}, fn venue, acc ->
-      venue_results = process_venue(venue, opts)
-      %{
-        processed: acc.processed + venue_results.processed,
-        duplicates_found: acc.duplicates_found + venue_results.duplicates_found,
-        duplicates_stored: acc.duplicates_stored + venue_results.duplicates_stored
-      }
+      try do
+        venue_results = process_venue(venue, opts)
+        %{
+          processed: acc.processed + venue_results.processed,
+          duplicates_found: acc.duplicates_found + venue_results.duplicates_found,
+          duplicates_stored: acc.duplicates_stored + venue_results.duplicates_stored
+        }
+      rescue
+        error ->
+          Logger.error("Failed to process venue #{venue.id} (#{inspect(venue.name)}): #{Exception.format(:error, error, __STACKTRACE__)}")
+          # Return acc unchanged for this venue, but continue processing
+          %{
+            processed: acc.processed + 1,  # Still count it as processed
+            duplicates_found: acc.duplicates_found,
+            duplicates_stored: acc.duplicates_stored
+          }
+      end
     end)
   end
 
@@ -239,9 +250,15 @@ defmodule TriviaAdvisor.Services.FuzzyDuplicateProcessor do
   end
 
   defp calculate_name_similarity(name1, name2) when is_binary(name1) and is_binary(name2) do
-    normalized1 = VenueDuplicateDetector.normalize_name(name1)
-    normalized2 = VenueDuplicateDetector.normalize_name(name2)
-    String.jaro_distance(normalized1, normalized2)
+    try do
+      normalized1 = VenueDuplicateDetector.normalize_name(name1)
+      normalized2 = VenueDuplicateDetector.normalize_name(name2)
+      String.jaro_distance(normalized1, normalized2)
+    rescue
+      error ->
+        Logger.warning("Failed to calculate name similarity in FuzzyDuplicateProcessor between '#{inspect(name1)}' and '#{inspect(name2)}': #{inspect(error)}")
+        0.0
+    end
   end
   defp calculate_name_similarity(_, _), do: 0.0
 
@@ -252,9 +269,15 @@ defmodule TriviaAdvisor.Services.FuzzyDuplicateProcessor do
 
       # Address similarity
       venue1.address && venue2.address ->
-        norm1 = VenueDuplicateDetector.normalize_address(venue1.address)
-        norm2 = VenueDuplicateDetector.normalize_address(venue2.address)
-        String.jaro_distance(norm1, norm2)
+        try do
+          norm1 = VenueDuplicateDetector.normalize_address(venue1.address)
+          norm2 = VenueDuplicateDetector.normalize_address(venue2.address)
+          String.jaro_distance(norm1, norm2)
+        rescue
+          error ->
+            Logger.warning("Failed to calculate address similarity in FuzzyDuplicateProcessor between '#{inspect(venue1.address)}' and '#{inspect(venue2.address)}': #{inspect(error)}")
+            0.0
+        end
 
       # Geographic proximity (if coordinates available)
       venue1.latitude && venue1.longitude && venue2.latitude && venue2.longitude ->

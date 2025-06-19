@@ -185,6 +185,7 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
   @spec normalize_name(String.t()) :: String.t()
   def normalize_name(name) when is_binary(name) do
     name
+    |> ensure_valid_utf8()
     |> String.downcase()
     |> String.replace(~r/[^\w\s]/, " ")  # Remove punctuation
     |> String.replace(~r/\b(the|and|pub|restaurant|bar|hotel|inn|tavern|club|cafe|coffee|shop)\b/i, " ")
@@ -204,6 +205,7 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
   @spec normalize_address(String.t() | nil) :: String.t()
   def normalize_address(address) when is_binary(address) do
     address
+    |> ensure_valid_utf8()
     |> String.downcase()
     |> String.replace(~r/\bstreet\b/, "st")
     |> String.replace(~r/\broad\b/, "rd")
@@ -217,6 +219,27 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
   def normalize_address(nil), do: ""
 
   # Private Functions
+
+  # Ensures a string is valid UTF-8, replacing invalid characters
+  defp ensure_valid_utf8(text) when is_binary(text) do
+    case String.valid?(text) do
+      true -> text
+      false ->
+        # Replace invalid UTF-8 with question marks and log the issue
+        cleaned = :unicode.characters_to_binary(text, :latin1, :utf8)
+        case cleaned do
+          {:error, _, _} ->
+            # Fallback: remove all non-ASCII characters
+            String.replace(text, ~r/[^\x00-\x7F]/, "?")
+          cleaned_text when is_binary(cleaned_text) ->
+            cleaned_text
+          _ ->
+            # Last resort: remove all non-ASCII characters
+            String.replace(text, ~r/[^\x00-\x7F]/, "?")
+        end
+    end
+  end
+  defp ensure_valid_utf8(nil), do: ""
 
   defp normalize_options(opts) do
     Keyword.merge([
@@ -249,11 +272,19 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
   end
 
   defp calculate_name_similarity(name1, name2) when is_binary(name1) and is_binary(name2) do
-    normalized1 = normalize_name(name1)
-    normalized2 = normalize_name(name2)
+    try do
+      # Ensure both strings are valid UTF-8
+      normalized1 = name1 |> ensure_valid_utf8() |> normalize_name()
+      normalized2 = name2 |> ensure_valid_utf8() |> normalize_name()
 
-    # Use Jaro-Winkler distance (built into Elixir)
-    String.jaro_distance(normalized1, normalized2)
+      # Use Jaro-Winkler distance (built into Elixir)
+      String.jaro_distance(normalized1, normalized2)
+    rescue
+      error ->
+        require Logger
+        Logger.warning("Failed to calculate name similarity between '#{inspect(name1)}' and '#{inspect(name2)}': #{inspect(error)}")
+        0.0
+    end
   end
   defp calculate_name_similarity(_, _), do: 0.0
 
@@ -264,9 +295,16 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
     else
       # Compare normalized addresses
       address_similarity = if venue1.address && venue2.address do
-        normalized1 = normalize_address(venue1.address)
-        normalized2 = normalize_address(venue2.address)
-        String.jaro_distance(normalized1, normalized2)
+        try do
+          normalized1 = venue1.address |> ensure_valid_utf8() |> normalize_address()
+          normalized2 = venue2.address |> ensure_valid_utf8() |> normalize_address()
+          String.jaro_distance(normalized1, normalized2)
+        rescue
+          error ->
+            require Logger
+            Logger.warning("Failed to calculate address similarity between '#{inspect(venue1.address)}' and '#{inspect(venue2.address)}': #{inspect(error)}")
+            0.0
+        end
       else
         0.0
       end

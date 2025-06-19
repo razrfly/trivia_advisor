@@ -80,19 +80,43 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   def handle_event("process_fuzzy_duplicates", _params, socket) do
-    # Start processing in a background task
-    Task.async(fn ->
-      TriviaAdvisor.Services.FuzzyDuplicateProcessor.process_all_venues([
-        batch_size: 50,
-        min_confidence: 0.70,
-        clear_existing: true
-      ])
-    end)
+    Logger.info("🚀 BUTTON CLICKED: Admin triggered fuzzy duplicate processing via Oban job!")
 
-    {:noreply,
-     socket
-     |> put_flash(:info, "🤖 Fuzzy duplicate processing started in background. Refresh in a few minutes.")
-     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: "fuzzy", page: 1}}")}
+    try do
+      Logger.info("🔍 Checking if FuzzyDuplicateProcessingJob module is available...")
+
+      # Check if Oban job module is available
+      unless Code.ensure_loaded?(TriviaAdvisor.Scraping.Oban.FuzzyDuplicateProcessingJob) do
+        Logger.error("❌ FuzzyDuplicateProcessingJob module not available!")
+        {:noreply, put_flash(socket, :error, "Fuzzy duplicate processing job not available")}
+      else
+        Logger.info("✅ FuzzyDuplicateProcessingJob module loaded successfully")
+        Logger.info("🤖 Enqueueing fuzzy duplicate processing Oban job")
+
+        # Enqueue the Oban job
+        job_result = TriviaAdvisor.Scraping.Oban.FuzzyDuplicateProcessingJob.new(%{})
+                    |> Oban.insert()
+
+        case job_result do
+          {:ok, job} ->
+            Logger.info("🎯 Oban job enqueued successfully with ID: #{job.id}")
+            Logger.info("📋 Job details: queue=#{job.queue}, worker=#{job.worker}")
+            {:noreply,
+             socket
+             |> put_flash(:info, "🤖 Fuzzy duplicate processing job started! Check logs for progress. Job ID: #{job.id}")
+             |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: "fuzzy", page: 1}}")}
+
+          {:error, reason} ->
+            Logger.error("❌ Failed to enqueue Oban job: #{inspect(reason)}")
+            {:noreply, put_flash(socket, :error, "Failed to start job: #{inspect(reason)}")}
+        end
+      end
+    rescue
+      error ->
+        Logger.error("💥 ERROR in process_fuzzy_duplicates: #{inspect(error)}")
+        Logger.error("🔍 Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}")
+        {:noreply, put_flash(socket, :error, "Failed to start fuzzy duplicate processing: #{inspect(error)}")}
+    end
   end
 
   def handle_event("filter", %{"filter_type" => filter_type}, socket) do
