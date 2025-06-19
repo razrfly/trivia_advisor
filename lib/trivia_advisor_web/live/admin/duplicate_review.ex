@@ -6,6 +6,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   alias TriviaAdvisor.Locations.VenueFuzzyDuplicate
   alias TriviaAdvisor.Services.VenueMergeService
   import Ecto.Query, warn: false
+  import TriviaAdvisorWeb.Helpers.FormatHelpers
 
   @impl true
   def mount(_params, _session, socket) do
@@ -45,16 +46,19 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
       |> put_flash(:info, "This duplicate pair was already resolved - venues may have been merged or deleted.")
       |> push_navigate(to: ~p"/admin/venues/duplicates")
     else
-      # Preload city data for both venues
-      venue1 = TriviaAdvisor.Repo.preload(venue1, :city)
-      venue2 = TriviaAdvisor.Repo.preload(venue2, :city)
+      # Preload city data and event sources for both venues
+      venue1 = TriviaAdvisor.Repo.preload(venue1, [:city, events: [event_sources: :source]])
+      venue2 = TriviaAdvisor.Repo.preload(venue2, [:city, events: [event_sources: :source]])
+
+      # Calculate smart defaults for field overrides
+      smart_defaults = calculate_smart_defaults(venue1, venue2)
 
       socket
       |> assign(:page_title, "Compare Venues")
       |> assign(:venue1, venue1)
       |> assign(:venue2, venue2)
       |> assign(:similarity_details, calculate_similarity_details(venue1, venue2))
-      |> assign(:field_overrides, [])
+      |> assign(:field_overrides, smart_defaults)
     end
   end
 
@@ -288,5 +292,26 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
              (fd.venue1_id == ^venue2_id and fd.venue2_id == ^venue1_id)
     )
     |> TriviaAdvisor.Repo.delete_all()
+  end
+
+  # Calculate smart defaults for field overrides based on business rules
+  defp calculate_smart_defaults(venue1, venue2) do
+    defaults = []
+
+    # Always keep venue A's slug by default (venue A is older and has better slug)
+    defaults = if venue1.slug != venue2.slug do
+      [:slug | defaults]
+    else
+      defaults
+    end
+
+    # Always take venue B's website by default (venue B was scraped more recently)
+    defaults = if venue1.website != venue2.website and venue2.website do
+      [:website | defaults]
+    else
+      defaults
+    end
+
+    defaults
   end
 end
