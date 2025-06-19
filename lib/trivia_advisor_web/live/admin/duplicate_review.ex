@@ -122,13 +122,13 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   def handle_event("filter", %{"filter_type" => filter_type}, socket) do
     {:noreply,
      socket
-     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: filter_type, sort_by: socket.assigns.sort_by, page: 1}}")}
+     |> push_navigate(to: ~p"/admin/venues/duplicates?#{safe_redirect_params(socket, %{filter_type: filter_type, page: 1})}")}
   end
 
   def handle_event("sort", %{"sort_by" => sort_by}, socket) do
     {:noreply,
      socket
-     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: sort_by, page: 1}}")}
+     |> push_navigate(to: ~p"/admin/venues/duplicates?#{safe_redirect_params(socket, %{sort_by: sort_by, page: 1})}")}
   end
 
   @allowed_override_fields [:website, :phone, :facebook, :instagram, :slug]
@@ -160,33 +160,32 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     primary_id = String.to_integer(primary_id)
     secondary_id = String.to_integer(secondary_id)
 
-    # For now, just mark the duplicate as merged until VenueMergeService is implemented
-    fuzzy_duplicate = TriviaAdvisor.Repo.one(
-      from fd in VenueFuzzyDuplicate,
-      where: (fd.venue1_id == ^primary_id and fd.venue2_id == ^secondary_id) or
-             (fd.venue1_id == ^secondary_id and fd.venue2_id == ^primary_id),
-      where: fd.status == "pending"
-    )
+    # Get field overrides from socket assigns if they exist
+    field_overrides = Map.get(socket.assigns, :field_overrides, [])
 
-    case fuzzy_duplicate do
-      nil ->
-        {:noreply, put_flash(socket, :error, "Duplicate record not found")}
-      duplicate ->
-        changeset = VenueFuzzyDuplicate.changeset(duplicate, %{
-          status: "merged",
-          reviewed_at: DateTime.utc_now(),
-          reviewed_by: "admin_user"
-        })
+    # Prepare merge options
+    merge_options = %{
+      performed_by: "admin_user",
+      notes: "Merged via admin duplicate review interface",
+      metadata_strategy: :combine,
+      field_overrides: field_overrides,
+      event_strategy: :migrate_all
+    }
 
-        case TriviaAdvisor.Repo.update(changeset) do
-          {:ok, _updated_duplicate} ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "Venues marked as merged successfully! (Actual merge functionality coming soon)")
-             |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: socket.assigns.sort_by, page: socket.assigns.current_page}}")}
-          {:error, changeset} ->
-            {:noreply, put_flash(socket, :error, "Failed to update duplicate record: #{inspect(changeset.errors)}")}
-        end
+    # Perform the actual venue merge using VenueMergeService
+    case TriviaAdvisor.Locations.merge_venues(primary_id, secondary_id, merge_options) do
+      {:ok, result} ->
+        # Update the fuzzy duplicate status to reflect the successful merge
+        _update_fuzzy_duplicate_status(primary_id, secondary_id, "merged")
+
+        message = "Successfully merged venues! #{result.events_migrated} events migrated. Secondary venue has been soft-deleted."
+        {:noreply,
+         socket
+         |> put_flash(:info, message)
+         |> push_navigate(to: ~p"/admin/venues/duplicates?#{safe_redirect_params(socket)}")}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, "Venue merge failed: #{inspect(reason)}")}
     end
   end
 
@@ -350,7 +349,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
                |> put_flash(:info, message)
                |> assign(:selected_pairs, MapSet.new())
                |> assign(:select_all, false)
-               |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: socket.assigns.sort_by, page: socket.assigns.current_page}}")}
+               |> push_navigate(to: ~p"/admin/venues/duplicates?#{safe_redirect_params(socket)}")}
 
             {:error, error} ->
               {:noreply, put_flash(socket, :error, "Batch merge failed: #{error}")}
@@ -394,7 +393,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
                |> put_flash(:info, message)
                |> assign(:selected_pairs, MapSet.new())
                |> assign(:select_all, false)
-               |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: socket.assigns.sort_by, page: socket.assigns.current_page}}")}
+               |> push_navigate(to: ~p"/admin/venues/duplicates?#{safe_redirect_params(socket)}")}
 
             {:error, error} ->
               {:noreply, put_flash(socket, :error, "Batch reject failed: #{error}")}
@@ -422,27 +421,30 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     try do
       [venue1_id, venue2_id] = String.split(pair_id, "-") |> Enum.map(&String.to_integer/1)
 
-      # Find the fuzzy duplicate record for these venues
-      fuzzy_duplicate = TriviaAdvisor.Repo.one(
-        from fd in VenueFuzzyDuplicate,
-        where: (fd.venue1_id == ^venue1_id and fd.venue2_id == ^venue2_id) or
-               (fd.venue1_id == ^venue2_id and fd.venue2_id == ^venue1_id),
-        where: fd.status == "pending"
-      )
+      # Determine which venue should be primary using VenueMergeService
+      case TriviaAdvisor.Locations.determine_primary_venue(venue1_id, venue2_id) do
+        {:ok, {primary_id, secondary_id}} ->
+          # Prepare merge options for batch operation
+          merge_options = %{
+            performed_by: "admin_user",
+            notes: "Merged via batch operation in admin duplicate review",
+            metadata_strategy: :combine,
+            event_strategy: :migrate_all
+          }
 
-      case fuzzy_duplicate do
-        nil -> {:error, "Duplicate record not found for #{venue1_id}-#{venue2_id}"}
-        duplicate ->
-          changeset = VenueFuzzyDuplicate.changeset(duplicate, %{
-            status: "merged",
-            reviewed_at: DateTime.utc_now(),
-            reviewed_by: "admin_user"
-          })
+          # Perform the actual venue merge
+          case TriviaAdvisor.Locations.merge_venues(primary_id, secondary_id, merge_options) do
+            {:ok, result} ->
+              # Update the fuzzy duplicate status to reflect the successful merge
+              _update_fuzzy_duplicate_status(primary_id, secondary_id, "merged")
+              {:ok, "Successfully merged venues #{primary_id} ← #{secondary_id} (#{result.events_migrated} events migrated)"}
 
-          case TriviaAdvisor.Repo.update(changeset) do
-            {:ok, _updated_duplicate} -> {:ok, "Marked venues #{venue1_id}-#{venue2_id} as merged"}
-            {:error, changeset} -> {:error, "Failed to mark #{venue1_id}-#{venue2_id} as merged: #{inspect(changeset.errors)}"}
+            {:error, reason} ->
+              {:error, "Failed to merge venues #{venue1_id}-#{venue2_id}: #{inspect(reason)}"}
           end
+
+        {:error, reason} ->
+          {:error, "Could not determine primary venue for #{venue1_id}-#{venue2_id}: #{inspect(reason)}"}
       end
     rescue
       error -> {:error, "Exception during merge of #{pair_id}: #{Exception.message(error)}"}
@@ -486,8 +488,8 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     offset = (page - 1) * 50
 
     base_query = from fd in VenueFuzzyDuplicate,
-      join: v1 in Locations.Venue, on: v1.id == fd.venue1_id,
-      join: v2 in Locations.Venue, on: v2.id == fd.venue2_id,
+      join: v1 in Venue, on: v1.id == fd.venue1_id,
+      join: v2 in Venue, on: v2.id == fd.venue2_id,
       where: fd.status == "pending",
       where: is_nil(v1.deleted_at),
       where: is_nil(v2.deleted_at),
@@ -534,8 +536,8 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   # Count fuzzy duplicate pairs for pagination
   defp count_fuzzy_duplicate_pairs(filter_type) do
     base_query = from fd in VenueFuzzyDuplicate,
-      join: v1 in Locations.Venue, on: v1.id == fd.venue1_id,
-      join: v2 in Locations.Venue, on: v2.id == fd.venue2_id,
+      join: v1 in Venue, on: v1.id == fd.venue1_id,
+      join: v2 in Venue, on: v2.id == fd.venue2_id,
       where: fd.status == "pending",
       where: is_nil(v1.deleted_at),
       where: is_nil(v2.deleted_at)
@@ -677,5 +679,43 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     end
 
     "#{base_text}#{override_text}\n\n• Events will move to primary venue\n• Images will be combined (no duplicates)\n• Secondary venue will be soft-deleted\n• This cannot be undone"
+  end
+
+  # Helper function to safely build redirect parameters
+  defp safe_redirect_params(socket, overrides \\ %{}) do
+    defaults = %{
+      view_type: "fuzzy",
+      filter_type: "all",
+      sort_by: "confidence",
+      page: 1
+    }
+
+    current_params = %{
+      view_type: Map.get(socket.assigns, :view_type, defaults.view_type),
+      filter_type: Map.get(socket.assigns, :filter_type, defaults.filter_type),
+      sort_by: Map.get(socket.assigns, :sort_by, defaults.sort_by),
+      page: Map.get(socket.assigns, :current_page, defaults.page)
+    }
+
+    Map.merge(current_params, overrides)
+  end
+
+  # Helper function to update fuzzy duplicate status after a successful merge
+  defp _update_fuzzy_duplicate_status(primary_id, secondary_id, status) do
+    fuzzy_duplicate = TriviaAdvisor.Repo.one(
+      from fd in VenueFuzzyDuplicate,
+      where: (fd.venue1_id == ^primary_id and fd.venue2_id == ^secondary_id) or
+             (fd.venue1_id == ^secondary_id and fd.venue2_id == ^primary_id),
+      where: fd.status == "pending"
+    )
+
+    if fuzzy_duplicate do
+      changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
+        status: status,
+        reviewed_at: DateTime.utc_now(),
+        reviewed_by: "admin_user"
+      })
+      TriviaAdvisor.Repo.update(changeset)
+    end
   end
 end
