@@ -7,35 +7,88 @@ defmodule TriviaAdvisorWeb.Live.Venue.Helpers.VenueShowHelpers do
 
   # Helper functions
   def get_venue_by_slug(slug) do
+    require Logger
+
     try do
-      # First try to get active (non-deleted) venue
       case Locations.get_venue_by_slug(slug) do
         nil ->
-          # Check if this is a soft-deleted venue that was merged
+          # Try to find with deleted venues (in case it was merged)
           case Locations.get_venue_by_slug_with_deleted(slug) do
             %{deleted_at: deleted_at, merged_into_id: merged_id} when not is_nil(deleted_at) and not is_nil(merged_id) ->
               # This venue was merged, get the primary venue
               try do
-                primary_venue = Locations.get_venue!(merged_id)
-                loaded_venue = primary_venue
-                |> Locations.load_venue_relations()
-                |> TriviaAdvisor.Repo.preload(city: :country)
-                {:redirect, loaded_venue}
+                case TriviaAdvisor.Repo.get(TriviaAdvisor.Locations.Venue, merged_id) do
+                  nil ->
+                    # Try fuzzy matching if merge target doesn't exist
+                    try_fuzzy_venue_match(slug)
+                  primary_venue ->
+                    loaded_venue = primary_venue
+                    |> Locations.load_venue_relations()
+                    |> TriviaAdvisor.Repo.preload(city: :country)
+                    {:redirect, loaded_venue}
+                end
               rescue
-                _ -> {:error, :not_found}
+                e ->
+                  Logger.error("Failed to load merged venue: #{inspect(e)}")
+                  try_fuzzy_venue_match(slug)
               end
             _ ->
-              {:error, :not_found}
+              # No exact match found, try fuzzy matching
+              try_fuzzy_venue_match(slug)
           end
         venue ->
-          loaded_venue = venue
-          |> Locations.load_venue_relations()
-          |> TriviaAdvisor.Repo.preload(city: :country)
-          {:ok, loaded_venue}
+          try do
+            loaded_venue = venue
+            |> Locations.load_venue_relations()
+            |> TriviaAdvisor.Repo.preload(city: :country)
+            {:ok, loaded_venue}
+          rescue
+            e ->
+              Logger.error("Failed to load venue relations for #{venue.name}: #{inspect(e)}")
+              {:error, :load_failed}
+          end
       end
     rescue
       e ->
-        Logger.error("Failed to get venue: #{inspect(e)}")
+        Logger.error("Failed to get venue by slug #{slug}: #{inspect(e)}")
+        {:error, :not_found}
+    end
+  end
+
+  # Helper function to find venues with similar slugs
+  defp try_fuzzy_venue_match(slug) do
+    import Ecto.Query
+    require Logger
+
+    try do
+      # Try to find venues with similar slugs (e.g., flx-live should match flx-live-1750339976)
+      base_slug = String.replace(slug, ~r/-\d+$/, "")  # Remove trailing timestamps
+
+      similar_venues = TriviaAdvisor.Repo.all(
+        from v in TriviaAdvisor.Locations.Venue,
+        where: like(v.slug, ^"#{base_slug}%") and is_nil(v.deleted_at),
+        limit: 1
+      )
+
+      case similar_venues do
+        [venue] when not is_nil(venue) ->
+          try do
+            loaded_venue = venue
+            |> Locations.load_venue_relations()
+            |> TriviaAdvisor.Repo.preload(city: :country)
+            {:redirect, loaded_venue}
+          rescue
+            e ->
+              Logger.error("Failed to load venue relations in fuzzy match for #{venue.name}: #{inspect(e)}")
+              {:error, :not_found}
+          end
+        _ ->
+          Logger.info("No fuzzy match found for slug: #{slug}")
+          {:error, :not_found}
+      end
+    rescue
+      e ->
+        Logger.error("Failed to perform fuzzy venue match for #{slug}: #{inspect(e)}")
         {:error, :not_found}
     end
   end
