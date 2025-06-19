@@ -73,10 +73,30 @@
             </select>
           </div>
 
-          <div class="flex-1 text-right">
-            <span class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium bg-blue-100 text-blue-800">
-              <%= @total_pairs %> total pairs, showing <%= length(@duplicate_pairs) %>
-            </span>
+          <div class="flex-1 flex items-center justify-end gap-4">
+            <%= if @total_pairs == 0 do %>
+              <div class="text-sm text-gray-600">
+                No fuzzy duplicates found. Process venues to detect duplicates.
+              </div>
+              <button
+                phx-click="process_fuzzy_duplicates"
+                onclick="return confirm('This will process all venues and may take several minutes. Continue?')"
+                class="inline-flex items-center px-4 py-2 bg-blue-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-blue-700 active:bg-blue-900 focus:outline-none focus:border-blue-900 focus:ring ring-blue-300 disabled:opacity-25 transition ease-in-out duration-150"
+              >
+                🤖 Process Fuzzy Duplicates
+              </button>
+            <% else %>
+              <button
+                phx-click="process_fuzzy_duplicates"
+                onclick="return confirm('This will re-process all venues and may take several minutes. Continue?')"
+                class="inline-flex items-center px-3 py-2 bg-gray-600 border border-transparent rounded-md font-semibold text-xs text-white uppercase tracking-widest hover:bg-gray-700 active:bg-gray-900 focus:outline-none focus:border-gray-900 focus:ring ring-gray-300 disabled:opacity-25 transition ease-in-out duration-150"
+              >
+                🔄 Re-process
+              </button>
+              <span class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium bg-blue-100 text-blue-800">
+                <%= @total_pairs %> total pairs, showing <%= length(@duplicate_pairs) %>
+              </span>
+            <% end %>
           </div>
         </div>
       </div>

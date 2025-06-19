@@ -15,15 +15,11 @@ defmodule TriviaAdvisor.Release do
     # Create duplicate detection view after migrations
     create_duplicate_view()
 
-    # Process fuzzy duplicates with AI detection after migrations
-    # This is safe to fail - admin can run manually if needed
-    case process_fuzzy_duplicates() do
-      {:ok, results} ->
-        IO.puts("✅ Fuzzy duplicates processed: #{inspect(results)}")
-      {:error, reason} ->
-        IO.puts("⚠️  Fuzzy duplicate processing failed: #{inspect(reason)}")
-        IO.puts("   You can run 'mix process_fuzzy_duplicates' manually after deployment")
-    end
+    # Skip fuzzy duplicates during migration - they can be processed later
+    # This prevents deployment timeouts and allows the app to start quickly
+    IO.puts("⏭️  Skipping fuzzy duplicate processing during migration")
+    IO.puts("   Run 'mix process_fuzzy_duplicates' after deployment completes")
+    IO.puts("   Or use the admin interface to process them manually")
 
     # Run seeds after migrations
     seed()
