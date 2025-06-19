@@ -35,57 +35,63 @@ defmodule TriviaAdvisor.Services.FuzzyDuplicateProcessor do
       {:ok, %{processed: 1500, duplicates_found: 156, duplicates_stored: 156}}
   """
   def process_all_venues(opts \\ []) do
-    opts = normalize_options(opts)
+    try do
+      opts = normalize_options(opts)
 
-    Logger.info("Starting fuzzy duplicate processing with options: #{inspect(opts)}")
+      Logger.info("Starting fuzzy duplicate processing with options: #{inspect(opts)}")
 
-    if opts[:clear_existing] do
-      Logger.info("Clearing existing fuzzy duplicates...")
-      Repo.delete_all(VenueFuzzyDuplicate)
-    end
-
-    # Get all active venues
-    venues = get_active_venues()
-    total_venues = length(venues)
-
-    Logger.info("Processing #{total_venues} venues for fuzzy duplicates...")
-
-    # Process venues in batches
-    results = venues
-    |> Enum.chunk_every(opts[:batch_size])
-    |> Enum.with_index()
-    |> Enum.reduce(%{processed: 0, duplicates_found: 0, duplicates_stored: 0}, fn {batch, batch_index}, acc ->
-      batch_start = batch_index * opts[:batch_size] + 1
-      batch_end = min(batch_start + length(batch) - 1, total_venues)
-
-      Logger.info("Processing batch #{batch_index + 1}: venues #{batch_start}-#{batch_end}")
-
-      batch_results = process_venue_batch(batch, opts)
-
-      new_acc = %{
-        processed: acc.processed + batch_results.processed,
-        duplicates_found: acc.duplicates_found + batch_results.duplicates_found,
-        duplicates_stored: acc.duplicates_stored + batch_results.duplicates_stored
-      }
-
-      # Call progress callback if provided
-      if opts[:progress_callback] do
-        progress = %{
-          batch: batch_index + 1,
-          total_batches: ceil(total_venues / opts[:batch_size]),
-          venues_processed: new_acc.processed,
-          total_venues: total_venues,
-          duplicates_found: new_acc.duplicates_found,
-          duplicates_stored: new_acc.duplicates_stored
-        }
-        opts[:progress_callback].(progress)
+      if opts[:clear_existing] do
+        Logger.info("Clearing existing fuzzy duplicates...")
+        Repo.delete_all(VenueFuzzyDuplicate)
       end
 
-      new_acc
-    end)
+      # Get all active venues
+      venues = get_active_venues()
+      total_venues = length(venues)
 
-    Logger.info("Fuzzy duplicate processing complete: #{inspect(results)}")
-    {:ok, results}
+      Logger.info("Processing #{total_venues} venues for fuzzy duplicates...")
+
+      # Process venues in batches
+      results = venues
+      |> Enum.chunk_every(opts[:batch_size])
+      |> Enum.with_index()
+      |> Enum.reduce(%{processed: 0, duplicates_found: 0, duplicates_stored: 0}, fn {batch, batch_index}, acc ->
+        batch_start = batch_index * opts[:batch_size] + 1
+        batch_end = min(batch_start + length(batch) - 1, total_venues)
+
+        Logger.info("Processing batch #{batch_index + 1}: venues #{batch_start}-#{batch_end}")
+
+        batch_results = process_venue_batch(batch, opts)
+
+        new_acc = %{
+          processed: acc.processed + batch_results.processed,
+          duplicates_found: acc.duplicates_found + batch_results.duplicates_found,
+          duplicates_stored: acc.duplicates_stored + batch_results.duplicates_stored
+        }
+
+        # Call progress callback if provided
+        if opts[:progress_callback] do
+          progress = %{
+            batch: batch_index + 1,
+            total_batches: ceil(total_venues / opts[:batch_size]),
+            venues_processed: new_acc.processed,
+            total_venues: total_venues,
+            duplicates_found: new_acc.duplicates_found,
+            duplicates_stored: new_acc.duplicates_stored
+          }
+          opts[:progress_callback].(progress)
+        end
+
+        new_acc
+      end)
+
+      Logger.info("Fuzzy duplicate processing complete: #{inspect(results)}")
+      {:ok, results}
+    rescue
+      error ->
+        Logger.error("Fuzzy duplicate processing failed: #{Exception.format(:error, error, __STACKTRACE__)}")
+        {:error, error}
+    end
   end
 
   @doc """

@@ -19,17 +19,26 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   defp apply_action(socket, :index, params) do
+    view_type = params["view_type"] || "fuzzy"
     filter_type = params["filter_type"] || "all"
-    sort_by = params["sort_by"] || "confidence"
+    sort_by = params["sort_by"] || if view_type == "fuzzy", do: "confidence", else: "name"
     page = String.to_integer(params["page"] || "1")
 
+    {duplicate_pairs, total_pairs, page_title} = case view_type do
+      "simple" ->
+        {load_simple_duplicate_pairs(page), count_simple_duplicate_pairs(), "Simple Duplicate Venues"}
+      _ ->
+        {load_fuzzy_duplicate_pairs(filter_type, sort_by, page), count_fuzzy_duplicate_pairs(filter_type), "Fuzzy Duplicate Venues"}
+    end
+
     socket
-    |> assign(:page_title, "Fuzzy Duplicate Venues")
-    |> assign(:duplicate_pairs, load_fuzzy_duplicate_pairs(filter_type, sort_by, page))
+    |> assign(:page_title, page_title)
+    |> assign(:duplicate_pairs, duplicate_pairs)
+    |> assign(:view_type, view_type)
     |> assign(:filter_type, filter_type)
     |> assign(:sort_by, sort_by)
     |> assign(:current_page, page)
-    |> assign(:total_pairs, count_fuzzy_duplicate_pairs(filter_type))
+    |> assign(:total_pairs, total_pairs)
     |> assign(:per_page, 10)
   end
 
@@ -63,16 +72,22 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   @impl true
+  def handle_event("switch_view", %{"view_type" => view_type}, socket) do
+    {:noreply,
+     socket
+     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: view_type, page: 1}}")}
+  end
+
   def handle_event("filter", %{"filter_type" => filter_type}, socket) do
     {:noreply,
      socket
-     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{filter_type: filter_type, sort_by: socket.assigns.sort_by, page: 1}}")}
+     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: filter_type, sort_by: socket.assigns.sort_by, page: 1}}")}
   end
 
   def handle_event("sort", %{"sort_by" => sort_by}, socket) do
     {:noreply,
      socket
-     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{filter_type: socket.assigns.filter_type, sort_by: sort_by, page: 1}}")}
+     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: socket.assigns.view_type, filter_type: socket.assigns.filter_type, sort_by: sort_by, page: 1}}")}
   end
 
   @allowed_override_fields [:website, :phone, :facebook, :instagram, :slug]
@@ -289,6 +304,59 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     end
 
     TriviaAdvisor.Repo.aggregate(filtered_query, :count, :id)
+  end
+
+  # Load simple duplicate pairs from SQL view (legacy system)
+  defp load_simple_duplicate_pairs(page) do
+    offset = (page - 1) * 10
+
+    result = TriviaAdvisor.Repo.query!("""
+      SELECT
+        NULL as id,
+        venue1_id,
+        venue1_name,
+        venue1_postcode,
+        venue1_city_id,
+        venue2_id,
+        venue2_name,
+        venue2_postcode,
+        venue2_city_id,
+        NULL as confidence_score,
+        NULL as name_similarity,
+        NULL as location_similarity,
+        ARRAY[duplicate_type] as match_criteria
+      FROM potential_duplicate_venues
+      ORDER BY venue1_name
+      LIMIT 10 OFFSET $1
+    """, [offset])
+
+    Enum.map(result.rows, fn row ->
+      [id, venue1_id, venue1_name, venue1_postcode, venue1_city_id,
+       venue2_id, venue2_name, venue2_postcode, venue2_city_id,
+       confidence_score, name_similarity, location_similarity, match_criteria] = row
+
+      %{
+        id: id,
+        venue1_id: venue1_id,
+        venue1_name: venue1_name,
+        venue1_postcode: venue1_postcode,
+        venue1_city_id: venue1_city_id,
+        venue2_id: venue2_id,
+        venue2_name: venue2_name,
+        venue2_postcode: venue2_postcode,
+        venue2_city_id: venue2_city_id,
+        confidence_score: confidence_score,
+        name_similarity: name_similarity,
+        location_similarity: location_similarity,
+        match_criteria: match_criteria
+      }
+    end)
+  end
+
+  # Count simple duplicate pairs for pagination
+  defp count_simple_duplicate_pairs do
+    result = TriviaAdvisor.Repo.query!("SELECT COUNT(*) FROM potential_duplicate_venues")
+    result.rows |> List.first() |> List.first()
   end
 
 
