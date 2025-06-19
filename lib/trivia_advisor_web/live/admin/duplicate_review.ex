@@ -75,17 +75,29 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
      |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{filter_type: socket.assigns.filter_type, sort_by: sort_by, page: 1}}")}
   end
 
+  @allowed_override_fields [:website, :phone, :facebook, :instagram, :slug]
+
   def handle_event("toggle_field_override", %{"field" => field}, socket) do
-    field_atom = String.to_atom(field)
-    current_overrides = socket.assigns.field_overrides || []
+    try do
+      field_atom = String.to_existing_atom(field)
 
-    new_overrides = if field_atom in current_overrides do
-      List.delete(current_overrides, field_atom)
-    else
-      [field_atom | current_overrides]
+      unless field_atom in @allowed_override_fields do
+        {:noreply, put_flash(socket, :error, "Invalid field for override")}
+      else
+        current_overrides = socket.assigns.field_overrides || []
+
+        new_overrides = if field_atom in current_overrides do
+          List.delete(current_overrides, field_atom)
+        else
+          [field_atom | current_overrides]
+        end
+
+        {:noreply, assign(socket, :field_overrides, new_overrides)}
+      end
+    rescue
+      ArgumentError ->
+        {:noreply, put_flash(socket, :error, "Invalid field for override")}
     end
-
-    {:noreply, assign(socket, :field_overrides, new_overrides)}
   end
 
   def handle_event("merge_venues", %{"primary_id" => primary_id, "secondary_id" => secondary_id}, socket) do
@@ -134,23 +146,30 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
          |> put_flash(:error, "Fuzzy duplicate not found")}
 
       fuzzy_duplicate ->
-        changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
-          status: "rejected",
-          reviewed_at: DateTime.utc_now(),
-          reviewed_by: "admin_user"
-        })
+        # Check if already processed to prevent race conditions
+        if fuzzy_duplicate.status != "pending" do
+          {:noreply,
+           socket
+           |> put_flash(:error, "This duplicate has already been reviewed by another admin")}
+        else
+          changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
+            status: "rejected",
+            reviewed_at: DateTime.utc_now(),
+            reviewed_by: "admin_user"
+          })
 
-        case TriviaAdvisor.Repo.update(changeset) do
-          {:ok, _updated} ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
-             |> push_navigate(to: ~p"/admin/venues/duplicates")}
+          case TriviaAdvisor.Repo.update(changeset) do
+            {:ok, _updated} ->
+              {:noreply,
+               socket
+               |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
+               |> push_navigate(to: ~p"/admin/venues/duplicates")}
 
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+            {:error, reason} ->
+              {:noreply,
+               socket
+               |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+          end
         end
     end
   end
@@ -174,23 +193,30 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
          |> put_flash(:error, "Fuzzy duplicate not found")}
 
       fuzzy_duplicate ->
-        changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
-          status: "rejected",
-          reviewed_at: DateTime.utc_now(),
-          reviewed_by: "admin_user"
-        })
+        # Check if already processed to prevent race conditions
+        if fuzzy_duplicate.status != "pending" do
+          {:noreply,
+           socket
+           |> put_flash(:error, "This duplicate has already been reviewed by another admin")}
+        else
+          changeset = VenueFuzzyDuplicate.changeset(fuzzy_duplicate, %{
+            status: "rejected",
+            reviewed_at: DateTime.utc_now(),
+            reviewed_by: "admin_user"
+          })
 
-        case TriviaAdvisor.Repo.update(changeset) do
-          {:ok, _updated} ->
-            {:noreply,
-             socket
-             |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
-             |> push_navigate(to: ~p"/admin/venues/duplicates")}
+          case TriviaAdvisor.Repo.update(changeset) do
+            {:ok, _updated} ->
+              {:noreply,
+               socket
+               |> put_flash(:info, "Marked as not duplicate - this pair will no longer appear in the duplicates list")
+               |> push_navigate(to: ~p"/admin/venues/duplicates")}
 
-          {:error, reason} ->
-            {:noreply,
-             socket
-             |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+            {:error, reason} ->
+              {:noreply,
+               socket
+               |> put_flash(:error, "Failed to mark as not duplicate: #{inspect(reason)}")}
+          end
         end
     end
   end
@@ -313,5 +339,18 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     end
 
     defaults
+  end
+
+  # Build confirmation text for merge dialogs
+  defp build_merge_confirmation_text(primary, secondary, field_overrides) do
+    base_text = "Merge #{secondary.name} into #{primary.name}?"
+
+    override_text = if length(field_overrides || []) > 0 do
+      "\n\n• Field overrides: #{Enum.join(field_overrides, ", ")}"
+    else
+      ""
+    end
+
+    "#{base_text}#{override_text}\n\n• Events will move to primary venue\n• Images will be combined (no duplicates)\n• Secondary venue will be soft-deleted\n• This cannot be undone"
   end
 end
