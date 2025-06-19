@@ -125,7 +125,6 @@
               <input 
                 type="checkbox" 
                 phx-click="toggle_select_all"
-                phx-value-checked={if @select_all, do: "true", else: "false"}
                 checked={@select_all}
                 class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
               />
@@ -177,7 +176,6 @@
                           type="checkbox" 
                           phx-click="toggle_pair_selection"
                           phx-value-pair_id={pair_id}
-                          phx-value-checked={if MapSet.member?(@selected_pairs, pair_id), do: "true", else: "false"}
                           checked={MapSet.member?(@selected_pairs, pair_id)}
                           class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
                         />

@@ -183,7 +183,7 @@
                           <%= String.replace(stat.source.name, "_", " ") %>
                         </div>
                         <%= if stat.source.website_url do %>
-                          <a href={stat.source.website_url} target="_blank" class="ml-2 text-gray-400 hover:text-gray-600">
+                          <a href={stat.source.website_url} target="_blank" rel="noopener noreferrer" class="ml-2 text-gray-400 hover:text-gray-600">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                             </svg>

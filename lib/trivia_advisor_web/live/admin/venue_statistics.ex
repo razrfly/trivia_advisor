@@ -70,60 +70,62 @@ defmodule TriviaAdvisorWeb.Live.Admin.VenueStatistics do
   end
 
   defp load_source_statistics(thirty_days_ago) do
-    # Get all sources
+    # Get all sources first
     sources = Repo.all(Source)
 
-    Enum.map(sources, fn source ->
-      # Total venues for this source
-      total_venues = from(v in Venue,
-                         join: e in Event, on: e.venue_id == v.id,
-                         join: es in EventSource, on: es.event_id == e.id,
-                         where: es.source_id == ^source.id,
-                         select: v.id,
-                         distinct: true)
-                    |> Repo.all()
-                    |> length()
+    # Get venue counts per source in a single query
+    venue_counts = from(s in Source,
+      left_join: v in Venue,
+        on: true,
+      left_join: e in Event,
+        on: e.venue_id == v.id,
+      left_join: es in EventSource,
+        on: es.event_id == e.id and es.source_id == s.id,
+      where: not is_nil(es.source_id),
+      group_by: s.id,
+      select: {s.id, count(v.id, :distinct)}
+    ) |> Repo.all() |> Map.new()
 
-            # Active venues in last 30 days for this source
-      active_venues_30d = from(v in Venue,
-                              join: e in Event, on: e.venue_id == v.id,
-                              join: es in EventSource, on: es.event_id == e.id,
-                              where: es.source_id == ^source.id and
-                                     es.last_seen_at >= ^thirty_days_ago,
-                              select: v.id,
-                              distinct: true)
-                         |> Repo.all()
-                         |> length()
+    # Get active venue counts (last 30 days)
+    active_counts = from(s in Source,
+      left_join: v in Venue,
+        on: true,
+      left_join: e in Event,
+        on: e.venue_id == v.id,
+      left_join: es in EventSource,
+        on: es.event_id == e.id and es.source_id == s.id,
+      where: not is_nil(es.source_id) and es.last_seen_at >= ^thirty_days_ago,
+      group_by: s.id,
+      select: {s.id, count(v.id, :distinct)}
+    ) |> Repo.all() |> Map.new()
 
-            # New venues in last 30 days for this source
-      # (venues that were first seen by this source in the last 30 days)
-      new_venues_30d = from(v in Venue,
-                           join: e in Event, on: e.venue_id == v.id,
-                           join: es in EventSource, on: es.event_id == e.id,
-                           where: es.source_id == ^source.id and
-                                  v.inserted_at >= ^thirty_days_ago,
-                           select: v.id,
-                           distinct: true)
-                      |> Repo.all()
-                      |> length()
+    # Get new venue counts (inserted in last 30 days)
+    new_counts = from(s in Source,
+      left_join: v in Venue,
+        on: true,
+      left_join: e in Event,
+        on: e.venue_id == v.id,
+      left_join: es in EventSource,
+        on: es.event_id == e.id and es.source_id == s.id,
+      where: not is_nil(es.source_id) and v.inserted_at >= ^thirty_days_ago,
+      group_by: s.id,
+      select: {s.id, count(v.id, :distinct)}
+    ) |> Repo.all() |> Map.new()
 
-      # Stale venues for this source (not seen in last 30 days)
-      stale_venues = from(v in Venue,
-                         join: e in Event, on: e.venue_id == v.id,
-                         join: es in EventSource, on: es.event_id == e.id,
-                         where: es.source_id == ^source.id,
-                         group_by: v.id,
-                         having: max(es.last_seen_at) < ^thirty_days_ago,
-                         select: v.id)
-                    |> Repo.all()
-                    |> length()
+    # Calculate stale venues (total - active)
+    sources
+    |> Enum.map(fn source ->
+      total = Map.get(venue_counts, source.id, 0)
+      active = Map.get(active_counts, source.id, 0)
+      new = Map.get(new_counts, source.id, 0)
+      stale = total - active
 
       %{
         source: source,
-        total_venues: total_venues,
-        active_venues_30d: active_venues_30d,
-        new_venues_30d: new_venues_30d,
-        stale_venues: stale_venues
+        total_venues: total,
+        active_venues_30d: active,
+        new_venues_30d: new,
+        stale_venues: max(stale, 0)
       }
     end)
     |> Enum.sort_by(& &1.total_venues, :desc)
@@ -133,13 +135,25 @@ defmodule TriviaAdvisorWeb.Live.Admin.VenueStatistics do
   def handle_event("refresh", _params, socket) do
     Logger.info("🔄 Admin triggered venue statistics refresh")
 
-    socket = socket
-    |> assign(:loading, true)
-    |> assign(:statistics, load_venue_statistics())
-    |> assign(:loading, false)
-    |> put_flash(:info, "Statistics refreshed successfully!")
+    socket = assign(socket, :loading, true)
 
-    {:noreply, socket}
+    try do
+      statistics = load_venue_statistics()
+      socket = socket
+      |> assign(:statistics, statistics)
+      |> assign(:loading, false)
+      |> put_flash(:info, "Statistics refreshed successfully!")
+
+      {:noreply, socket}
+    rescue
+      e ->
+        Logger.error("Failed to load venue statistics: #{inspect(e)}")
+        socket = socket
+        |> assign(:loading, false)
+        |> put_flash(:error, "Failed to refresh statistics. Please try again.")
+
+        {:noreply, socket}
+    end
   end
 
   defp format_number(number) when is_integer(number) do

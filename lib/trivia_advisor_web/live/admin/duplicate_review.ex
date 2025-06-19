@@ -280,10 +280,11 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   end
 
   # Batch processing event handlers
-  def handle_event("toggle_select_all", %{"checked" => checked}, socket) do
-    checked = checked == "true"
+  def handle_event("toggle_select_all", _params, socket) do
+    # Toggle based on current state
+    new_select_all = !socket.assigns.select_all
 
-    selected_pairs = if checked do
+    selected_pairs = if new_select_all do
       socket.assigns.duplicate_pairs
       |> Enum.map(fn pair -> "#{pair.venue1_id}-#{pair.venue2_id}" end)
       |> MapSet.new()
@@ -294,17 +295,18 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     {:noreply,
      socket
      |> assign(:selected_pairs, selected_pairs)
-     |> assign(:select_all, checked)}
+     |> assign(:select_all, new_select_all)}
   end
 
-  def handle_event("toggle_pair_selection", %{"pair_id" => pair_id, "checked" => checked}, socket) do
-    checked = checked == "true"
+  def handle_event("toggle_pair_selection", %{"pair_id" => pair_id}, socket) do
     current_selected = socket.assigns.selected_pairs
 
-    new_selected = if checked do
-      MapSet.put(current_selected, pair_id)
-    else
+    # Toggle based on current state
+    currently_selected = MapSet.member?(current_selected, pair_id)
+    new_selected = if currently_selected do
       MapSet.delete(current_selected, pair_id)
+    else
+      MapSet.put(current_selected, pair_id)
     end
 
     # Update select_all based on whether all visible pairs are selected
