@@ -5,17 +5,12 @@ defmodule TriviaAdvisor.LocationsTest do
   # Ensure mocks are verified when the test exits
   setup :verify_on_exit!
 
-  alias TriviaAdvisor.Locations
+  alias TriviaAdvisor.{Locations, Repo}
   alias TriviaAdvisor.Locations.Country
   alias TriviaAdvisor.Locations.City
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Scraping.MockGoogleLookup
   alias TriviaAdvisor.Utils.Slug
-  alias TriviaAdvisor.Repo
-
-  # Helper to safely convert Decimal to float
-  defp to_float(%Decimal{} = decimal), do: Decimal.to_float(decimal)
-  defp to_float(value), do: value
 
   # Define a helper function to set up expectations
   defp mock_lookup_address(fun) do

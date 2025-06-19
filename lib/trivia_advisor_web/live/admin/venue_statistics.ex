@@ -2,7 +2,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.VenueStatistics do
   use TriviaAdvisorWeb, :live_view
 
   require Logger
-  alias TriviaAdvisor.{Repo, Locations}
+  alias TriviaAdvisor.Repo
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Events.{Event, EventSource}
   alias TriviaAdvisor.Scraping.Source
