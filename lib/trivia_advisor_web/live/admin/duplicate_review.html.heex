@@ -508,7 +508,7 @@
               phx-click="merge_venues" 
               phx-value-primary_id={@venue1.id} 
               phx-value-secondary_id={@venue2.id}
-              data-confirm={"Merge Venue B into Venue A?#{if length(@field_overrides || []) > 0, do: "\n\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\n\n• Events will move to Venue A\n• Images will be combined (no duplicates)\n• Venue B will be soft-deleted\n• This cannot be undone"}
+              data-confirm={build_merge_confirmation_text(@venue1, @venue2, @field_overrides)}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
             >
               ⬅️ Keep A, Merge B into A
@@ -517,7 +517,7 @@
               phx-click="merge_venues" 
               phx-value-primary_id={@venue2.id} 
               phx-value-secondary_id={@venue1.id}
-              data-confirm={"Merge Venue A into Venue B?#{if length(@field_overrides || []) > 0, do: "\n\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\n\n• Events will move to Venue B\n• Images will be combined (no duplicates)\n• Venue A will be soft-deleted\n• This cannot be undone"}
+              data-confirm={build_merge_confirmation_text(@venue2, @venue1, @field_overrides)}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
             >
               ➡️ Keep B, Merge A into B
