@@ -1,6 +1,7 @@
 defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   use TriviaAdvisorWeb, :live_view
 
+  require Logger
   alias TriviaAdvisor.Locations
   alias TriviaAdvisor.Locations.Venue
   alias TriviaAdvisor.Locations.VenueFuzzyDuplicate
@@ -76,6 +77,22 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     {:noreply,
      socket
      |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: view_type, page: 1}}")}
+  end
+
+  def handle_event("process_fuzzy_duplicates", _params, socket) do
+    # Start processing in a background task
+    Task.async(fn ->
+      TriviaAdvisor.Services.FuzzyDuplicateProcessor.process_all_venues([
+        batch_size: 50,
+        min_confidence: 0.70,
+        clear_existing: true
+      ])
+    end)
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "🤖 Fuzzy duplicate processing started in background. Refresh in a few minutes.")
+     |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{view_type: "fuzzy", page: 1}}")}
   end
 
   def handle_event("filter", %{"filter_type" => filter_type}, socket) do
@@ -310,53 +327,65 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   defp load_simple_duplicate_pairs(page) do
     offset = (page - 1) * 10
 
-    result = TriviaAdvisor.Repo.query!("""
-      SELECT
-        NULL as id,
-        venue1_id,
-        venue1_name,
-        venue1_postcode,
-        venue1_city_id,
-        venue2_id,
-        venue2_name,
-        venue2_postcode,
-        venue2_city_id,
-        NULL as confidence_score,
-        NULL as name_similarity,
-        NULL as location_similarity,
-        ARRAY[duplicate_type] as match_criteria
-      FROM potential_duplicate_venues
-      ORDER BY venue1_name
-      LIMIT 10 OFFSET $1
-    """, [offset])
+    try do
+      result = TriviaAdvisor.Repo.query!("""
+        SELECT
+          NULL as id,
+          venue1_id,
+          venue1_name,
+          venue1_postcode,
+          venue1_city_id,
+          venue2_id,
+          venue2_name,
+          venue2_postcode,
+          venue2_city_id,
+          NULL as confidence_score,
+          NULL as name_similarity,
+          NULL as location_similarity,
+          ARRAY[duplicate_type] as match_criteria
+        FROM potential_duplicate_venues
+        ORDER BY venue1_name
+        LIMIT 10 OFFSET $1
+      """, [offset])
 
-    Enum.map(result.rows, fn row ->
-      [id, venue1_id, venue1_name, venue1_postcode, venue1_city_id,
-       venue2_id, venue2_name, venue2_postcode, venue2_city_id,
-       confidence_score, name_similarity, location_similarity, match_criteria] = row
+      Enum.map(result.rows, fn row ->
+        [id, venue1_id, venue1_name, venue1_postcode, venue1_city_id,
+         venue2_id, venue2_name, venue2_postcode, venue2_city_id,
+         confidence_score, name_similarity, location_similarity, match_criteria] = row
 
-      %{
-        id: id,
-        venue1_id: venue1_id,
-        venue1_name: venue1_name,
-        venue1_postcode: venue1_postcode,
-        venue1_city_id: venue1_city_id,
-        venue2_id: venue2_id,
-        venue2_name: venue2_name,
-        venue2_postcode: venue2_postcode,
-        venue2_city_id: venue2_city_id,
-        confidence_score: confidence_score,
-        name_similarity: name_similarity,
-        location_similarity: location_similarity,
-        match_criteria: match_criteria
-      }
-    end)
+        %{
+          id: id,
+          venue1_id: venue1_id,
+          venue1_name: venue1_name,
+          venue1_postcode: venue1_postcode,
+          venue1_city_id: venue1_city_id,
+          venue2_id: venue2_id,
+          venue2_name: venue2_name,
+          venue2_postcode: venue2_postcode,
+          venue2_city_id: venue2_city_id,
+          confidence_score: confidence_score,
+          name_similarity: name_similarity,
+          location_similarity: location_similarity,
+          match_criteria: match_criteria
+        }
+      end)
+    rescue
+      error ->
+        Logger.error("Failed to load simple duplicate pairs: #{inspect(error)}")
+        []
+    end
   end
 
   # Count simple duplicate pairs for pagination
   defp count_simple_duplicate_pairs do
-    result = TriviaAdvisor.Repo.query!("SELECT COUNT(*) FROM potential_duplicate_venues")
-    result.rows |> List.first() |> List.first()
+    try do
+      result = TriviaAdvisor.Repo.query!("SELECT COUNT(*) FROM potential_duplicate_venues")
+      result.rows |> List.first() |> List.first()
+    rescue
+      error ->
+        Logger.error("Failed to count simple duplicate pairs: #{inspect(error)}")
+        0
+    end
   end
 
 
