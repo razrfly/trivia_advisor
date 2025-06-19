@@ -1,24 +1,25 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
   <%= if @live_action == :index do %>
     <div class="mb-8">
-      <h1 class="text-3xl font-bold text-gray-900 mb-4">Duplicate Venues Management</h1>
-      <p class="text-gray-600">Review and manage suspected duplicate venue entries.</p>
+      <h1 class="text-3xl font-bold text-gray-900 mb-4">Fuzzy Duplicate Venues Management</h1>
+      <p class="text-gray-600">Review and manage AI-detected duplicate venue entries with confidence scoring.</p>
     </div>
 
     <!-- Filters and Controls -->
     <div class="bg-white shadow rounded-lg p-6 mb-6">
       <div class="flex flex-wrap gap-4 items-center">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">Filter by type:</label>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Filter by confidence:</label>
           <select 
             phx-change="filter" 
             name="filter_type" 
             class="border border-gray-300 rounded-md px-3 py-2 bg-white"
             value={@filter_type}
           >
-            <option value="all">All duplicates</option>
-            <option value="name_postcode_duplicate">Name + Postcode matches</option>
-            <option value="name_city_duplicate">Name + City matches</option>
+            <option value="all">All confidence levels</option>
+            <option value="high_confidence">High confidence (90%+)</option>
+            <option value="medium_confidence">Medium confidence (75-89%)</option>
+            <option value="low_confidence">Low confidence (&lt;75%)</option>
           </select>
         </div>
 
@@ -30,9 +31,10 @@
             class="border border-gray-300 rounded-md px-3 py-2 bg-white"
             value={@sort_by}
           >
+            <option value="confidence">Confidence Score</option>
             <option value="name">Name</option>
-            <option value="created">Creation Date</option>
-            <option value="type">Duplicate Type</option>
+            <option value="name_similarity">Name Similarity</option>
+            <option value="location_similarity">Location Similarity</option>
           </select>
         </div>
 
@@ -51,26 +53,53 @@
           <div class="space-y-4">
             <%= for pair <- @duplicate_pairs do %>
               <div class="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                <div class="flex items-center justify-between">
-                  <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <!-- Venue 1 -->
-                    <div class="space-y-1">
-                      <h3 class="text-lg font-medium text-gray-900"><%= pair.venue1_name %></h3>
-                      <p class="text-sm text-gray-500">ID: <%= pair.venue1_id %></p>
-                      <%= if pair.venue1_postcode do %>
-                        <p class="text-sm text-gray-600">Postcode: <%= pair.venue1_postcode %></p>
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <!-- Confidence Score Header -->
+                    <div class="mb-3 flex items-center gap-4">
+                      <div class="flex items-center gap-2">
+                        <span class={"inline-flex items-center px-2 py-1 rounded-full text-sm font-medium #{
+                          cond do
+                            pair.confidence_score >= 0.90 -> "bg-green-100 text-green-800"
+                            pair.confidence_score >= 0.75 -> "bg-yellow-100 text-yellow-800"
+                            true -> "bg-red-100 text-red-800"
+                          end
+                        }"}>
+                          <%= Float.round(pair.confidence_score * 100, 1) %>% confidence
+                        </span>
+                        <span class="text-sm text-gray-500">
+                          Name: <%= Float.round(pair.name_similarity * 100, 1) %>% | Location: <%= Float.round(pair.location_similarity * 100, 1) %>%
+                        </span>
+                      </div>
+                      <%= if pair.match_criteria && length(pair.match_criteria) > 0 do %>
+                        <div class="flex gap-1">
+                          <%= for criterion <- pair.match_criteria do %>
+                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              <%= criterion %>
+                            </span>
+                          <% end %>
+                        </div>
                       <% end %>
-                      <p class="text-xs text-gray-400">Created: <%= Calendar.strftime(pair.venue1_created, "%Y-%m-%d") %></p>
                     </div>
 
-                    <!-- Venue 2 -->
-                    <div class="space-y-1">
-                      <h3 class="text-lg font-medium text-gray-900"><%= pair.venue2_name %></h3>
-                      <p class="text-sm text-gray-500">ID: <%= pair.venue2_id %></p>
-                      <%= if pair.venue2_postcode do %>
-                        <p class="text-sm text-gray-600">Postcode: <%= pair.venue2_postcode %></p>
-                      <% end %>
-                      <p class="text-xs text-gray-400">Created: <%= Calendar.strftime(pair.venue2_created, "%Y-%m-%d") %></p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <!-- Venue 1 -->
+                      <div class="space-y-1">
+                        <h3 class="text-lg font-medium text-gray-900"><%= pair.venue1_name %></h3>
+                        <p class="text-sm text-gray-500">ID: <%= pair.venue1_id %></p>
+                        <%= if pair.venue1_postcode do %>
+                          <p class="text-sm text-gray-600">Postcode: <%= pair.venue1_postcode %></p>
+                        <% end %>
+                      </div>
+
+                      <!-- Venue 2 -->
+                      <div class="space-y-1">
+                        <h3 class="text-lg font-medium text-gray-900"><%= pair.venue2_name %></h3>
+                        <p class="text-sm text-gray-500">ID: <%= pair.venue2_id %></p>
+                        <%= if pair.venue2_postcode do %>
+                          <p class="text-sm text-gray-600">Postcode: <%= pair.venue2_postcode %></p>
+                        <% end %>
+                      </div>
                     </div>
                   </div>
 
@@ -83,9 +112,14 @@
                       Review Details
                     </.link>
                     
-                    <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                      <%= String.replace(pair.duplicate_type, "_", " ") |> String.capitalize() %>
-                    </span>
+                    <button 
+                      phx-click="reject_duplicate" 
+                      phx-value-fuzzy_duplicate_id={pair.id}
+                      onclick="return confirm('Mark this pair as not duplicate?')"
+                      class="inline-flex items-center px-3 py-2 border border-gray-300 text-sm leading-4 font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      Not Duplicate
+                    </button>
                   </div>
                 </div>
               </div>
@@ -374,8 +408,8 @@
               phx-click="merge_venues" 
               phx-value-primary_id={@venue1.id} 
               phx-value-secondary_id={@venue2.id}
+              data-confirm={"Merge Venue B into Venue A?#{if length(@field_overrides || []) > 0, do: "\n\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\n\n• Events will move to Venue A\n• Images will be combined (no duplicates)\n• Venue B will be soft-deleted\n• This cannot be undone"}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              onclick={"return confirm('Merge Venue B into Venue A?#{if length(@field_overrides || []) > 0, do: "\\n\\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\\n\\n• Events will move to Venue A\\n• Images will be combined (no duplicates)\\n• Venue B will be soft-deleted\\n• This cannot be undone')"}
             >
               ⬅️ Keep A, Merge B into A
             </button>
@@ -383,8 +417,8 @@
               phx-click="merge_venues" 
               phx-value-primary_id={@venue2.id} 
               phx-value-secondary_id={@venue1.id}
+              data-confirm={"Merge Venue A into Venue B?#{if length(@field_overrides || []) > 0, do: "\n\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\n\n• Events will move to Venue B\n• Images will be combined (no duplicates)\n• Venue A will be soft-deleted\n• This cannot be undone"}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              onclick={"return confirm('Merge Venue A into Venue B?#{if length(@field_overrides || []) > 0, do: "\\n\\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\\n\\n• Events will move to Venue B\\n• Images will be combined (no duplicates)\\n• Venue A will be soft-deleted\\n• This cannot be undone')"}
             >
               ➡️ Keep B, Merge A into B
             </button>

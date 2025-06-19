@@ -308,9 +308,10 @@ defmodule TriviaAdvisor.Services.VenueDuplicateDetector do
     same_postcode = venue1.postcode && venue2.postcode && venue1.postcode == venue2.postcode
 
     # Very close geographically (within 50m)
-    close_geography = calculate_geographic_similarity(venue1, venue2) >= 0.95
+    geo_similarity = calculate_geographic_similarity(venue1, venue2) || 0.0
+    close_geography = geo_similarity >= 0.95
 
-    same_postcode or close_geography
+    same_postcode || close_geography
   end
 
   # Safe conversion to float for both Decimal and numeric types

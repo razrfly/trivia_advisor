@@ -18,7 +18,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Show do
     case get_venue_by_slug(slug) do
       {:redirect, venue} ->
         # This venue was merged, redirect to the primary venue
-        {:ok,
+        {:halt,
           socket
           |> redirect(to: "/venues/#{venue.slug}")}
 
