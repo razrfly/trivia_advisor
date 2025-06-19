@@ -323,6 +323,46 @@
       </div>
     </div>
 
+    <!-- Field Override Options -->
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+      <h2 class="text-lg font-medium text-gray-900 mb-4">Selective Field Merging</h2>
+      <p class="text-sm text-gray-600 mb-4">Choose specific fields to take from the secondary venue, regardless of which venue you keep as primary.</p>
+      
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+        <%= for field <- [:website, :phone, :facebook, :instagram] do %>
+          <% venue1_value = Map.get(@venue1, field) %>
+          <% venue2_value = Map.get(@venue2, field) %>
+          <%= if venue1_value != venue2_value and (venue1_value || venue2_value) do %>
+            <label class="flex items-center">
+              <input 
+                type="checkbox" 
+                name="field_overrides[]" 
+                value={field}
+                phx-click="toggle_field_override"
+                phx-value-field={field}
+                checked={field in (@field_overrides || [])}
+                class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+              >
+              <span class="ml-2 text-sm text-gray-700 capitalize"><%= field %></span>
+            </label>
+            <div class="text-xs text-gray-500 mt-1">
+              <div class="truncate">A: <%= venue1_value || "none" %></div>
+              <div class="truncate">B: <%= venue2_value || "none" %></div>
+            </div>
+          <% end %>
+        <% end %>
+      </div>
+      
+      <%= if length(@field_overrides || []) > 0 do %>
+        <div class="bg-blue-50 border border-blue-200 rounded-md p-3">
+          <p class="text-sm text-blue-800">
+            <strong>Override selected:</strong> The following fields will be taken from the secondary venue: 
+            <span class="font-mono"><%= Enum.join(@field_overrides, ", ") %></span>
+          </p>
+        </div>
+      <% end %>
+    </div>
+
     <!-- Action Buttons -->
     <div class="bg-white shadow rounded-lg p-6">
       <h2 class="text-lg font-medium text-gray-900 mb-4">Actions</h2>
@@ -335,7 +375,7 @@
               phx-value-primary_id={@venue1.id} 
               phx-value-secondary_id={@venue2.id}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              onclick="return confirm('Merge Venue B into Venue A?\n\n• Events will move to Venue A\n• Images will be combined (no duplicates)\n• Venue B will be soft-deleted\n• This cannot be undone')"
+              onclick={"return confirm('Merge Venue B into Venue A?#{if length(@field_overrides || []) > 0, do: "\\n\\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\\n\\n• Events will move to Venue A\\n• Images will be combined (no duplicates)\\n• Venue B will be soft-deleted\\n• This cannot be undone')"}
             >
               ⬅️ Keep A, Merge B into A
             </button>
@@ -344,7 +384,7 @@
               phx-value-primary_id={@venue2.id} 
               phx-value-secondary_id={@venue1.id}
               class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              onclick="return confirm('Merge Venue A into Venue B?\n\n• Events will move to Venue B\n• Images will be combined (no duplicates)\n• Venue A will be soft-deleted\n• This cannot be undone')"
+              onclick={"return confirm('Merge Venue A into Venue B?#{if length(@field_overrides || []) > 0, do: "\\n\\n• Field overrides: #{Enum.join(@field_overrides, ", ")}", else: ""}\\n\\n• Events will move to Venue B\\n• Images will be combined (no duplicates)\\n• Venue A will be soft-deleted\\n• This cannot be undone')"}
             >
               ➡️ Keep B, Merge A into B
             </button>

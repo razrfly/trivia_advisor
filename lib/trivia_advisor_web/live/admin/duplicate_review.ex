@@ -38,6 +38,7 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     |> assign(:venue1, venue1)
     |> assign(:venue2, venue2)
     |> assign(:similarity_details, calculate_similarity_details(venue1, venue2))
+    |> assign(:field_overrides, [])
   end
 
   @impl true
@@ -53,15 +54,46 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
      |> push_navigate(to: ~p"/admin/venues/duplicates?#{%{filter_type: socket.assigns.filter_type, sort_by: sort_by, page: 1}}")}
   end
 
+  def handle_event("toggle_field_override", %{"field" => field}, socket) do
+    field_atom = String.to_atom(field)
+    current_overrides = socket.assigns.field_overrides || []
+
+    new_overrides = if field_atom in current_overrides do
+      List.delete(current_overrides, field_atom)
+    else
+      [field_atom | current_overrides]
+    end
+
+    {:noreply, assign(socket, :field_overrides, new_overrides)}
+  end
+
   def handle_event("merge_venues", %{"primary_id" => primary_id, "secondary_id" => secondary_id}, socket) do
     primary_id = String.to_integer(primary_id)
     secondary_id = String.to_integer(secondary_id)
+    field_overrides = socket.assigns.field_overrides || []
 
-    case VenueMergeService.merge_venues(primary_id, secondary_id, %{performed_by: "admin_user"}) do
+    merge_options = %{
+      performed_by: "admin_user",
+      metadata_strategy: :prefer_primary,
+      field_overrides: field_overrides,
+      notes: if length(field_overrides) > 0 do
+        "Admin merge with field overrides: #{Enum.join(field_overrides, ", ")}"
+      else
+        "Admin merge"
+      end
+    }
+
+    case VenueMergeService.merge_venues(primary_id, secondary_id, merge_options) do
       {:ok, _result} ->
+        success_message = if length(field_overrides) > 0 do
+          "Venues merged successfully with field overrides: #{Enum.join(field_overrides, ", ")}"
+        else
+          "Venues merged successfully!"
+        end
+
         {:noreply,
          socket
-         |> put_flash(:info, "Venues merged successfully!")
+         |> put_flash(:info, success_message)
          |> push_navigate(to: ~p"/admin/venues/duplicates")}
 
       {:error, reason} ->
