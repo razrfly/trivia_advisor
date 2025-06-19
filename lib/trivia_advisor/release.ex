@@ -16,7 +16,14 @@ defmodule TriviaAdvisor.Release do
     create_duplicate_view()
 
     # Process fuzzy duplicates with AI detection after migrations
-    process_fuzzy_duplicates()
+    # This is safe to fail - admin can run manually if needed
+    case process_fuzzy_duplicates() do
+      {:ok, results} ->
+        IO.puts("✅ Fuzzy duplicates processed: #{inspect(results)}")
+      {:error, reason} ->
+        IO.puts("⚠️  Fuzzy duplicate processing failed: #{inspect(reason)}")
+        IO.puts("   You can run 'mix process_fuzzy_duplicates' manually after deployment")
+    end
 
     # Run seeds after migrations
     seed()
@@ -131,7 +138,7 @@ defmodule TriviaAdvisor.Release do
       case result do
         {:ok, stats} ->
           IO.puts("✅ Fuzzy duplicate processing completed successfully")
-          IO.puts("📊 Processed #{stats.venues_processed} venues")
+          IO.puts("📊 Processed #{stats.processed} venues")
           IO.puts("📊 Found #{stats.duplicates_found} potential duplicates")
           IO.puts("📊 Stored #{stats.duplicates_stored} high-confidence pairs")
 
@@ -147,13 +154,16 @@ defmodule TriviaAdvisor.Release do
           end
 
           IO.puts("\n💡 Visit /admin/venues/duplicates to review and manage fuzzy duplicates")
+          {:ok, stats}
 
         error ->
           IO.puts("❌ Error processing fuzzy duplicates: #{inspect(error)}")
+          {:error, error}
       end
     rescue
       e ->
         IO.puts("❌ Error processing fuzzy duplicates: #{inspect(e)}")
+        {:error, e}
     end
   end
 
