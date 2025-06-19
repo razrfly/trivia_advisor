@@ -488,8 +488,8 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
     offset = (page - 1) * 50
 
     base_query = from fd in VenueFuzzyDuplicate,
-      join: v1 in Venue, on: v1.id == fd.venue1_id,
-      join: v2 in Venue, on: v2.id == fd.venue2_id,
+      join: v1 in TriviaAdvisor.Locations.Venue, on: v1.id == fd.venue1_id,
+      join: v2 in TriviaAdvisor.Locations.Venue, on: v2.id == fd.venue2_id,
       where: fd.status == "pending",
       where: is_nil(v1.deleted_at),
       where: is_nil(v2.deleted_at),
@@ -536,8 +536,8 @@ defmodule TriviaAdvisorWeb.Live.Admin.DuplicateReview do
   # Count fuzzy duplicate pairs for pagination
   defp count_fuzzy_duplicate_pairs(filter_type) do
     base_query = from fd in VenueFuzzyDuplicate,
-      join: v1 in Venue, on: v1.id == fd.venue1_id,
-      join: v2 in Venue, on: v2.id == fd.venue2_id,
+      join: v1 in TriviaAdvisor.Locations.Venue, on: v1.id == fd.venue1_id,
+      join: v2 in TriviaAdvisor.Locations.Venue, on: v2.id == fd.venue2_id,
       where: fd.status == "pending",
       where: is_nil(v1.deleted_at),
       where: is_nil(v2.deleted_at)
