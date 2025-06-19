@@ -49,6 +49,9 @@ defmodule TriviaAdvisorWeb.Router do
     # Duplicate venue management
     live "/venues/duplicates", TriviaAdvisorWeb.Live.Admin.DuplicateReview, :index
     live "/venues/duplicates/:venue1_id/:venue2_id", TriviaAdvisorWeb.Live.Admin.DuplicateReview, :show
+
+    # Venue statistics
+    live "/venues/statistics", TriviaAdvisorWeb.Live.Admin.VenueStatistics, :index
   end
 
   # Other scopes may use custom stacks.

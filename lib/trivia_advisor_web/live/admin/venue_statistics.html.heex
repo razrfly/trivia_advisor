@@ -1,0 +1,243 @@
+<div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+  <div class="py-8">
+    <!-- Header -->
+    <div class="md:flex md:items-center md:justify-between mb-8">
+      <div class="min-w-0 flex-1">
+        <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:truncate sm:text-3xl sm:tracking-tight">
+          Venue Statistics
+        </h2>
+        <p class="mt-1 text-sm text-gray-500">
+          Comprehensive analytics for venue data across all sources
+        </p>
+      </div>
+      <div class="mt-4 flex md:ml-4 md:mt-0">
+        <button 
+          type="button" 
+          phx-click="refresh"
+          class="inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+        >
+          <%= if @loading do %>
+            <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Refreshing...
+          <% else %>
+            Refresh Data
+          <% end %>
+        </button>
+      </div>
+    </div>
+
+    <%= if @loading do %>
+      <div class="text-center py-12">
+        <svg class="animate-spin mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p class="mt-4 text-gray-500">Loading statistics...</p>
+      </div>
+    <% else %>
+      <!-- Overall Statistics Cards -->
+      <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+        <!-- Total Venues -->
+        <div class="overflow-hidden rounded-lg bg-white shadow">
+          <div class="p-6">
+            <div class="flex items-center">
+              <div class="flex-shrink-0">
+                <div class="w-8 h-8 bg-blue-500 rounded-md flex items-center justify-center">
+                  <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                  </svg>
+                </div>
+              </div>
+              <div class="ml-5 w-0 flex-1">
+                <dl>
+                  <dt class="text-sm font-medium text-gray-500 truncate">Total Venues</dt>
+                  <dd class="text-2xl font-semibold text-gray-900"><%= format_number(@statistics.total_venues) %></dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active Venues (30 days) -->
+        <div class="overflow-hidden rounded-lg bg-white shadow">
+          <div class="p-6">
+            <div class="flex items-center">
+              <div class="flex-shrink-0">
+                <div class="w-8 h-8 bg-green-500 rounded-md flex items-center justify-center">
+                  <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                </div>
+              </div>
+              <div class="ml-5 w-0 flex-1">
+                <dl>
+                  <dt class="text-sm font-medium text-gray-500 truncate">Active (30 days)</dt>
+                  <dd class="text-2xl font-semibold text-gray-900">
+                    <%= format_number(@statistics.active_venues_30d) %>
+                    <span class="text-sm text-gray-500 ml-1">
+                      (<%= format_percentage(@statistics.active_venues_30d, @statistics.total_venues) %>)
+                    </span>
+                  </dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- New Venues (30 days) -->
+        <div class="overflow-hidden rounded-lg bg-white shadow">
+          <div class="p-6">
+            <div class="flex items-center">
+              <div class="flex-shrink-0">
+                <div class="w-8 h-8 bg-purple-500 rounded-md flex items-center justify-center">
+                  <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+                  </svg>
+                </div>
+              </div>
+              <div class="ml-5 w-0 flex-1">
+                <dl>
+                  <dt class="text-sm font-medium text-gray-500 truncate">New (30 days)</dt>
+                  <dd class="text-2xl font-semibold text-gray-900">
+                    <%= format_number(@statistics.new_venues_30d) %>
+                    <span class="text-sm text-gray-500 ml-1">
+                      (<%= format_percentage(@statistics.new_venues_30d, @statistics.total_venues) %>)
+                    </span>
+                  </dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stale Venues -->
+        <div class="overflow-hidden rounded-lg bg-white shadow">
+          <div class="p-6">
+            <div class="flex items-center">
+              <div class="flex-shrink-0">
+                <div class="w-8 h-8 bg-orange-500 rounded-md flex items-center justify-center">
+                  <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                </div>
+              </div>
+              <div class="ml-5 w-0 flex-1">
+                <dl>
+                  <dt class="text-sm font-medium text-gray-500 truncate">Stale (>30 days)</dt>
+                  <dd class="text-2xl font-semibold text-gray-900">
+                    <%= format_number(@statistics.stale_venues) %>
+                    <span class="text-sm text-gray-500 ml-1">
+                      (<%= format_percentage(@statistics.stale_venues, @statistics.total_venues) %>)
+                    </span>
+                  </dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Source Statistics Table -->
+      <div class="bg-white shadow rounded-lg">
+        <div class="px-4 py-5 sm:p-6">
+          <div class="mb-4">
+            <h3 class="text-lg font-medium leading-6 text-gray-900">Statistics by Source</h3>
+            <p class="mt-1 text-sm text-gray-500">
+              Breakdown of venue activity across different scraping sources
+            </p>
+          </div>
+
+          <div class="overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Source
+                  </th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total Venues
+                  </th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Active (30d)
+                  </th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    New (30d)
+                  </th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Stale (>30d)
+                  </th>
+                  <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Activity Rate
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-gray-200">
+                <%= for stat <- @statistics.source_statistics do %>
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <div class="flex items-center">
+                        <div class="text-sm font-medium text-gray-900 capitalize">
+                          <%= String.replace(stat.source.name, "_", " ") %>
+                        </div>
+                        <%= if stat.source.website_url do %>
+                          <a href={stat.source.website_url} target="_blank" class="ml-2 text-gray-400 hover:text-gray-600">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                            </svg>
+                          </a>
+                        <% end %>
+                      </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
+                      <%= format_number(stat.total_venues) %>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class="text-sm text-gray-900 font-medium"><%= format_number(stat.active_venues_30d) %></span>
+                      <span class="text-xs text-gray-500 ml-1">
+                        (<%= format_percentage(stat.active_venues_30d, stat.total_venues) %>)
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class="text-sm text-gray-900 font-medium"><%= format_number(stat.new_venues_30d) %></span>
+                      <span class="text-xs text-gray-500 ml-1">
+                        (<%= format_percentage(stat.new_venues_30d, stat.total_venues) %>)
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class="text-sm text-gray-900 font-medium"><%= format_number(stat.stale_venues) %></span>
+                      <span class="text-xs text-gray-500 ml-1">
+                        (<%= format_percentage(stat.stale_venues, stat.total_venues) %>)
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <%= if stat.total_venues > 0 do %>
+                        <div class="flex items-center">
+                          <div class="flex-1 bg-gray-200 rounded-full h-2 mr-2">
+                            <div class="bg-green-500 h-2 rounded-full" style={"width: #{format_percentage(stat.active_venues_30d, stat.total_venues)}"}></div>
+                          </div>
+                          <span class="text-sm text-gray-900 font-medium">
+                            <%= format_percentage(stat.active_venues_30d, stat.total_venues) %>
+                          </span>
+                        </div>
+                      <% else %>
+                        <span class="text-sm text-gray-400">No venues</span>
+                      <% end %>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Last Updated Info -->
+      <div class="mt-6 text-center text-sm text-gray-500">
+        Last updated: <%= DateTime.to_string(@statistics.last_updated) %> UTC
+      </div>
+    <% end %>
+  </div>
+</div> 
