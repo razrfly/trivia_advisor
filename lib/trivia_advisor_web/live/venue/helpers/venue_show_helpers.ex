@@ -67,6 +67,7 @@ defmodule TriviaAdvisorWeb.Live.Venue.Helpers.VenueShowHelpers do
       similar_venues = TriviaAdvisor.Repo.all(
         from v in TriviaAdvisor.Locations.Venue,
         where: like(v.slug, ^"#{base_slug}%") and is_nil(v.deleted_at),
+        order_by: [asc: v.slug],
         limit: 1
       )
 
